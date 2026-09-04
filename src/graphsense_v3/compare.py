@@ -65,15 +65,22 @@ class Difference:
 
 @dataclass
 class Report:
-    """The outcome of comparing one call."""
+    """The outcome of comparing one call.
+
+    ``skipped`` carries the reason a call could not be made at all -- v3 has no
+    cluster tables yet, so nine of the adapter's methods raise. A skipped call
+    is NOT an agreement, and `agrees` says so: counting it as one would let the
+    report claim parity for features that were never exercised.
+    """
 
     label: str
     differences: list = field(default_factory=list)
     ignored: list = field(default_factory=list)
+    skipped: Optional[str] = None
 
     @property
     def agrees(self) -> bool:
-        return not self.differences
+        return self.skipped is None and not self.differences
 
 
 def _b58decode(text: str) -> bytes:
@@ -194,6 +201,11 @@ def compare(label: str, left: Any, right: Any, network: str) -> Report:
     return Report(label, diff(left, right, network), ignored)
 
 
+def skipped(label: str, reason: str) -> Report:
+    """A call that could not be made, recorded as neither agreement nor diff."""
+    return Report(label, skipped=reason)
+
+
 def _ignored_in(value: Any) -> set:
     if isinstance(value, dict):
         found = {key for key in value if key in IGNORED_FIELDS}
@@ -212,8 +224,12 @@ def report(reports: list) -> str:
     """A readable summary. Agreement is stated with what it EXCLUDED, because
     'these agree' means nothing without knowing what was not compared."""
     lines = ["", "=" * 78, "v2 vs v3 service comparison", "=" * 78, ""]
-    disagreed = [r for r in reports if not r.agrees]
+    passed_over = [r for r in reports if r.skipped is not None]
+    disagreed = [r for r in reports if not r.agrees and r.skipped is None]
     for entry in reports:
+        if entry.skipped is not None:
+            lines.append(f"  skip  {entry.label}  ({entry.skipped})")
+            continue
         mark = "ok  " if entry.agrees else "DIFF"
         lines.append(f"  {mark}  {entry.label}  ({len(entry.differences)} differences)")
     if disagreed:
@@ -229,13 +245,14 @@ def report(reports: list) -> str:
         lines += ["", "-" * 78, "NOT COMPARED", "-" * 78, ""]
         for name in sorted(excluded):
             lines.append(f"  {name}: {IGNORED_FIELDS[name]}")
-    lines += [
-        "",
-        "=" * 78,
-        f"{len(reports)} calls, {len(disagreed)} with differences",
-        "=" * 78,
-        "",
-    ]
+    if passed_over:
+        lines += ["", "-" * 78, "NOT RUN", "-" * 78, ""]
+        for entry in passed_over:
+            lines.append(f"  {entry.label}: {entry.skipped}")
+    tail = f"{len(reports)} calls, {len(disagreed)} with differences"
+    if passed_over:
+        tail += f", {len(passed_over)} not run"
+    lines += ["", "=" * 78, tail, "=" * 78, ""]
     return "\n".join(lines)
 
 
@@ -243,5 +260,7 @@ def summarise(reports: list) -> Optional[str]:
     """One line, for a caller that only wants the verdict."""
     if not reports:
         return None
-    disagreed = sum(1 for r in reports if not r.agrees)
-    return f"{len(reports) - disagreed}/{len(reports)} calls agree"
+    agreed = sum(1 for r in reports if r.agrees)
+    passed_over = sum(1 for r in reports if r.skipped is not None)
+    line = f"{agreed}/{len(reports)} calls agree"
+    return f"{line}, {passed_over} not run" if passed_over else line

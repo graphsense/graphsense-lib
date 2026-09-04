@@ -623,7 +623,7 @@ def _render(cql: str, params: tuple) -> str:
     return " ".join(out.split())
 
 
-def _configuration(session, keyspace: str, fallback: Optional[str] = None) -> dict:
+def configuration(session, keyspace: str, fallback: Optional[str] = None) -> dict:
     """The keyspace's own bucketing constants.
 
     Read rather than assumed: a keyspace written with different constants must
@@ -692,7 +692,7 @@ def run(
     cluster = connect_to(nodes, username, password)
     session = cluster.connect()
     try:
-        config = _configuration(session, derived, fallback=raw)
+        config = configuration(session, derived, fallback=raw)
         prober = Prober(session, raw, derived, config)
         found = prober.fixtures()
         for gap in found.missing:

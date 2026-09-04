@@ -178,7 +178,7 @@ def test_missing_configuration_row_is_a_clear_failure() -> None:
     """Every bucket the probe computes comes from that row; without it each
     query would address a wrong partition and report an empty table."""
     with pytest.raises(SystemExit, match="configuration row"):
-        prober._configuration(FakeSession(), DERIVED, fallback=RAW)
+        prober.configuration(FakeSession(), DERIVED, fallback=RAW)
 
 
 def test_configuration_falls_back_to_the_raw_keyspace() -> None:
@@ -194,7 +194,7 @@ def test_configuration_falls_back_to_the_raw_keyspace() -> None:
                 return [row()]
             return []
 
-    assert prober._configuration(OnlyRaw(), DERIVED, fallback=RAW) == CONFIG
+    assert prober.configuration(OnlyRaw(), DERIVED, fallback=RAW) == CONFIG
 
 
 def test_report_lists_required_failures_separately() -> None:

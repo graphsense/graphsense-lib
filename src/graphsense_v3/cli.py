@@ -288,6 +288,116 @@ def probe(
         raise SystemExit(f"{failed} required access pattern(s) not satisfied")
 
 
+@cli.command("backtest")
+@_NETWORK
+@_LABEL
+@click.option(
+    "--config-file",
+    default=None,
+    help="gs-rest config yaml. Supplies the v2 keyspaces and the Cassandra "
+    "connection BOTH backends are read through, so the comparison differs in "
+    "the DAL and nothing else.",
+)
+@click.option(
+    "--address",
+    "addresses",
+    multiple=True,
+    help="fixture address, in V3's spelling; the v2 side is re-versioned. "
+    "Repeatable. Omitted, fixtures are discovered in the v3 keyspace.",
+)
+@click.option("--tx-hash", "tx_hashes", multiple=True, help="fixture tx hash (hex)")
+@click.option("--block", "blocks", multiple=True, type=int, help="fixture block height")
+def backtest_cmd(
+    network: str,
+    label: Optional[str],
+    config_file: Optional[str],
+    addresses: tuple,
+    tx_hashes: tuple,
+    blocks: tuple,
+) -> None:
+    """Compare v2 and v3 REST answers, service against service.
+
+    Read-only on both sides. The tagstore is stubbed out in both containers, so
+    a difference reported here is a Cassandra difference and nothing else.
+    """
+    import asyncio
+
+    from graphsenselib.web.app import resolve_rest_config
+
+    from graphsense_v3 import backtest as harness
+    from graphsense_v3 import compare
+    from graphsense_v3.cassandra import connect_to
+    from graphsense_v3.db.core import Dal
+    from graphsense_v3.db.legacy import LegacyAdapter
+    from graphsense_v3.probe import configuration
+    from graphsense_v3.settings import Kind, assert_v3_keyspace, v3_keyspace
+
+    rest_config = (
+        resolve_rest_config(config_file=config_file)
+        if config_file
+        else resolve_rest_config()
+    )
+    db_config = rest_config.database
+    if db_config is None:
+        raise SystemExit(
+            "the resolved gs-rest config has no `database` section, so there is "
+            "no v2 keyspace to compare against; pass --config-file"
+        )
+
+    raw = v3_keyspace(network, Kind.RAW, label)
+    derived = v3_keyspace(network, Kind.DERIVED, label)
+    for keyspace in (raw, derived):
+        assert_v3_keyspace(keyspace)
+
+    nodes = db_config.nodes
+    cluster = connect_to(nodes, db_config.username, db_config.password)
+    session = cluster.connect()
+    try:
+        if addresses or tx_hashes or blocks:
+            fixtures = harness.Fixtures(
+                network=network,
+                addresses=list(addresses),
+                tx_hashes=list(tx_hashes),
+                blocks=list(blocks),
+            )
+        else:
+            fixtures = harness.fixtures_from_v3(session, raw, derived, network)
+        click.echo(
+            f"fixtures: {len(fixtures.addresses)} address(es), "
+            f"{len(fixtures.tx_hashes)} tx(s), {len(fixtures.blocks)} block(s)",
+            err=True,
+        )
+
+        v2_db = _v2_dal(db_config)
+        v3_db = LegacyAdapter(
+            {network: Dal(session, raw, derived, configuration(session, derived, raw))}
+        )
+        reports = asyncio.run(
+            harness.run(
+                harness.build_services(rest_config, v2_db),
+                harness.build_services(rest_config, v3_db),
+                fixtures,
+            )
+        )
+    finally:
+        cluster.shutdown()
+
+    click.echo(compare.report(reports))
+    disagreed = [r for r in reports if not r.agrees and r.skipped is None]
+    if disagreed:
+        raise SystemExit(f"{len(disagreed)} call(s) differ")
+
+
+def _v2_dal(db_config):
+    """The v2 async DAL, built the way the web app builds it."""
+    import importlib
+    import logging
+
+    driver = db_config.driver.lower()
+    module = importlib.import_module("graphsenselib.db.asynchronous." + driver)
+    return getattr(module, driver.capitalize())(db_config, logging.getLogger("v2"))
+
+
 def main() -> None:
     cli()
 
