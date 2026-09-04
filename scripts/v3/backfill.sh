@@ -59,6 +59,10 @@
 #   LABEL               keyspace suffix; default bench1
 #   PROFILE             spark_config profile; default v3-utxo
 #   WRITER              connector | sidecar; default sidecar
+#   ACCEPT_PREFLIGHT    set to 1 to proceed past preflight problems. Only for
+#                       findings that are properties of the CHAIN rather than
+#                       of the run -- BCH block 556045 really does hold 166,882
+#                       transactions, and no configuration makes that untrue.
 #   FULL                set to 1 for a full-history run (no END_BLOCK)
 #   RF                  replication factor; default 1 (benchmark keyspace: half
 #                       the disk, half the write cost, and nothing depends on
@@ -93,6 +97,9 @@ NETWORK="${NETWORK:-btc}"
 LABEL="${LABEL:-bench1}"
 PROFILE="${PROFILE:-v3-utxo}"
 WRITER="${WRITER:-sidecar}"
+ACCEPT_PREFLIGHT="${ACCEPT_PREFLIGHT:-}"
+PREFLIGHT_ARG=()
+[[ "$ACCEPT_PREFLIGHT" == "1" ]] && PREFLIGHT_ARG=(--accept-preflight)
 RF="${RF:-1}"
 DATACENTER="${DATACENTER:-DC1}"
 GRAPHSENSE_CONFIG="${GRAPHSENSE_CONFIG:-$PWD/graphsense.yaml}"
@@ -272,7 +279,8 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
       exit 2
     fi
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \
-      --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" --dry-run
+      --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" \
+      "${PREFLIGHT_ARG[@]}" --dry-run
     ;;
   run)
     if [[ -z "$END_BLOCK" && "${FULL:-0}" != "1" ]]; then
@@ -281,7 +289,8 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
       exit 2
     fi
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \
-      --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" --yes
+      --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" \
+      "${PREFLIGHT_ARG[@]}" --yes
     ;;
   *)
     sed -n '2,50p' "$0"

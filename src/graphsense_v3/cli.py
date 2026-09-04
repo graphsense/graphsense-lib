@@ -191,6 +191,14 @@ def create(
 )
 @click.option("--spark-profile", default=None, help="override the configured profile")
 @click.option(
+    "--accept-preflight",
+    is_flag=True,
+    help="proceed even though preflight found problems. For findings that are "
+    "understood and are properties of the CHAIN rather than of the run -- a BCH "
+    "stress-test block really does hold 166k transactions. The run logs loudly "
+    "that it overrode them.",
+)
+@click.option(
     "--writer",
     type=click.Choice(["connector", "sidecar"]),
     default="connector",
@@ -211,6 +219,7 @@ def run(
     dry_run: bool,
     spark_profile: Optional[str],
     writer: str,
+    accept_preflight: bool,
     local: bool,
     yes: bool,
 ) -> None:
@@ -248,6 +257,7 @@ def run(
             end_block=end_block,
             dry_run=dry_run,
             stages=wanted,
+            accept_preflight=accept_preflight,
         )
     finally:
         spark.stop()

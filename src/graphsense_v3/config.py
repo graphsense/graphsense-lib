@@ -116,7 +116,13 @@ def _account(network: str, entity_buckets: int) -> NetworkConfig:
 #: `raw_utxo.preflight` reports the busiest block it actually sees.
 CONFIGS: dict[str, NetworkConfig] = {
     "btc": _utxo("btc", entity_buckets=300_000, tx_block_bucket_size=1),
-    "bch": _utxo("bch", entity_buckets=100_000, tx_block_bucket_size=4),
+    # tx_block_bucket_size 1, like BTC and unlike LTC: BCH permits 32 MB
+    # blocks, and the September 2018 stress test produced CONSECUTIVE blocks of
+    # 100k+ transactions -- block 556045 alone holds 166,882. Bucketing 4 of
+    # those together groups exactly the blocks that must not be grouped. The
+    # average BCH block (~431 transactions) would amortise fine at 4; the tail
+    # is what decides a partition bound.
+    "bch": _utxo("bch", entity_buckets=100_000, tx_block_bucket_size=1),
     "ltc": _utxo("ltc", entity_buckets=100_000, tx_block_bucket_size=16),
     "zec": _utxo("zec", entity_buckets=5_000, tx_block_bucket_size=256),
     "eth": _account("eth", entity_buckets=100_000),

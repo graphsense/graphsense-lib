@@ -357,3 +357,18 @@ def test_no_block_is_left_without_a_rate(spark) -> None:
     )
     filled = job.zero_fill_rates(rates, blocks)
     assert {r["block_id"] for r in filled.collect()} == set(range(1, 11))
+
+
+def test_preflight_problems_stop_a_run_and_name_their_own_override() -> None:
+    """The message used to say "fix or override" while no override existed --
+    an instruction the reader could not follow. The default stays refusal: a
+    problem found and then silently ignored is worse than one never sought."""
+    import inspect
+
+    source = inspect.getsource(job.run)
+    assert "accept_preflight" in inspect.signature(job.run).parameters
+    # Refuses unless the flag is given, and the refusal names it.
+    assert "if problems and not accept_preflight" in source
+    assert "--accept-preflight" in source
+    # And says so loudly when overridden, rather than proceeding quietly.
+    assert "PROCEEDING PAST" in source

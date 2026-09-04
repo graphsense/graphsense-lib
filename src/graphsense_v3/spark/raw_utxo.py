@@ -352,6 +352,7 @@ def preflight(
 
     from graphsense_v3.spark.columns import unknown_address_types
 
+    cfg = config_for(network)
     problems: list[str] = []
     txs = lake.read("transaction", start_block=start_block, end_block=end_block)
 
@@ -382,7 +383,9 @@ def preflight(
     if fattest and fattest[1] > MAX_TRANSACTIONS_PER_BLOCK:
         problems.append(
             f"block {fattest[0]} holds {fattest[1]} transactions, over the "
-            f"{MAX_TRANSACTIONS_PER_BLOCK} this layout is sized for; its "
+            f"{MAX_TRANSACTIONS_PER_BLOCK} this layout is sized for "
+            f"(tx_block_bucket_size is {cfg.tx_block_bucket_size}, so that "
+            f"partition also carries its neighbours); its "
             "transaction_io partition will be correspondingly large (slow to "
             "read, but still writable -- these are rows, not a collection)"
         )

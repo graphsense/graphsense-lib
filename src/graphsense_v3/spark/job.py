@@ -288,6 +288,7 @@ def run(
     end_block: Optional[int] = None,
     dry_run: bool = False,
     stages: Optional[tuple] = None,
+    accept_preflight: bool = False,
 ) -> None:
     """Backfill one network, per :class:`RunSettings`.
 
@@ -315,9 +316,20 @@ def run(
         )
         for problem in problems:
             logger.error("PREFLIGHT: %s", problem)
-        if problems:
+        if problems and not accept_preflight:
             raise SystemExit(
-                f"{len(problems)} preflight problem(s); fix or override before a run"
+                f"{len(problems)} preflight problem(s); fix them, or re-run with "
+                "--accept-preflight if they are understood and the run should "
+                "proceed anyway"
+            )
+        if problems:
+            # Loud, and repeated at the point of override: the run that
+            # proceeds past a preflight problem is the one whose log gets read
+            # months later by someone asking why a partition is 300 MB.
+            logger.warning(
+                "PROCEEDING PAST %d PREFLIGHT PROBLEM(S) because "
+                "--accept-preflight was given",
+                len(problems),
             )
 
     raw_schema = schema_for(network, Kind.RAW)
