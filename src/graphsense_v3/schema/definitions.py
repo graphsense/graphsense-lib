@@ -829,10 +829,18 @@ def _link_txs_table(name: str, src: str, dst: str, family: Family) -> Table:
                 C("dst_bucket", "int", "crc32(dst) % relation_buckets"),
                 C(dst, "blob"),
                 C("tx_id", "bigint"),
+                # What each side actually put in and took out, which is what
+                # `links_response` reports. The APPORTIONED value is NOT here:
+                # it is the graph edge weight, it belongs on the relations row
+                # where it is aggregated, and nothing reads it per transaction.
+                # This table is 21% of the derived keyspace, so a column no
+                # reader wants is the most expensive kind of dead weight.
+                #
                 # varint, as everywhere else a value is stored -- address_
                 # transactions and the currency UDT both use it, and for typical
                 # UTXO amounts it is smaller than a fixed 8 bytes, not larger.
-                C("value", "varint"),
+                C("input_value", "varint"),
+                C("output_value", "varint"),
             ),
             Key((src, "dst_bucket"), (dst, "tx_id"), ((dst, "ASC"), ("tx_id", "DESC"))),
             STCS,

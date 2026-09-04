@@ -220,9 +220,18 @@ class LegacyAdapter:
     async def get_block(self, currency: str, height: int) -> Optional[dict]:
         return await self._dal(currency).block(height)
 
-    async def get_block_timestamp(self, currency: str, height: int):
+    async def get_block_timestamp(self, currency: str, height: int) -> Optional[dict]:
+        """A ROW, not the timestamp.
+
+        The protocol says ``Optional[Dict[str, Any]]`` and `blocks_service`
+        reads ``bts.get("timestamp")`` off it. Returning the bare int raises
+        ``AttributeError: 'int' object has no attribute 'get'`` inside the
+        block-by-date binary search, nowhere near this method.
+        """
         block = await self._dal(currency).block(height)
-        return None if block is None else block.get("timestamp")
+        if block is None:
+            return None
+        return {"block_id": height, "timestamp": block.get("timestamp")}
 
     async def list_block_txs(self, currency: str, height: int) -> list:
         dal = self._dal(currency)
@@ -495,13 +504,37 @@ class LegacyAdapter:
         token_currency=None,
         page=None,
         pagesize=None,
-    ) -> list:
+    ) -> tuple:
         dal = self._dal(currency)
-        return await dal.link_transactions(
+        limit = int(pagesize or 100)
+        found = await dal.link_transactions(
             self._bytes(currency, address),
             self._bytes(currency, neighbor),
-            limit=int(pagesize or 100),
+            limit=limit,
         )
+        # `links_response` unpacks two values and reads block_id, timestamp and
+        # tx_hash off each row; the link table holds none of those, so they come
+        # from the transaction in one concurrent round.
+        detail = await dal.transactions_by_ids([row["tx_id"] for row in found])
+        rows = []
+        for row in found:
+            tx = detail.get(row["tx_id"])
+            if tx is None:
+                raise NotAvailable(
+                    f"address_link_transactions references tx_id {row['tx_id']}, "
+                    f"which {dal.raw}.transaction does not have"
+                )
+            rows.append(
+                {
+                    "tx_hash": tx.get("tx_hash"),
+                    "block_id": tx.get("block_id"),
+                    "timestamp": tx.get("block_timestamp"),
+                    "input_value": row["input_value"],
+                    "output_value": row["output_value"],
+                }
+            )
+        token = str(found[-1]["tx_id"]) if found and len(found) == limit else None
+        return rows, token
 
     async def list_neighbors(
         self,

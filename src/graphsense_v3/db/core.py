@@ -310,6 +310,7 @@ class Dal:
         include_zero_value: bool = False,
         page: Optional[int] = None,
         before_tx_id: Optional[int] = None,
+        after_tx_id: Optional[int] = None,
         limit: int = 100,
     ) -> list:
         """An address's transactions, newest first.
@@ -339,11 +340,18 @@ class Dal:
                 default=0,
             )
 
+        # Both bounds are clustering restrictions on tx_id, so a range read.
+        # `after_tx_id` is what a min_height filter becomes -- without it the
+        # height is only a hint about which page to start on, and rows BELOW it
+        # come back anyway.
         clause = ""
         extra: tuple = ()
         if before_tx_id is not None:
-            clause = " AND tx_id < %s"
-            extra = (before_tx_id,)
+            clause += " AND tx_id < %s"
+            extra += (before_tx_id,)
+        if after_tx_id is not None:
+            clause += " AND tx_id >= %s"
+            extra += (after_tx_id,)
 
         # Gathered per (direction, zero-ness) rather than through `_gather`,
         # which flattens: the DIRECTION is not on the row, it is in the
@@ -465,12 +473,20 @@ class Dal:
         """The transactions on one edge. One partition, because the layout is
         per (source, bucket) -- this is the ``/links`` fix."""
         rows = await self._select(
-            f"SELECT tx_id, value FROM {self.derived}.address_link_transactions "
+            f"SELECT tx_id, input_value, output_value FROM "
+            f"{self.derived}.address_link_transactions "
             f"WHERE src_address = %s AND dst_bucket = %s AND dst_address = %s "
             f"LIMIT {int(limit)}",
             (src, self.relation_bucket(dst), dst),
         )
-        return [AddressTx(tx_id=r.tx_id, value=int(r.value or 0)) for r in rows]
+        return [
+            {
+                "tx_id": r.tx_id,
+                "input_value": int(r.input_value or 0),
+                "output_value": int(r.output_value or 0),
+            }
+            for r in rows
+        ]
 
     async def search_addresses(self, prefix: str, *, limit: int = 10) -> list:
         """Addresses starting with ``prefix``.

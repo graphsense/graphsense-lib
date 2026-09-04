@@ -213,7 +213,8 @@ CREATE TABLE IF NOT EXISTS address_link_transactions (
     dst_bucket int,                         -- crc32(dst) % relation_buckets
     dst_address blob,
     tx_id bigint,
-    value varint,
+    input_value varint,
+    output_value varint,
     PRIMARY KEY ((src_address, dst_bucket), dst_address, tx_id)
 )
     WITH CLUSTERING ORDER BY (dst_address ASC, tx_id DESC)

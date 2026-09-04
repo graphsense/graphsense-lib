@@ -155,13 +155,17 @@ def test_tx_hash_lookup_slices_its_own_prefix() -> None:
     assert params[1] == tx_hash
 
 
-def test_block_timestamp_comes_from_the_block_row() -> None:
+def test_block_timestamp_comes_back_as_a_row_not_a_bare_int() -> None:
+    """The protocol declares Optional[Dict[str, Any]] and `blocks_service`
+    reads `bts.get("timestamp")` off it. A bare int raises AttributeError
+    inside the block-by-date binary search, nowhere near this method."""
     shim, _ = adapter(
         lambda cql, params: (
             [Row(block_id=7, timestamp=1331578610)] if "block" in cql else []
         )
     )
-    assert run(shim.get_block_timestamp("ltc", 7)) == 1331578610
+    row = run(shim.get_block_timestamp("ltc", 7))
+    assert row.get("timestamp") == 1331578610
 
 
 # --------------------------------------------------------------------------
@@ -621,3 +625,52 @@ def test_a_resume_token_becomes_an_exclusive_tx_id_bound() -> None:
     cql, params = asked[0]
     assert "tx_id < %s" in cql
     assert params[-1] == 8270462039621668
+
+
+def test_links_return_rows_and_a_paging_state() -> None:
+    """`links_response` unpacks two values. A bare list raises "not enough
+    values to unpack", naming neither the method nor the cause."""
+
+    def rows(cql, params):
+        if "address_link_transactions" in cql:
+            return [Row(tx_id=8270462039621668, input_value=10, output_value=9)]
+        if ".transaction " in cql:
+            return [
+                Row(
+                    tx_id=8270462039621668,
+                    block_id=1925,
+                    block_timestamp=1788442898,
+                    tx_hash=b"\xab\xcd",
+                )
+            ]
+        return []
+
+    shim, _ = adapter(rows)
+    result = run(shim.list_address_links("ltc", ADDRESS, NEIGHBOR))
+    assert isinstance(result, tuple) and len(result) == 2
+    found, _token = result
+    # Exactly what links_response reads off each row.
+    assert set(found[0]) == {
+        "tx_hash",
+        "block_id",
+        "timestamp",
+        "input_value",
+        "output_value",
+    }
+
+
+def test_a_link_reports_the_real_amounts_not_the_apportioned_one() -> None:
+    """The apportioned value is the graph EDGE weight; /links reports what each
+    side actually put in and took out. Serving the apportioned share would be a
+    plausible wrong number rather than an error."""
+
+    def rows(cql, params):
+        if "address_link_transactions" in cql:
+            return [Row(tx_id=1, input_value=1000, output_value=250)]
+        if ".transaction " in cql:
+            return [Row(tx_id=1, block_id=1, block_timestamp=1, tx_hash=b"\xaa")]
+        return []
+
+    shim, _ = adapter(rows)
+    found, _ = run(shim.list_address_links("ltc", ADDRESS, NEIGHBOR))
+    assert (found[0]["input_value"], found[0]["output_value"]) == (1000, 250)

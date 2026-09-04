@@ -291,6 +291,14 @@ def relation_edges(spine: "DataFrame", transactions: "DataFrame") -> "DataFrame"
             .otherwise(F.lit(0))
             .cast("bigint")
             .alias("value"),
+            # Kept, not dropped: the apportioned `value` is the graph EDGE
+            # weight, but /links reports what each side actually put in and
+            # took out of the transaction (`links_response` reads
+            # `input_value`/`output_value`). Both are already computed here;
+            # discarding them made the link table one column short of the
+            # response it exists to serve.
+            F.col("in_value").cast("bigint").alias("input_value"),
+            F.col("out_value").cast("bigint").alias("output_value"),
         )
     )
 
@@ -310,7 +318,8 @@ def address_link_transactions(edges: "DataFrame", config: NetworkConfig) -> "Dat
         bucket_expr(F.col("dst_address"), config.relation_buckets).alias("dst_bucket"),
         F.col("dst_address"),
         F.col("tx_id"),
-        F.col("value").cast("decimal(38,0)").alias("value"),
+        F.col("input_value").cast("decimal(38,0)").alias("input_value"),
+        F.col("output_value").cast("decimal(38,0)").alias("output_value"),
     )
 
 

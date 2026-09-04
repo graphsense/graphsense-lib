@@ -325,9 +325,16 @@ def test_link_transactions_carry_the_tx_list(
     Both writers already materialise these tuples and aggregate them away."""
     frames = derived_utxo.build(split_io, split_txs, blocks, rates, "btc")
     links = frames["address_link_transactions"].collect()
-    assert {(bytes(r["src_address"]), int(r["value"])) for r in links} == {
-        (ALICE, 30),
-        (BOB, 70),
+    # What each side really moved, NOT the apportioned edge weight. Alice put
+    # in 30 and Bob 70; Carol received the whole 100 from each edge. The
+    # apportioned value would say 30 and 70 on the OUTPUT side too, which is
+    # the right number for a graph edge and the wrong one for /links.
+    assert {
+        (bytes(r["src_address"]), int(r["input_value"]), int(r["output_value"]))
+        for r in links
+    } == {
+        (ALICE, 30, 100),
+        (BOB, 70, 100),
     }
     relations = frames["address_outgoing_relations"].collect()
     # the payoff: no_transactions on a relation is now the row count of the

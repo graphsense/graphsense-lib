@@ -129,15 +129,31 @@ def test_one_name_and_one_type_for_each_shared_concept() -> None:
         # utxo, `block_timestamp` on account.
         assert "block_timestamp" in tx and "timestamp" not in tx
 
-    # a transferred amount is varint everywhere, including UTXO, where the link
+    # A transferred amount is varint everywhere, including UTXO, where the link
     # table alone had it as bigint while address_transactions used varint.
+    # The link table names its amounts input_value/output_value -- what each
+    # side really moved -- rather than `value`, which is the APPORTIONED edge
+    # weight and lives on the relations row.
+    # The link table's amount columns differ by FAMILY, and deliberately:
+    # `links_response` reports a UTXO link as the two real amounts each side
+    # moved, while an eth-like link goes through `txs_from_rows` and is a
+    # transaction, so one `value` is the whole story there.
+    link_amounts = {
+        Family.UTXO: ("input_value", "output_value"),
+        Family.ACCOUNT: ("value",),
+    }
     for family in Family:
         tf = derived(family)
-        types = {
-            table: {c.name: c.type for c in tf.table(table).columns}
-            for table in ("address_transactions", "address_link_transactions")
+        checks = {
+            "address_transactions": ("value",),
+            "address_link_transactions": link_amounts[family],
         }
-        assert {t["value"] for t in types.values()} == {"varint"}
+        for table, columns in checks.items():
+            types = {c.name: c.type for c in tf.table(table).columns}
+            assert {types[name] for name in columns} == {"varint"}, (
+                f"{family.value}.{table} stores an amount as something other "
+                "than varint"
+            )
 
 
 def test_transactions_are_addressed_identically_in_both_families() -> None:

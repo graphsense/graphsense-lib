@@ -485,7 +485,8 @@ class Prober:
             self.probe(
                 "link transactions (edge tx list)",
                 "/{network}/addresses/{address}/links",
-                f"SELECT tx_id, value FROM {self.derived}.address_link_transactions "
+                f"SELECT tx_id, input_value, output_value FROM "
+                f"{self.derived}.address_link_transactions "
                 f"WHERE src_address = %s AND dst_bucket = %s AND dst_address = %s",
                 (found.link_src, dst_bucket, found.link_dst),
                 note="the /links fix: one partition per (source, bucket)",
