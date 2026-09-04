@@ -114,6 +114,64 @@ def rated_tip(rates: "DataFrame") -> Optional[int]:
     return None if row["tip"] is None else int(row["tip"])
 
 
+#: How far past the last real rate a block may sit and still be served with
+#: that rate, in seconds of block time.
+#:
+#: Rates land a day at a time, so the chain tip is ALWAYS unrated for up to ~24
+#: hours. Refusing those blocks pins the backend a day behind the chain, which
+#: is worse than serving them at yesterday's rate -- and it is what v2 does
+#: when `forward_fill_rates` is on.
+#:
+#: The cap is the point: beyond it the rate pipeline is BROKEN rather than
+#: lagging, and carrying a stale rate forward indefinitely would hide that
+#: behind plausible numbers.
+RATE_FORWARD_FILL_SECONDS = 48 * 3600
+
+
+def forward_fill_rates(
+    rates: "DataFrame", blocks: "DataFrame", *, within_seconds: int
+) -> "DataFrame":
+    """``rates`` plus rows for recent unrated blocks, at the last known rate.
+
+    The window is measured in BLOCK TIME rather than a block count, because a
+    count means something different on every chain -- a day is ~576 LTC blocks
+    and ~28,800 TRON ones.
+
+    Carried per asset: each asset's own last rate extends forward, so a token
+    whose feed stopped earlier than the native coin's does not silently borrow
+    the coin's freshness.
+    """
+    from pyspark.sql import Window
+    from pyspark.sql import functions as F
+
+    timed = rates.join(blocks.select("block_id", "timestamp"), on="block_id")
+    newest = Window.partitionBy("asset").orderBy(F.desc("block_id"))
+    last = (
+        timed.withColumn("_rank", F.row_number().over(newest))
+        .where(F.col("_rank") == 1)
+        .select(
+            F.col("asset").alias("_asset"),
+            F.col("block_id").alias("_block_id"),
+            F.col("timestamp").alias("_timestamp"),
+            F.col("fiat_values").alias("_fiat_values"),
+        )
+    )
+    filled = (
+        blocks.select("block_id", "timestamp")
+        .join(
+            F.broadcast(last),
+            (F.col("block_id") > F.col("_block_id"))
+            & (F.col("timestamp") <= F.col("_timestamp") + F.lit(within_seconds)),
+        )
+        .select(
+            F.col("_asset").alias("asset"),
+            F.col("block_id"),
+            F.col("_fiat_values").alias("fiat_values"),
+        )
+    )
+    return rates.unionByName(filled)
+
+
 def bound_to_rated_blocks(raw_frames: dict, tip: int) -> dict:
     """``raw_frames`` trimmed to blocks a rate exists for.
 
@@ -353,21 +411,32 @@ def _run_derived(
     """
     rates = exchange_rates_by_block(spark, network, rates_keyspace, raw_frames["block"])
 
-    # Every derived row must be servable, which means every block it covers
-    # needs a rate. See `bound_to_rated_blocks`.
-    tip = rated_tip(rates)
-    if tip is None:
+    # Every derived row must be SERVABLE, and a block with no rate is not: the
+    # REST rates service raises rather than degrading, so a transaction in an
+    # unrated block fails the whole call. Two steps, in this order:
+    #
+    #   1. carry the last rate forward over the recent tail, because rates land
+    #      a day at a time and the tip is always unrated for up to ~24h;
+    #   2. drop whatever is STILL unrated, which means the gap is wider than a
+    #      lag and no rate we have is honest about it.
+    if rated_tip(rates) is None:
         raise SystemExit(
             f"{rates_keyspace} has no exchange rates for any block in range; "
             "the derived keyspace would be entirely unservable"
         )
+    rates = forward_fill_rates(
+        rates, raw_frames["block"], within_seconds=RATE_FORWARD_FILL_SECONDS
+    )
+    tip = rated_tip(rates)
     block_tip = raw_frames["block"].agg({"block_id": "max"}).collect()[0][0]
-    if block_tip is not None and tip < int(block_tip):
+    if tip is not None and block_tip is not None and tip < int(block_tip):
         logger.warning(
-            "rates reach block %d but the range holds blocks to %d; the derived "
-            "keyspace stops at %d, dropping %d unrated block(s). They are picked "
-            "up by the next run, once their rate row lands.",
+            "rates reach block %d (after carrying the last rate forward up to "
+            "%dh) but the range holds blocks to %d; the derived keyspace stops "
+            "at %d, dropping %d block(s) too old to fill. A gap this wide is a "
+            "broken rate feed rather than the usual daily lag.",
             tip,
+            RATE_FORWARD_FILL_SECONDS // 3600,
             int(block_tip),
             tip,
             int(block_tip) - tip,

@@ -260,3 +260,94 @@ def test_block_id_is_preferred_over_tx_id_when_both_are_present(spark) -> None:
     )
     bounded = job.bound_to_rated_blocks({"transaction": frame}, 9)
     assert [r["block_id"] for r in bounded["transaction"].collect()] == [9]
+
+
+BLOCKS_SCHEMA = "block_id INT, timestamp LONG"
+DAY = 86400
+
+
+def test_recent_unrated_blocks_get_the_last_known_rate(spark) -> None:
+    """Rates land a day at a time, so the chain tip is ALWAYS unrated for up to
+    ~24h. Refusing those blocks pins the backend a day behind the chain."""
+    rates = spark.createDataFrame(
+        [{"asset": "LTC", "block_id": 5, "fiat_values": {"EUR": 1.5}}],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [
+            {"block_id": 5, "timestamp": 1_000_000},
+            {"block_id": 6, "timestamp": 1_000_000 + DAY},
+        ],
+        schema=BLOCKS_SCHEMA,
+    )
+    filled = {
+        r["block_id"]: r["fiat_values"]
+        for r in job.forward_fill_rates(rates, blocks, within_seconds=2 * DAY).collect()
+    }
+    assert filled == {5: {"EUR": 1.5}, 6: {"EUR": 1.5}}
+
+
+def test_a_block_beyond_the_window_is_not_filled(spark) -> None:
+    """The cap is the point: past it the rate feed is broken rather than
+    lagging, and a stale rate carried forever would hide that behind plausible
+    numbers."""
+    rates = spark.createDataFrame(
+        [{"asset": "LTC", "block_id": 5, "fiat_values": {"EUR": 1.5}}],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [
+            {"block_id": 5, "timestamp": 1_000_000},
+            {"block_id": 9, "timestamp": 1_000_000 + 10 * DAY},
+        ],
+        schema=BLOCKS_SCHEMA,
+    )
+    filled = job.forward_fill_rates(rates, blocks, within_seconds=2 * DAY)
+    assert [r["block_id"] for r in filled.collect()] == [5]
+
+
+def test_the_fill_never_moves_a_rate_backwards(spark) -> None:
+    """Only blocks AFTER the last rate are filled. An earlier block with no
+    rate is a hole in the feed, and filling it forward would be filling it
+    backward -- a different number than the day actually had."""
+    rates = spark.createDataFrame(
+        [{"asset": "LTC", "block_id": 5, "fiat_values": {"EUR": 1.5}}],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [
+            {"block_id": 3, "timestamp": 1_000_000 - DAY},
+            {"block_id": 5, "timestamp": 1_000_000},
+        ],
+        schema=BLOCKS_SCHEMA,
+    )
+    filled = job.forward_fill_rates(rates, blocks, within_seconds=2 * DAY)
+    assert [r["block_id"] for r in filled.collect()] == [5]
+
+
+def test_each_asset_carries_its_own_last_rate(spark) -> None:
+    """A token whose feed stopped earlier must not borrow the native coin's
+    freshness -- that would invent a rate for a token nobody priced."""
+    rates = spark.createDataFrame(
+        [
+            {"asset": "ETH", "block_id": 5, "fiat_values": {"EUR": 1.5}},
+            {"asset": "USDT", "block_id": 3, "fiat_values": {"EUR": 0.9}},
+        ],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [
+            {"block_id": 3, "timestamp": 1_000_000},
+            {"block_id": 5, "timestamp": 1_000_000 + 60},
+            {"block_id": 6, "timestamp": 1_000_000 + 120},
+        ],
+        schema=BLOCKS_SCHEMA,
+    )
+    filled = {
+        (r["asset"], r["block_id"]): r["fiat_values"]
+        for r in job.forward_fill_rates(rates, blocks, within_seconds=2 * DAY).collect()
+    }
+    # ETH extends from 5; USDT extends from its OWN last rate at 3.
+    assert filled[("ETH", 6)] == {"EUR": 1.5}
+    assert filled[("USDT", 5)] == {"EUR": 0.9}
+    assert filled[("USDT", 6)] == {"EUR": 0.9}
