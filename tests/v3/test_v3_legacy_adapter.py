@@ -740,3 +740,55 @@ def test_a_rates_map_is_still_labelled_by_key() -> None:
         {"code": "eur", "value": 1.5},
         {"code": "usd", "value": 2.5},
     ]
+
+
+def test_an_account_neighbour_stays_bytes_for_the_service_to_format() -> None:
+    """v2 stores an account address as a BLOB, and `address_to_user_format`
+    keys off the type: bytes become "0x...", while a str is only lowercased.
+    Decoding here would serve "742d..." -- a valid-looking address missing its
+    prefix, on every neighbour of every account chain."""
+    from graphsense_v3.codec import encode_address
+
+    encoded = encode_address("eth", "0x742d35cc6634c0532925a3b844bc9e7595f0beb7")
+    session = FakeSession(
+        lambda cql, params: (
+            [Row(dst_address=encoded, no_transactions=1, epoch=0)]
+            if "relations" in cql
+            else []
+        )
+    )
+    shim = LegacyAdapter(
+        {"eth": Dal(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    rows, _ = run(shim.list_neighbors("eth", encoded, True))
+    assert isinstance(rows[0]["dst_address"], bytes)
+
+    from graphsenselib.utils.address import address_to_user_format
+
+    assert address_to_user_format("eth", rows[0]["dst_address"]).startswith("0x")
+
+
+def test_a_utxo_neighbour_is_still_a_decoded_string() -> None:
+    encoded = encode_address("ltc", NEIGHBOR)
+    shim, _ = adapter(
+        lambda cql, params: (
+            [Row(dst_address=encoded, no_transactions=1, epoch=0)]
+            if "relations" in cql
+            else []
+        )
+    )
+    rows, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
+    assert rows[0]["dst_address"] == NEIGHBOR
+
+
+def test_account_links_refuse_rather_than_failing_on_a_column_name() -> None:
+    """The account link table is keyed (src, dst, tx_page) with no dst_bucket,
+    and `links_response` routes it through `txs_from_rows` instead of reporting
+    two amounts. The UTXO read would die on `Undefined column name dst_bucket`
+    -- a CQL error naming a column rather than the missing feature."""
+    session = FakeSession()
+    shim = LegacyAdapter(
+        {"eth": Dal(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    with pytest.raises(NotAvailable, match="UTXO layout only"):
+        run(shim.list_address_links("eth", "0xaa", "0xbb"))

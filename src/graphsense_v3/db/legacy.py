@@ -520,6 +520,20 @@ class LegacyAdapter:
         page=None,
         pagesize=None,
     ) -> tuple:
+        from graphsenselib.utils.rest_utils import is_eth_like
+
+        if is_eth_like(currency.lower()):
+            # The account link table is a different shape -- keyed
+            # (src, dst, tx_page) with a tx_reference/currency clustering and
+            # no dst_bucket -- and `links_response` routes an account link
+            # through `txs_from_rows` rather than reporting two amounts. The
+            # UTXO read below would fail on `dst_bucket` with a CQL error that
+            # names a column rather than the missing feature.
+            raise NotAvailable(
+                "list_address_links is implemented for the UTXO layout only; "
+                "the account link table has its own shape and no v3 account "
+                "keyspace exists yet to build it against"
+            )
         dal = self._dal(currency)
         limit = int(pagesize or 100)
         found = await dal.link_transactions(
@@ -599,17 +613,30 @@ class LegacyAdapter:
         ``value`` becomes an object with ``.value`` and ``.fiat_values``,
         because `to_values` reads attributes rather than keys.
         """
+        from graphsenselib.utils.rest_utils import is_eth_like
+
         from graphsense_v3.codec import decode_address
 
+        # v2 stores a UTXO address as TEXT and an account address as a BLOB,
+        # and `address_to_user_format` keys off the type it is handed: bytes
+        # become "0x..." for eth, while a str is only lowercased. Decoding an
+        # eth address here would hand the service "742d..." and it would serve
+        # that -- a valid-looking address missing its prefix, on every
+        # neighbour of every account chain.
+        account = is_eth_like(currency.lower())
         side = "dst_address" if is_outgoing else "src_address"
         rows = []
         for edge in found:
             rows.append(
                 {
-                    # The DECODED string: the service hands this straight to
-                    # `address_to_user_format`, which passes a UTXO address
-                    # through unchanged -- raw bytes would reach the response.
-                    side: decode_address(currency.lower(), bytes(edge.address)),
+                    side: (
+                        bytes(edge.address)
+                        if account
+                        # The DECODED string: `address_to_user_format` passes a
+                        # UTXO address through unchanged, so raw bytes would
+                        # reach the response.
+                        else decode_address(currency.lower(), bytes(edge.address))
+                    ),
                     # The service reads this by SUBSCRIPT before anything else,
                     # then feeds it to get_fresh_cluster_id. Absent, the whole
                     # call dies with a KeyError that names no cause; present,
