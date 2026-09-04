@@ -238,7 +238,7 @@ def test_fixtures_from_v3_decode_to_strings_and_deduplicate(monkeypatch) -> None
     )
 
     fixtures = backtest.fixtures_from_v3(
-        None, "ltc_raw_v3_x", "ltc_derived_v3_x", "ltc"
+        RatedSession(3171361), "ltc_raw_v3_x", "ltc_derived_v3_x", "ltc"
     )
     assert fixtures.addresses == [LTC_P2PKH]  # decoded, and not repeated
     assert fixtures.tx_hashes == ["abcd"]
@@ -256,3 +256,58 @@ def test_the_v3_session_uses_the_configs_port() -> None:
     # a node naming its own port keeps it, and no port changes nothing
     assert backtest.with_port(["10.0.0.1:9999"], 9043) == ["10.0.0.1:9999"]
     assert backtest.with_port(["10.0.0.1"], None) == ["10.0.0.1"]
+
+
+class RatedSession:
+    """A sync driver session answering exchange_rates for a fixed rated tip."""
+
+    def __init__(self, tip):
+        self.tip = tip
+        self.asked = []
+
+    def execute(self, cql, params):
+        asset, group, upper = params
+        self.asked.append((group, upper))
+        # Partition-aware: a partition answers only for blocks it holds, which
+        # is what makes the walk-down actually walk.
+        in_group = self.tip // 100 == group
+        if in_group and self.tip <= upper:
+            return [SimpleNamespace(block_id=self.tip)]
+        return []
+
+
+def test_a_rated_block_is_returned_unchanged() -> None:
+    session = RatedSession(3170999)
+    assert (
+        backtest.rated_block(session, "ltc_derived_v3_x", "ltc", 3170999, 100)
+        == 3170999
+    )
+
+
+def test_an_unrated_block_walks_down_to_the_last_rated_one() -> None:
+    """A one-day rate lag turned into four "differences" in the first run: the
+    fixture sat in a block with no rate, so every call touching it failed on
+    the v3 side for a reason unrelated to the row under test."""
+    session = RatedSession(3170999)
+    found = backtest.rated_block(session, "ltc_derived_v3_x", "ltc", 3171361, 100)
+    assert found == 3170999
+    # It asks the block's own partition first, then walks down.
+    assert session.asked[0] == (31713, 3171361)
+    assert session.asked[1][0] == 31712
+
+
+def test_the_walk_down_asks_each_partition_for_its_own_top_block() -> None:
+    """Carrying the original height down would ask partition 31712 for a block
+    <= 3171361, which every row in it satisfies -- masking the bug where the
+    partition bound and the block bound disagree."""
+    session = RatedSession(3170999)
+    backtest.rated_block(session, "ltc_derived_v3_x", "ltc", 3171361, 100)
+    group, upper = session.asked[1]
+    assert (group, upper) == (31712, 3171299)
+
+
+def test_giving_up_returns_none_rather_than_an_unrated_block() -> None:
+    """None says "no comparable fixture here"; the original block would look
+    like a fixture and fail every call made against it."""
+    session = RatedSession(tip=10**18)  # never satisfies the bound
+    assert backtest.rated_block(session, "ltc_derived_v3_x", "ltc", 500, 100) is None

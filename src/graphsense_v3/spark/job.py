@@ -102,6 +102,51 @@ def rates_by_block(blocks: "DataFrame", rates: "DataFrame") -> "DataFrame":
     )
 
 
+def rated_tip(rates: "DataFrame") -> Optional[int]:
+    """The highest block a rate exists for, or None if there are none.
+
+    Rates arrive a day at a time, so this normally sits a few hundred blocks
+    below the chain tip -- the current day has no rate row until the day closes.
+    """
+    from pyspark.sql import functions as F
+
+    row = rates.agg(F.max("block_id").alias("tip")).collect()[0]
+    return None if row["tip"] is None else int(row["tip"])
+
+
+def bound_to_rated_blocks(raw_frames: dict, tip: int) -> dict:
+    """``raw_frames`` trimmed to blocks a rate exists for.
+
+    **A derived row for an unrated block is not servable.** The REST rates
+    service raises ``BlockNotFoundException`` when a block has no rate, so a
+    transaction in one fails the whole call rather than degrading -- and v2
+    never produces such a block: `deltaupdate/deltaupdater.py` either stops at
+    ``find_highest_block_with_exchange_rates()`` or forward-fills, so every
+    block in a served keyspace has a rate either way.
+
+    This takes v2's default, stopping rather than inventing a rate. The cost is
+    the current day's blocks, which the next run picks up once their rate row
+    lands.
+    """
+    from pyspark.sql import functions as F
+
+    # tx_id is (block_id << 32) + index, so the block bound is a tx_id bound --
+    # which is what the tables keyed only by tx_id need.
+    first_unrated_tx = (tip + 1) << 32
+    bounded = {}
+    for name, frame in raw_frames.items():
+        columns = frame.columns
+        if "block_id" in columns:
+            bounded[name] = frame.where(F.col("block_id") <= tip)
+        elif "tx_id" in columns:
+            bounded[name] = frame.where(F.col("tx_id") < first_unrated_tx)
+        else:
+            # Neither key -- configuration, and the summary rows, which are
+            # rebuilt from the bounded frames rather than trimmed.
+            bounded[name] = frame
+    return bounded
+
+
 def exchange_rates_by_block(
     spark: "SparkSession", network: str, keyspace: str, blocks: "DataFrame"
 ) -> "DataFrame":
@@ -307,6 +352,27 @@ def _run_derived(
     the memory.
     """
     rates = exchange_rates_by_block(spark, network, rates_keyspace, raw_frames["block"])
+
+    # Every derived row must be servable, which means every block it covers
+    # needs a rate. See `bound_to_rated_blocks`.
+    tip = rated_tip(rates)
+    if tip is None:
+        raise SystemExit(
+            f"{rates_keyspace} has no exchange rates for any block in range; "
+            "the derived keyspace would be entirely unservable"
+        )
+    block_tip = raw_frames["block"].agg({"block_id": "max"}).collect()[0][0]
+    if block_tip is not None and tip < int(block_tip):
+        logger.warning(
+            "rates reach block %d but the range holds blocks to %d; the derived "
+            "keyspace stops at %d, dropping %d unrated block(s). They are picked "
+            "up by the next run, once their rate row lands.",
+            tip,
+            int(block_tip),
+            tip,
+            int(block_tip) - tip,
+        )
+        raw_frames = bound_to_rated_blocks(raw_frames, tip)
 
     schema = schema_for(network, Kind.DERIVED)
     with Stage("build derived frames"):

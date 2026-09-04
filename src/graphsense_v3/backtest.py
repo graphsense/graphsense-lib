@@ -279,6 +279,43 @@ CALLS: list = [
 ]
 
 
+#: How far below an unrated block to look for a rated one, in rate partitions.
+RATED_FIXTURE_MAX_GROUPS = 50
+
+
+def rated_block(session: Any, derived: str, network: str, block_id: int, size: int):
+    """``block_id``, or the highest rated block at or below it.
+
+    A fixture in an unrated block is not comparable. The REST rates service
+    raises ``BlockNotFoundException`` for a block with no rate rather than
+    degrading, so every call touching it fails on the v3 side for a reason that
+    has nothing to do with the row under test -- which is how a one-day rate lag
+    turned into four "differences" in the first run.
+
+    Rates arrive a day at a time, so the answer is normally in the block's own
+    partition or the one below it.
+    """
+    asset = network.upper()
+    group = block_id // size
+    for _ in range(RATED_FIXTURE_MAX_GROUPS):
+        if group < 0:
+            break
+        rows = list(
+            session.execute(
+                f"SELECT block_id FROM {derived}.exchange_rates "
+                f"WHERE asset = %s AND block_id_group = %s AND block_id <= %s "
+                f"ORDER BY block_id DESC LIMIT 1",
+                (asset, group, block_id),
+            )
+        )
+        if rows:
+            return rows[0].block_id
+        group -= 1
+        # Ask the next partition down for its own top block, not the original.
+        block_id = (group + 1) * size - 1
+    return None
+
+
 def fixtures_from_v3(session: Any, raw: str, derived: str, network: str) -> Fixtures:
     """Fixtures discovered in the v3 keyspace, in v3's spelling.
 
@@ -300,13 +337,29 @@ def fixtures_from_v3(session: Any, raw: str, derived: str, network: str) -> Fixt
         for a in (found.address, found.busiest_address)
         if a
     ]
+    block = found.block_id
+    if block is not None:
+        rated = rated_block(
+            session, derived, network, block, config.get("block_bucket_size") or 100
+        )
+        if rated is None:
+            logger.warning(
+                "no rated block at or below %d; block fixtures will fail on the "
+                "v3 side for want of an exchange rate, not for a data difference",
+                block,
+            )
+        elif rated != block:
+            logger.warning(
+                "block %d has no exchange rate; using %d instead", block, rated
+            )
+            block = rated
     return Fixtures(
         network=network,
         # dict.fromkeys rather than set(): the order a report lists its calls in
         # should not change between runs on identical data.
         addresses=list(dict.fromkeys(addresses)),
         tx_hashes=[bytes(found.tx_hash).hex()] if found.tx_hash else [],
-        blocks=[found.block_id] if found.block_id is not None else [],
+        blocks=[block] if block is not None else [],
     )
 
 

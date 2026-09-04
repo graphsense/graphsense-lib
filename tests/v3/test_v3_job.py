@@ -110,7 +110,11 @@ def test_a_positional_fiat_list_is_refused(spark) -> None:
 
 def test_rates_join_by_date(spark, blocks) -> None:
     """A block whose date has no rate gets no row at all, so the transform
-    contributes no fiat for it -- "unknown", not "worthless"."""
+    contributes no fiat for it -- "unknown", not "worthless".
+
+    The derived stage then refuses to COVER such a block at all; see
+    `bound_to_rated_blocks`. An unrated block is not servable, so leaving it in
+    would trade a missing fiat value for a failed request."""
     rates = spark.createDataFrame(
         [{"asset": "LTC", "date": "1970-01-01", "fiat_values": {"EUR": 1.5}}],
         schema=V3_RAW,
@@ -178,3 +182,81 @@ def frame_doubler():
     from pyspark.sql import functions as F
 
     return F.col("a") * 2
+
+
+# --------------------------------------------------------------------------
+# Bounding the derived stage to blocks a rate exists for.
+#
+# The first live back-to-back run failed on this: v3 wrote blocks and
+# transactions past the last rated block, and `RatesService` raises
+# BlockNotFoundException for a block with no rate -- so those rows were not
+# degraded, they were unservable, and the failure surfaced three layers up as
+# "block not found" for a block that was plainly there.
+# --------------------------------------------------------------------------
+
+RATES_SCHEMA = "asset STRING, block_id INT, fiat_values MAP<STRING, DOUBLE>"
+
+
+def test_rated_tip_is_the_highest_block_with_a_rate(spark) -> None:
+    rates = spark.createDataFrame(
+        [
+            {"asset": "LTC", "block_id": 5, "fiat_values": {"EUR": 1.0}},
+            {"asset": "LTC", "block_id": 9, "fiat_values": {"EUR": 1.0}},
+        ],
+        schema=RATES_SCHEMA,
+    )
+    assert job.rated_tip(rates) == 9
+
+
+def test_rated_tip_is_none_when_nothing_is_rated(spark) -> None:
+    """Distinguishable from 0, which is a real block."""
+    empty = spark.createDataFrame([], schema=RATES_SCHEMA)
+    assert job.rated_tip(empty) is None
+
+
+def test_blocks_past_the_rated_tip_are_dropped(spark) -> None:
+    blocks = spark.createDataFrame(
+        [{"block_id": 8}, {"block_id": 9}, {"block_id": 10}],
+        schema="block_id INT",
+    )
+    bounded = job.bound_to_rated_blocks({"block": blocks}, 9)
+    assert [r["block_id"] for r in bounded["block"].collect()] == [8, 9]
+
+
+def test_a_tx_id_keyed_frame_is_bounded_at_the_block_boundary(spark) -> None:
+    """`transaction_io` has no block_id, only tx_id. Since tx_id is
+    (block_id << 32) + index, the block bound IS a tx_id bound -- and it must
+    keep the LAST transaction of the rated block while dropping the first of
+    the next one, which a bound computed off the wrong side would invert."""
+    last_of_9 = (9 << 32) + 4294967295
+    first_of_10 = 10 << 32
+    io = spark.createDataFrame(
+        [{"tx_id": last_of_9}, {"tx_id": first_of_10}],
+        schema="tx_id LONG",
+    )
+    bounded = job.bound_to_rated_blocks({"transaction_io": io}, 9)
+    assert [r["tx_id"] for r in bounded["transaction_io"].collect()] == [last_of_9]
+
+
+def test_a_frame_with_neither_key_passes_through(spark) -> None:
+    """`configuration` has no block or tx column and must not be dropped."""
+    config = spark.createDataFrame(
+        [{"keyspace_name": "ltc_derived_v3_x"}], schema="keyspace_name STRING"
+    )
+    bounded = job.bound_to_rated_blocks({"configuration": config}, 9)
+    assert bounded["configuration"].count() == 1
+
+
+def test_block_id_is_preferred_over_tx_id_when_both_are_present(spark) -> None:
+    """`transaction` carries both. Bounding on block_id is the exact test;
+    falling through to the tx_id bound would be equivalent here but is one more
+    place for the shift to be wrong."""
+    frame = spark.createDataFrame(
+        [
+            {"block_id": 9, "tx_id": (9 << 32) + 1},
+            {"block_id": 10, "tx_id": (10 << 32) + 1},
+        ],
+        schema="block_id INT, tx_id LONG",
+    )
+    bounded = job.bound_to_rated_blocks({"transaction": frame}, 9)
+    assert [r["block_id"] for r in bounded["transaction"].collect()] == [9]
