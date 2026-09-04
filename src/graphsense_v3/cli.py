@@ -51,15 +51,30 @@ def cli(verbose: bool) -> None:
 @_NETWORK
 @_LABEL
 @click.option("--spark-profile", default=None, help="override the configured profile")
+@click.option(
+    "--writer",
+    type=click.Choice(["connector", "sidecar"]),
+    default="connector",
+    show_default=True,
+    help="which write path the plan should REPORT. Pass the same value the run "
+    "will use, or the plan describes a run nobody is going to make.",
+)
 def plan(
-    env: str, network: str, label: Optional[str], spark_profile: Optional[str]
+    env: str,
+    network: str,
+    label: Optional[str],
+    spark_profile: Optional[str],
+    writer: str,
 ) -> None:
     """Show what a run would do, without touching anything.
 
     Worth reading before every run: it names the keyspaces that get written and
     the one that is only read.
     """
-    click.echo(_settings(env, network, label, spark_profile).describe())
+    settings = _settings(env, network, label, spark_profile)
+    if writer == "sidecar":
+        settings = settings.with_sidecar()
+    click.echo(settings.describe())
 
 
 def _replication_options(command):

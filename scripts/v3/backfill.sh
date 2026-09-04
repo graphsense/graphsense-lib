@@ -243,7 +243,11 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
 "'
     ;;
   plan)
-    v3 plan -e "$ENV" -n "$NETWORK" --label "$LABEL" --spark-profile "$PROFILE"
+    # --writer too: without it `plan` prints the settings default and claims a
+    # run would use the connector, while `run` below passes $WRITER (sidecar).
+    # A plan that misreports the plan is worse than no plan.
+    v3 plan -e "$ENV" -n "$NETWORK" --label "$LABEL" --spark-profile "$PROFILE" \
+      --writer "$WRITER"
     ;;
   create)
     v3 create -e "$ENV" -n "$NETWORK" --label "$LABEL" "${REPLICATION[@]}"
