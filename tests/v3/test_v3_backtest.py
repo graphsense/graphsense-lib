@@ -430,3 +430,29 @@ def test_no_statistics_row_is_not_reported_as_a_rate_problem() -> None:
         )
         is None
     )
+
+
+def test_both_sides_are_timed_when_both_complete() -> None:
+    async def fn(n, v):
+        return {"a": 1}
+
+    report = run(
+        backtest.run_call(call(), services(fn), services(fn), "ltc", LTC_P2PKH)
+    )
+    assert report.left_ms is not None and report.right_ms is not None
+
+
+def test_a_failed_call_is_not_timed() -> None:
+    """Timing a raised call measures how fast something FAILED, which would
+    flatter whichever side broke earlier."""
+
+    async def ok(n, v):
+        return {"a": 1}
+
+    async def boom(n, v):
+        raise KeyError("nope")
+
+    report = run(
+        backtest.run_call(call(), services(ok), services(boom), "ltc", LTC_P2PKH)
+    )
+    assert report.left_ms is None and report.right_ms is None

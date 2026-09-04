@@ -275,7 +275,12 @@ def test_io_legs_agrees_with_deriving_them_from_transaction_io(spine_lake) -> No
     """The backfill feeds the derived stage `io_legs` rather than letting it
     filter `transaction_io` itself -- that is what keeps the address encoder to
     one Python round trip per row instead of three. `legs` remains the
-    definition of which rows those are, so the two must not drift."""
+    definition of which rows those are, so the two must not drift.
+
+    The COINBASE leg is the one exception and is excluded here: it has no
+    `transaction_io` row to be derived from, by construction. It has its own
+    test below."""
+    from graphsense_v3.codec import COINBASE_BYTES
     from graphsense_v3.spark import derived_utxo
 
     frames = raw_utxo.build(spine_lake, "btc", "btc_raw_v3")
@@ -284,7 +289,8 @@ def test_io_legs_agrees_with_deriving_them_from_transaction_io(spine_lake) -> No
 
     assert definition.columns == shortcut.columns
     rows = sorted(map(tuple, definition.collect()))
-    assert rows == sorted(map(tuple, shortcut.collect()))
+    real = [r for r in shortcut.collect() if bytes(r[1]) != COINBASE_BYTES]
+    assert rows == sorted(map(tuple, real))
     # Not vacuous: the multisig and nulldata outputs are gone, and the address
     # paid twice in one transaction is one leg of 5700.
     assert sorted((bytes(r[1]), r[3]) for r in rows if r[2] is False) == sorted(
@@ -293,6 +299,44 @@ def test_io_legs_agrees_with_deriving_them_from_transaction_io(spine_lake) -> No
             (encode_address("btc", SEGWIT), 5700),
         ]
     )
+
+
+def test_a_coinbase_transaction_gets_a_synthetic_input_leg(spine_lake) -> None:
+    """graphsense-spark inserts a literal "coinbase" input on such
+    transactions (`utxo/Transformation.scala:111-125`), valued at the total
+    output, and REST serves it as a neighbour. Without it a mined output has NO
+    incoming relation -- which is how a v2 address with one incoming neighbour
+    read as zero in v3 for 28 of 52 sampled addresses."""
+    from graphsense_v3.codec import COINBASE, COINBASE_BYTES, decode_address
+
+    frames = raw_utxo.build(spine_lake, "btc", "btc_raw_v3")
+    legs = [
+        row
+        for row in frames[raw_utxo.SPINE].collect()
+        if bytes(row["address"]) == COINBASE_BYTES
+    ]
+    assert legs, "no coinbase leg was emitted"
+    # An INPUT: the value flows FROM the coinbase, which is what makes the
+    # mined output's relation an incoming one.
+    assert all(row["is_output"] is False for row in legs)
+    # The sentinel round-trips to the string REST serves.
+    assert decode_address("btc", COINBASE_BYTES) == COINBASE
+
+
+def test_the_coinbase_leg_is_valued_at_the_total_output(spine_lake) -> None:
+    """Spark values it `col(totalOutput)`. A different number would make the
+    mined address's incoming value disagree with v2 while the edge itself
+    looked correct."""
+    from graphsense_v3.codec import COINBASE_BYTES
+
+    frames = raw_utxo.build(spine_lake, "btc", "btc_raw_v3")
+    txs = {
+        row["tx_id"]: row["total_output"]
+        for row in frames["transaction"].select("tx_id", "total_output").collect()
+    }
+    for row in frames[raw_utxo.SPINE].collect():
+        if bytes(row["address"]) == COINBASE_BYTES:
+            assert row["value"] == txs[row["tx_id"]]
 
 
 def test_utxo_tx_id_is_the_compound_block_and_index(utxo_lake) -> None:

@@ -408,7 +408,13 @@ class LegacyAdapter:
         # no error and a plausible-looking answer.
         is_outgoing = None if direction is None else "out" in str(direction).lower()
         before = None
-        if max_height is not None:
+        if page:
+            # A resume token from a previous call. The format is OURS -- the
+            # service treats it as opaque -- so it is the last tx_id handed
+            # out, and `before_tx_id` is exclusive, which makes resuming exact
+            # rather than off by one row.
+            before = int(page)
+        elif max_height is not None:
             from graphsense_v3.codec import tx_id_range
 
             before = tx_id_range(max_height, max_height)[1] + 1
@@ -418,14 +424,25 @@ class LegacyAdapter:
 
             low = tx_id_range(min_height, min_height)[0]
             start_page = await dal.page_for_tx(raw, is_outgoing, low)
+        limit = int(pagesize or 100)
         found = await dal.transactions(
             raw,
             is_outgoing=is_outgoing,
             page=start_page,
             before_tx_id=before,
-            limit=int(pagesize or 100),
+            limit=limit,
         )
-        return await self._as_v2_txs(currency, found), None
+        # A full page MAY have more behind it; a short one cannot. Returning
+        # None unconditionally is what made v3 look like every address had
+        # exactly one page -- a caller would never see past the first `pagesize`
+        # transactions, and nothing would report an error.
+        #
+        # NOTE: this pages WITHIN one ordinal page, so an address with more
+        # than tx_page_size transactions stops at that boundary. Nothing on LTC
+        # comes close (tx_page_size is 100_000); crossing it needs the page
+        # index, and the direction-merged case needs a cursor per direction.
+        token = str(found[-1].tx_id) if found and len(found) == limit else None
+        return await self._as_v2_txs(currency, found), token
 
     async def _as_v2_txs(self, currency: str, found: list) -> list:
         """v3's `AddressTx` rows as the dicts `txs_from_rows` reads.

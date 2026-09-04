@@ -66,6 +66,17 @@ IGNORED_FIELDS: dict = {
 }
 
 
+#: Fields whose PRESENCE is the contract but whose value is not. A paging token
+#: is opaque and backend-specific -- v2's "49469955:1" and v3's tx_id cursor
+#: cannot match and neither is wrong. What must agree is whether there IS
+#: another page: comparing the values would report a difference on every paged
+#: call, and dropping the field entirely would hide a backend that never pages
+#: at all, which is a real bug this harness has already caught once.
+PRESENCE_ONLY_FIELDS: dict = {
+    "next_page": "an opaque paging token; only whether one exists is comparable",
+}
+
+
 @dataclass
 class Difference:
     """One field that did not match."""
@@ -92,6 +103,11 @@ class Report:
     differences: list = field(default_factory=list)
     ignored: list = field(default_factory=list)
     skipped: Optional[str] = None
+    #: Wall-clock milliseconds for each side, when the caller measured them.
+    #: Separate from correctness: a fast wrong answer is still wrong, so these
+    #: never affect `agrees`.
+    left_ms: Optional[float] = None
+    right_ms: Optional[float] = None
 
     @property
     def agrees(self) -> bool:
@@ -160,7 +176,11 @@ def normalise(value: Any, network: str) -> Any:
     """A value with the known-incomparable differences flattened out."""
     if isinstance(value, dict):
         return {
-            key: normalise(item, network)
+            key: (
+                _presence(item)
+                if key in PRESENCE_ONLY_FIELDS
+                else normalise(item, network)
+            )
             for key, item in value.items()
             if key not in IGNORED_FIELDS
         }
@@ -177,6 +197,11 @@ def normalise(value: Any, network: str) -> Any:
     if isinstance(value, str):
         return reversion_address(network, value)
     return value
+
+
+def _presence(value: Any) -> Optional[str]:
+    """ "<a token>" or None -- enough to compare, not enough to false-alarm."""
+    return None if value in (None, "") else "<a token>"
 
 
 def diff(left: Any, right: Any, network: str, *, path: str = "") -> list:
@@ -272,11 +297,52 @@ def report(reports: list, notes: Optional[list] = None) -> str:
         lines += ["", "-" * 78, "NOT RUN", "-" * 78, ""]
         for entry in passed_over:
             lines.append(f"  {entry.label}: {entry.skipped}")
+    lines += _timing_lines(reports)
     tail = f"{len(reports)} calls, {len(disagreed)} with differences"
     if passed_over:
         tail += f", {len(passed_over)} not run"
     lines += ["", "=" * 78, tail, "=" * 78, ""]
     return "\n".join(lines)
+
+
+def _timing_lines(reports: list) -> list:
+    """Median latency per call, v2 against v3.
+
+    MEDIAN, not mean: one cold connection or one stalled node otherwise moves
+    the number more than the backends differ. Reported per call NAME rather
+    than per fixture, since one address is not a measurement.
+    """
+    import statistics
+    from collections import defaultdict
+
+    timed = defaultdict(lambda: ([], []))
+    for entry in reports:
+        if entry.left_ms is None or entry.right_ms is None:
+            continue
+        name = entry.label.split("(")[0]
+        timed[name][0].append(entry.left_ms)
+        timed[name][1].append(entry.right_ms)
+    if not timed:
+        return []
+
+    lines = ["", "-" * 78, "TIMING (median ms, not a correctness signal)", "-" * 78, ""]
+    lines.append(f"  {'call':<34}{'n':>4}{'v2':>10}{'v3':>10}{'v3/v2':>9}")
+    for name in sorted(timed):
+        left, right = timed[name]
+        v2 = statistics.median(left)
+        v3 = statistics.median(right)
+        ratio = f"{v3 / v2:.2f}x" if v2 else "-"
+        lines.append(f"  {name:<34}{len(left):>4}{v2:>10.1f}{v3:>10.1f}{ratio:>9}")
+    lines.append("")
+    lines.append(
+        "  Same cluster and same service stack on both sides, so the difference "
+        "is the DAL."
+    )
+    lines.append(
+        "  v2 caches rates (alru_cache on get_rates), so repeated fixtures "
+        "favour it slightly."
+    )
+    return lines
 
 
 def summarise(reports: list) -> Optional[str]:

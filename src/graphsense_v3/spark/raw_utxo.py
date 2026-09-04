@@ -182,15 +182,44 @@ def _leg_side(txs: "DataFrame", network: str, *, is_output: bool) -> "DataFrame"
     )
 
 
+def _coinbase_legs(txs: "DataFrame") -> "DataFrame":
+    """The synthetic input leg of every coinbase transaction.
+
+    graphsense-spark inserts a literal ``"coinbase"`` input on such
+    transactions (`utxo/Transformation.scala:111-125`, `addCoinbaseAddress`),
+    valued at the transaction's total output, and REST serves it as a
+    neighbour. A coinbase transaction has NO input rows of its own, so without
+    this every mined output has no incoming relation at all -- which is how a
+    v2 address with one incoming neighbour reads as zero in v3.
+
+    The address is :data:`graphsense_v3.codec.COINBASE_BYTES`, the empty-bytes
+    sentinel already reserved for it: no real address encodes to empty, because
+    every codec emits at least one byte for a non-empty string.
+    """
+    from pyspark.sql import functions as F
+
+    from graphsense_v3.codec import COINBASE_BYTES
+
+    return txs.where(F.col("coinbase")).select(
+        F.col("tx_id"),
+        F.lit(COINBASE_BYTES).cast("binary").alias("address"),
+        F.lit(False).alias("is_output"),
+        F.col("total_output").cast("bigint").alias("value"),
+    )
+
+
 def io_legs(txs: "DataFrame", network: str) -> "DataFrame":
     """Both directions of the spine input, ready for ``derived_utxo.legs``.
 
     ``tests/v3/test_v3_raw_loaders.py`` asserts this agrees row for row with
     running the derived side straight off ``transaction_io``, which is the
-    definition it has to match.
+    definition it has to match -- plus the coinbase leg, which has no
+    ``transaction_io`` row to come from.
     """
-    return _leg_side(txs, network, is_output=False).unionByName(
-        _leg_side(txs, network, is_output=True)
+    return (
+        _leg_side(txs, network, is_output=False)
+        .unionByName(_leg_side(txs, network, is_output=True))
+        .unionByName(_coinbase_legs(txs))
     )
 
 

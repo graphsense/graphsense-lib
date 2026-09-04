@@ -38,6 +38,7 @@ a parity that does not exist:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
@@ -101,7 +102,8 @@ MESSAGE_LIMIT = 160
 
 
 async def _outcome(coro: Awaitable) -> tuple:
-    """``("ok", value)`` or ``("raised", "Type: message")``.
+    """``(kind, value, elapsed_ms)`` -- "ok" with the result, or "raised" with
+    "Type: message".
 
     An exception is an answer: two backends that both raise
     ``AddressNotFoundException`` agree, and one that raises where the other
@@ -115,15 +117,20 @@ async def _outcome(coro: Awaitable) -> tuple:
     """
     from graphsense_v3.db.legacy import NotAvailable
 
+    started = time.perf_counter()
     try:
-        return "ok", await coro
+        return "ok", await coro, (time.perf_counter() - started) * 1000
     except NotAvailable:
         raise
     except Exception as exc:  # noqa: BLE001 -- the exception IS the observation
         logger.debug("call raised", exc_info=True)
         message = str(exc).replace("\n", " ")[:MESSAGE_LIMIT]
         name = type(exc).__name__
-        return "raised", f"{name}: {message}" if message else name
+        return (
+            "raised",
+            f"{name}: {message}" if message else name,
+            (time.perf_counter() - started) * 1000,
+        )
 
 
 def to_plain(value: Any) -> Any:
@@ -160,18 +167,26 @@ async def run_call(
     except NotAvailable as exc:
         return compare.skipped(label, str(exc))
 
-    left_kind, left_body = left
-    right_kind, right_body = right
+    left_kind, left_body, left_ms = left
+    right_kind, right_body, right_ms = right
     if left_kind == "raised" or right_kind == "raised":
         # Compared as bare strings so that "both raised AddressNotFound" is an
         # agreement and "one raised" is a single, readable difference.
-        return compare.compare(
+        report = compare.compare(
             label,
             f"{left_kind}:{left_body}" if left_kind == "raised" else "ok",
             f"{right_kind}:{right_body}" if right_kind == "raised" else "ok",
             network,
         )
-    return compare.compare(label, to_plain(left_body), to_plain(right_body), network)
+    else:
+        report = compare.compare(
+            label, to_plain(left_body), to_plain(right_body), network
+        )
+    # Only time calls that BOTH sides completed: a raised call measures how
+    # fast something failed, which would flatter whichever side broke earlier.
+    if left_kind == "ok" and right_kind == "ok":
+        report.left_ms, report.right_ms = left_ms, right_ms
+    return report
 
 
 async def run(

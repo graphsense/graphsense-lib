@@ -170,3 +170,49 @@ def test_run_level_caveats_print_at_the_top_of_the_report() -> None:
 def test_a_report_without_caveats_is_unchanged() -> None:
     reports = [compare.compare("get_address", {"a": 1}, {"a": 1}, "ltc")]
     assert "!!" not in compare.report(reports)
+
+
+def test_two_different_paging_tokens_agree_that_there_is_a_next_page() -> None:
+    """v2's "49469955:1" and v3's tx_id cursor are both opaque and neither is
+    wrong. Comparing the values would report a difference on every paged
+    call."""
+    left = {"next_page": "49469955:1", "txs": [1]}
+    right = {"next_page": "8270462039621668", "txs": [1]}
+    assert compare.diff(left, right, "ltc") == []
+
+
+def test_a_backend_that_never_pages_is_still_caught() -> None:
+    """The bug this must not hide: v3 returned None unconditionally, so every
+    address looked like it had exactly one page and a caller would never see
+    past the first pagesize rows."""
+    differences = compare.diff({"next_page": "49469955:1"}, {"next_page": None}, "ltc")
+    assert [d.path for d in differences] == ["$.next_page"]
+
+
+def test_both_sides_ending_a_listing_agree() -> None:
+    assert compare.diff({"next_page": None}, {"next_page": None}, "ltc") == []
+
+
+def test_timing_is_reported_per_call_name_not_per_fixture() -> None:
+    """One address is not a measurement; the median over a sample is."""
+    reports = []
+    for index, (v2, v3) in enumerate([(10.0, 5.0), (20.0, 10.0), (30.0, 15.0)]):
+        entry = compare.compare(f"get_address(addr{index})", {"a": 1}, {"a": 1}, "ltc")
+        entry.left_ms, entry.right_ms = v2, v3
+        reports.append(entry)
+    text = compare.report(reports)
+    assert "TIMING" in text
+    # Median of 10/20/30 against 5/10/15 -> 20.0 vs 10.0, a 0.50x ratio.
+    assert "20.0" in text and "10.0" in text and "0.50x" in text
+
+
+def test_untimed_reports_print_no_timing_section() -> None:
+    reports = [compare.compare("get_address", {"a": 1}, {"a": 1}, "ltc")]
+    assert "TIMING" not in compare.report(reports)
+
+
+def test_timing_never_affects_agreement() -> None:
+    """A fast wrong answer is still wrong."""
+    entry = compare.compare("get_address", {"a": 1}, {"a": 2}, "ltc")
+    entry.left_ms, entry.right_ms = 100.0, 1.0
+    assert entry.agrees is False

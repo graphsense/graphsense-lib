@@ -538,3 +538,86 @@ def test_stubbing_does_not_fabricate_a_cluster_anywhere_else() -> None:
     for method in ("get_entity", "list_entity_txs", "get_address_entity_id"):
         with pytest.raises(NotAvailable, match="no cluster tables"):
             run(getattr(shim, method)("ltc", ADDRESS))
+
+
+def _paging_session(count):
+    """An address with `count` transactions on one ordinal page.
+
+    Tests using it pin a DIRECTION: an unbounded listing reads both, and this
+    fake answers each identically, so the merge would double the rows.
+    """
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            return [
+                Row(tx_id=8270462039621668 - i, value=1, balance=None)
+                for i in range(count)
+            ]
+        if ".transaction " in cql:
+            return [
+                Row(
+                    tx_id=params[1],
+                    block_id=1925,
+                    block_timestamp=1,
+                    coinbase=False,
+                    tx_hash=b"\xab",
+                )
+            ]
+        return []
+
+    return rows
+
+
+def test_a_full_page_offers_a_next_page() -> None:
+    """Returning None unconditionally made every address look like it had
+    exactly one page: a caller would never see past the first `pagesize`
+    transactions, and nothing would report an error."""
+    shim, _ = adapter(_paging_session(3))
+    found, token = run(
+        shim.list_address_txs("ltc", ADDRESS, direction="out", pagesize=3)
+    )
+    assert len(found) == 3
+    assert token == str(found[-1]["tx_id"])
+
+
+def test_a_short_page_is_the_last_one() -> None:
+    """Fewer rows than asked for means the listing is exhausted; offering a
+    token there sends the caller back for an empty page."""
+    shim, _ = adapter(_paging_session(2))
+    _found, token = run(
+        shim.list_address_txs("ltc", ADDRESS, direction="out", pagesize=3)
+    )
+    assert token is None
+
+
+def test_an_empty_listing_offers_no_token() -> None:
+    shim, _ = adapter(_paging_session(0))
+    found, token = run(
+        shim.list_address_txs("ltc", ADDRESS, direction="out", pagesize=3)
+    )
+    assert found == [] and token is None
+
+
+def test_a_resume_token_becomes_an_exclusive_tx_id_bound() -> None:
+    """`before_tx_id` is exclusive, so resuming from the last tx_id handed out
+    continues after it rather than repeating it."""
+    asked = []
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            asked.append((cql, params))
+        return []
+
+    shim, _ = adapter(rows)
+    run(
+        shim.list_address_txs(
+            "ltc", ADDRESS, direction="out", page="8270462039621668", pagesize=3
+        )
+    )
+    cql, params = asked[0]
+    assert "tx_id < %s" in cql
+    assert params[-1] == 8270462039621668
