@@ -448,6 +448,7 @@ def backtest_cmd(
     a difference reported here is a Cassandra difference and nothing else.
     """
     import asyncio
+    from datetime import datetime, timezone
 
     from graphsenselib.web.app import resolve_rest_config
 
@@ -490,14 +491,59 @@ def backtest_cmd(
         else:
             fixtures = harness.fixtures_from_v3(session, raw, derived, network)
         if sample:
-            drawn = harness.sample_addresses(
-                session,
-                derived,
-                network,
-                sample,
-                buckets=configuration(session, derived, raw)["entity_buckets"],
+            config = configuration(session, derived, raw)
+            fixtures.addresses = list(
+                dict.fromkeys(
+                    fixtures.addresses
+                    + harness.sample_addresses(
+                        session,
+                        derived,
+                        network,
+                        sample,
+                        buckets=config["entity_buckets"],
+                    )
+                )
             )
-            fixtures.addresses = list(dict.fromkeys(fixtures.addresses + drawn))
+            # Every fixture kind, not just addresses: a call measured once is
+            # not measured, and /links and date->block were the two thinnest.
+            tip = (
+                harness.rated_block(
+                    session,
+                    derived,
+                    network,
+                    fixtures.blocks[0],
+                    config["block_bucket_size"],
+                )
+                if fixtures.blocks
+                else None
+            )
+            if tip is not None:
+                sampled = harness.sample_blocks(
+                    session, raw, tip, config["block_bucket_size"], sample
+                )
+                fixtures.blocks = list(
+                    dict.fromkeys(fixtures.blocks + [b for b, _ in sampled])
+                )
+                fixtures.dates = [
+                    datetime.fromtimestamp(stamp, timezone.utc) for _, stamp in sampled
+                ]
+                fixtures.tx_hashes = list(
+                    dict.fromkeys(
+                        fixtures.tx_hashes
+                        + harness.sample_txs(
+                            session,
+                            raw,
+                            [b for b, _ in sampled],
+                            config["tx_block_bucket_size"],
+                        )
+                    )
+                )
+            fixtures.links = list(
+                dict.fromkeys(
+                    fixtures.links
+                    + harness.sample_links(session, derived, network, sample)
+                )
+            )
         warning = harness.rate_coverage_warning(
             session,
             raw,
@@ -509,7 +555,8 @@ def backtest_cmd(
             click.echo(f"\nWARNING: {warning}\n", err=True)
         click.echo(
             f"fixtures: {len(fixtures.addresses)} address(es), "
-            f"{len(fixtures.tx_hashes)} tx(s), {len(fixtures.blocks)} block(s)",
+            f"{len(fixtures.tx_hashes)} tx(s), {len(fixtures.blocks)} block(s), "
+            f"{len(fixtures.links)} link(s), {len(fixtures.dates)} date(s)",
             err=True,
         )
 

@@ -157,3 +157,38 @@ def test_tx_id_expr_matches_python(spark) -> None:
         tx_id_expr(F.col("block_id"), F.col("idx")).alias("tx_id")
     ).collect()
     assert [r["tx_id"] for r in got] == [tx_id(b, i) for b, i in pairs]
+
+
+def test_a_nonstandard_bch_address_survives_a_decode_encode_round_trip() -> None:
+    """gslib's BCH converter strips the "nonstandard" prefix in to_str but
+    re-adds it in to_bytes only for bc1 addresses, so decode->encode was not a
+    round trip. v2 never noticed -- it stores address STRINGS; v3 keys on bytes
+    and round-trips everything it reads. Three sampled BCH addresses failed
+    every call with "'0' not in alphabet" because of this."""
+    stored = encode_address(
+        "bch", "nonstandard51460314450f69a042f55ab1f2e7a35e93415f39"
+    )
+    decoded = decode_address("bch", stored)
+    assert decoded == "51460314450f69a042f55ab1f2e7a35e93415f39"
+    # The whole point: what came out must go back in, to the same bytes.
+    assert encode_address("bch", decoded) == stored
+
+
+def test_a_genuinely_invalid_address_still_raises() -> None:
+    """The repair is self-validating for a reason: prefixing blindly would
+    manufacture bytes for any garbage string on every network, which is worse
+    than the failure it fixes."""
+    from graphsenselib.utils.address import InvalidAddress
+
+    for network, junk in (("btc", "not an address at all"), ("bch", "!!!!")):
+        with pytest.raises((InvalidAddress, ValueError)):
+            encode_address(network, junk)
+
+
+def test_standard_addresses_are_unaffected() -> None:
+    for network, address in (
+        ("bch", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"),
+        ("btc", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"),
+        ("ltc", "LLcHNPNWE7s6FfLzkt4fD8kJPbsK1V8pyT"),
+    ):
+        assert decode_address(network, encode_address(network, address)) == address

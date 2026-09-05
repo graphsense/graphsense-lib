@@ -524,3 +524,105 @@ def test_an_address_with_one_page_compares_that_page() -> None:
 
     result = run(backtest._second_page(services(fn), "ltc", LTC_P2PKH))
     assert result.model_dump() == {"mark": "only"}
+
+
+class ChainSession:
+    """Blocks, their transactions, and link edges, for the fixture samplers."""
+
+    def __init__(self, blocks, txs=None, links=None):
+        self.blocks = blocks  # {height: timestamp}
+        self.txs = txs or {}  # {height: tx_hash bytes}
+        self.links = links or []
+        self.tokens = []
+
+    def execute(self, cql, params):
+        if ".block " in cql:
+            _group, height = tuple(params)
+            if height not in self.blocks:
+                return []
+            return [SimpleNamespace(block_id=height, timestamp=self.blocks[height])]
+        if ".transaction " in cql:
+            _group, low, _high = tuple(params)
+            height = low >> 32
+            if height not in self.txs:
+                return []
+            return [SimpleNamespace(tx_hash=self.txs[height])]
+        assert "token(src_address, dst_bucket)" in cql, cql
+        (token,) = tuple(params)
+        self.tokens.append(token)
+        index = len(self.tokens) % len(self.links)
+        src, dst = self.links[index]
+        return [SimpleNamespace(src_address=src, dst_address=dst)]
+
+
+def test_blocks_are_sampled_across_the_whole_chain() -> None:
+    # Left un-pinned deliberately: this one asserts SPREAD, which is the very
+    # thing a pinned sequence would fake. Every height exists, so it cannot
+    # come up short.
+    """A block near the tip and one from 2009 exercise different partitions and
+    different rate coverage -- zero-filled head against real rates."""
+    session = ChainSession(blocks={h: 1000 + h for h in range(0, 1000)})
+    found = backtest.sample_blocks(session, "bch_raw_v3_t", 999, 100, 10)
+    assert len(found) == 10
+    assert len({h for h, _ in found}) == 10  # no repeats
+    assert max(h for h, _ in found) - min(h for h, _ in found) > 100
+
+
+def _draws(monkeypatch, heights):
+    """Pin the sampler's random draws, so a test asserts the LOGIC rather than
+    hoping a random height lands on the one block the fake holds."""
+    import random
+
+    sequence = iter(heights)
+    monkeypatch.setattr(random, "randrange", lambda *_: next(sequence, heights[-1]))
+
+
+def test_a_sampled_block_carries_its_own_timestamp(monkeypatch) -> None:
+    """The date fixtures come from these, so date -> block has a knowable
+    answer rather than a guess at what the chain was doing."""
+    _draws(monkeypatch, [5])
+    session = ChainSession(blocks={5: 1_600_000_000})
+    assert backtest.sample_blocks(session, "bch_raw_v3_t", 5, 100, 1) == [
+        (5, 1_600_000_000)
+    ]
+
+
+def test_a_height_the_chain_does_not_hold_is_skipped(monkeypatch) -> None:
+    """Random draws overshoot; a missing block must not become a fixture that
+    fails on both sides for a reason unrelated to the backends."""
+    _draws(monkeypatch, [3, 7, 11])
+    session = ChainSession(blocks={7: 1})
+    found = backtest.sample_blocks(session, "bch_raw_v3_t", 20, 100, 3)
+    assert found == [(7, 1)]
+
+
+def test_transaction_fixtures_come_from_the_sampled_blocks() -> None:
+    """So a tx fixture inherits the blocks' spread instead of being one hash
+    from one arbitrary block."""
+    session = ChainSession(blocks={}, txs={3: b"\xaa\xbb", 9: b"\xcc\xdd"})
+    assert backtest.sample_txs(session, "bch_raw_v3_t", [3, 9], 1) == ["aabb", "ccdd"]
+
+
+def test_links_are_sampled_by_token_over_the_whole_partition_key() -> None:
+    """(src_address, dst_bucket) IS the whole partition key here, so unlike
+    address_stats a token draw is valid -- and /links was the weakest link, so
+    one pair was never a measurement."""
+    from graphsense_v3.codec import encode_address
+
+    a = encode_address("ltc", LTC_P2PKH)
+    b = encode_address("ltc", BTC_VERSIONED)
+    session = ChainSession(blocks={}, links=[(a, b), (b, a)])
+    found = backtest.sample_links(session, "ltc_derived_v3_x", "ltc", 5)
+    assert set(found) == {(LTC_P2PKH, BTC_VERSIONED), (BTC_VERSIONED, LTC_P2PKH)}
+    assert len(set(session.tokens)) > 1
+
+
+def test_a_date_fixture_is_its_own_kind() -> None:
+    """Reusing BLOCK for date -> block passed a height where a datetime was
+    wanted, and the call quietly compared a fixed hard-coded day instead."""
+    from datetime import datetime, timezone
+
+    when = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    fixtures = backtest.Fixtures(network="bch", blocks=[7], dates=[when])
+    assert fixtures.values_for(backtest.DATE) == [when]
+    assert fixtures.values_for(backtest.BLOCK) == [7]

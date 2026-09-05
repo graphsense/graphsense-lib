@@ -51,6 +51,7 @@ ADDRESS = "address"
 TX_HASH = "tx_hash"
 BLOCK = "block"
 LINK = "link"
+DATE = "date"
 NOTHING = "nothing"
 
 
@@ -69,6 +70,9 @@ class Fixtures:
     blocks: list = field(default_factory=list)
     #: (source, destination) pairs known to have an edge between them.
     links: list = field(default_factory=list)
+    #: datetimes taken from sampled blocks' own timestamps, so date -> block has
+    #: a knowable answer rather than a guess at what the chain was doing.
+    dates: list = field(default_factory=list)
 
     def values_for(self, needs: str) -> list:
         if needs == ADDRESS:
@@ -79,6 +83,8 @@ class Fixtures:
             return self.blocks
         if needs == LINK:
             return self.links
+        if needs == DATE:
+            return self.dates
         return [None]
 
 
@@ -323,10 +329,11 @@ CALLS: list = [
     ),
     Call(
         # `Dal.block_below` walks partitions where v2 scans the whole block
-        # table; the binary search behind this has never run on real data.
+        # table. The dates come from real block timestamps, so both backends
+        # are asked about a moment the chain actually passed through.
         "get_block_by_date",
-        BLOCK,
-        lambda s, n, v: s.blocks_service.get_block_by_date(n, _midday(v)),
+        DATE,
+        lambda s, n, v: s.blocks_service.get_block_by_date(n, v),
     ),
     Call(
         "get_currency_statistics",
@@ -408,6 +415,101 @@ def sample_addresses(
                 continue
             seen.add(raw)
             found.append(decode_address(network, raw))
+    return found
+
+
+def sample_blocks(
+    session: Any, raw: str, tip: int, size: int, count: int
+) -> "list[tuple]":
+    """``(block_id, timestamp)`` for ``count`` blocks spread over the chain.
+
+    Random heights rather than a window: a block near the tip and one from 2009
+    exercise different partitions, different rate coverage (zero-filled head
+    against real rates) and, on BCH, wildly different block sizes.
+    """
+    import random
+
+    found: list = []
+    seen: set = set()
+    # Draws can miss (a height above the tip of `block`), so allow a few extra.
+    for _ in range(count * 3):
+        if len(found) >= count:
+            break
+        height = random.randrange(0, tip + 1)
+        if height in seen:
+            continue
+        seen.add(height)
+        rows = list(
+            session.execute(
+                f"SELECT block_id, timestamp FROM {raw}.block "
+                f"WHERE block_id_group = %s AND block_id = %s",
+                (height // size, height),
+            )
+        )
+        if rows:
+            found.append((int(rows[0].block_id), int(rows[0].timestamp)))
+    return found
+
+
+def sample_txs(session: Any, raw: str, blocks: "list[int]", tx_size: int) -> list:
+    """One transaction hash from each of ``blocks``.
+
+    Taken from the blocks already sampled, so a tx fixture inherits their
+    spread instead of being one hash from one arbitrary block.
+    """
+    from graphsense_v3.codec import tx_id_range
+
+    found = []
+    for height in blocks:
+        low, high = tx_id_range(height, height)
+        rows = list(
+            session.execute(
+                f"SELECT tx_hash FROM {raw}.transaction "
+                f"WHERE block_id_group = %s AND tx_id >= %s AND tx_id <= %s LIMIT 1",
+                (height // tx_size, low, high),
+            )
+        )
+        if rows:
+            found.append(bytes(rows[0].tx_hash).hex())
+    return found
+
+
+def sample_links(session: Any, derived: str, network: str, count: int) -> list:
+    """``count`` (source, destination) pairs that really have an edge.
+
+    Sampled by TOKEN over ``(src_address, dst_bucket)``, which IS the whole
+    partition key here -- so unlike `address_stats`, a token draw is valid and
+    spreads across the ring rather than returning neighbours of one another.
+    """
+    import random
+
+    from graphsense_v3.codec import decode_address
+
+    found: list = []
+    seen: set = set()
+    for _ in range(count * 2):
+        if len(found) >= count:
+            break
+        token = random.randint(-(2**63), 2**63 - 1)
+        rows = list(
+            session.execute(
+                f"SELECT src_address, dst_address FROM "
+                f"{derived}.address_link_transactions "
+                f"WHERE token(src_address, dst_bucket) >= %s LIMIT 1",
+                (token,),
+            )
+        )
+        for row in rows:
+            pair = (bytes(row.src_address), bytes(row.dst_address))
+            if pair in seen:
+                continue
+            seen.add(pair)
+            found.append(
+                (
+                    decode_address(network, pair[0]),
+                    decode_address(network, pair[1]),
+                )
+            )
     return found
 
 
@@ -537,16 +639,6 @@ async def _second_page(services: Any, network: str, address: str):
     return await services.addresses_service.list_address_txs(
         network, address, pagesize=5, page=token
     )
-
-
-def _midday(height: int):
-    """A date to look a block up by. The HEIGHT is not the input -- the point
-    is that both backends resolve the same day to the same block."""
-    from datetime import datetime, timezone
-
-    # Fixed date rather than "now": a moving input makes a failing run
-    # unreproducible.
-    return datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def build_services(config: Any, db: Any, log: Any = None) -> Any:

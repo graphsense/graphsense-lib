@@ -45,11 +45,40 @@ COINBASE = "coinbase"
 COINBASE_BYTES = b""
 
 
+#: The marker gslib's converters put in front of an address that is not a
+#: standard form for its network. BCH's converter STRIPS it in `to_str` but
+#: only re-adds it in `to_bytes` for a `bc1` address, so the two are not
+#: inverses for anything else -- see `encode_address`.
+NONSTANDARD_PREFIX = "nonstandard"
+
+
 def encode_address(network: str, address: str) -> bytes:
-    """User-format address string -> stored bytes."""
+    """User-format address string -> stored bytes.
+
+    **Repairs gslib's one non-bijective case.** `AddressConverterBchWith
+    NonstandardFallback.to_str` removes the ``nonstandard`` prefix, while its
+    `to_bytes` re-adds it only for ``bc1`` addresses -- so a nonstandard BCH
+    script address decodes to a string that cannot be encoded back. v2 never
+    noticed because it stores address STRINGS; v3 keys on bytes and therefore
+    round-trips every address it reads.
+
+    The retry is self-validating: the repaired bytes are accepted only if they
+    decode back to exactly the input. Without that check this would silently
+    manufacture bytes for a genuinely invalid address on every network, which
+    is a far worse failure than the one it fixes.
+    """
+    from graphsenselib.utils.address import InvalidAddress
+
     if address == COINBASE:
         return COINBASE_BYTES
-    return address_to_bytes(network.lower(), address)
+    net = network.lower()
+    try:
+        return address_to_bytes(net, address)
+    except InvalidAddress:
+        repaired = address_to_bytes(net, f"{NONSTANDARD_PREFIX}{address}")
+        if address_to_str(net, repaired) != address:
+            raise
+        return repaired
 
 
 def decode_address(network: str, address: bytes) -> str:
