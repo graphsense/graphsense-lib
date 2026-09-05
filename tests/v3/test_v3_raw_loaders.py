@@ -6,6 +6,8 @@ assertion in the file is that every frame the loaders build conforms to the
 schema table it targets -- which is the whole reason the schema is a model.
 """
 
+import inspect
+
 import pytest
 
 from graphsense_v3.codec import block_of_tx_id, encode_address, tx_id
@@ -896,3 +898,43 @@ def test_read_actually_applies_the_pin_to_the_reader(spark, monkeypatch) -> None
     with _pytest.raises(Exception):  # noqa: B017
         lake.read("block")
     assert asked == ["block"]
+
+
+def test_every_lake_table_is_pinned_at_one_moment(spark, monkeypatch) -> None:
+    """Lazy per-table resolution pins each table when it is first READ, and
+    those are different moments: on the first BCH run `transaction` was pinned
+    during preflight at 14:13 and `block` during frame building at 14:28.
+    Anything ingest appended in between put `block` ahead of `transaction` -- a
+    block row with no transactions, and a highest_block one too high."""
+    from graphsense_v3.spark.source import DeltaLake
+
+    lake = DeltaLake(spark, "s3://raw-data/ltc/", "ltc")
+    order = []
+    monkeypatch.setattr(
+        lake, "_resolve_version", lambda table: (order.append(table), 100)[1]
+    )
+
+    pinned = lake.pin(raw_utxo.LAKE_TABLES)
+    assert set(pinned) == set(raw_utxo.LAKE_TABLES)
+    assert set(order) == set(raw_utxo.LAKE_TABLES)
+
+    # A later read must NOT re-resolve: that would reopen the window.
+    order.clear()
+    lake.read_options("block")
+    assert order == []
+
+
+def test_the_pinned_tables_are_the_ones_the_loader_reads() -> None:
+    """A table read but not listed is pinned late, at its first read -- exactly
+    the gap `pin` closes. Guards the list against the loader drifting."""
+    import re
+
+    for module, listed in (
+        (raw_utxo, raw_utxo.LAKE_TABLES),
+        (raw_account, raw_account.LAKE_TABLES),
+    ):
+        source = inspect.getsource(module)
+        read = set(re.findall(r'lake\.read\(\s*"([a-z0-9_]+)"', source))
+        assert read <= set(listed), (
+            f"{module.__name__} reads unpinned {read - set(listed)}"
+        )

@@ -310,6 +310,13 @@ def run(
     lake = DeltaLake(spark, settings.lake_root, network)
     loader = raw_utxo if family is Family.UTXO else raw_account
 
+    # Before ANY read: one moment for every table, not one moment per table.
+    pinned = lake.pin(loader.LAKE_TABLES)
+    logger.info(
+        "lake pinned: %s",
+        ", ".join(f"{table}@{version}" for table, version in sorted(pinned.items())),
+    )
+
     with Stage(f"preflight {network}"):
         problems = loader.preflight(
             lake, network, start_block=start_block, end_block=end_block

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Sequence
 
 from graphsenselib.ingest.dump import PARTITIONSIZES
 
@@ -54,6 +54,25 @@ class DeltaLake:
 
     def path(self, table: str) -> str:
         return f"{self.root}/{table}"
+
+    def pin(self, tables: "Sequence[str]") -> dict:
+        """Resolve every table's version NOW, in one pass.
+
+        Lazy per-table resolution pins each table at the moment it is first
+        read, which is not the same moment: on the first BCH run `transaction`
+        was pinned during preflight at 14:13 and `block` during frame building
+        at 14:28. Independent Delta logs, so the version NUMBERS are unrelated
+        -- but anything ingest appended in those 15 minutes put `block` ahead of
+        `transaction`, which is a block row with no transactions and a
+        `highest_block` one too high. The same tear the pin exists to prevent,
+        at a smaller scale.
+
+        Called once before the first read. A table pinned here is not
+        re-resolved later.
+        """
+        for table in tables:
+            self.version(table)
+        return dict(self.versions)
 
     def version(self, table: str) -> int | None:
         """The Delta version this run reads ``table`` at, resolved once."""

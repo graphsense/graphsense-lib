@@ -75,6 +75,12 @@ TABLES = (
 SPINE = "@spine"
 
 
+#: Every lake table this loader reads. `DeltaLake.pin` resolves all of
+#: them at one moment, so two tables cannot be pinned minutes apart and
+#: disagree about where the chain ends.
+LAKE_TABLES = ("block", "transaction")
+
+
 def _transactions(
     lake: "LakeSource",
     config: NetworkConfig,

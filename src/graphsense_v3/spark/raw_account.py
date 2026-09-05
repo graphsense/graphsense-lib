@@ -417,6 +417,12 @@ def build(
     return out
 
 
+#: Every lake table this loader reads. `DeltaLake.pin` resolves all of
+#: them at one moment, so two tables cannot be pinned minutes apart and
+#: disagree about where the chain ends.
+LAKE_TABLES = ("block", "transaction", "trace", "log", "fee", "trc10")
+
+
 def preflight(
     lake: "LakeSource",
     network: str,
