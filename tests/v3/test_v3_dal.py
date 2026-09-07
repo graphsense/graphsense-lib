@@ -597,18 +597,67 @@ def test_an_account_edge_within_one_page_is_served() -> None:
     ]
 
 
-def test_an_account_edge_spanning_pages_refuses_rather_than_guessing() -> None:
-    """Page 0 holds the OLDEST tx_page_size transactions, so reading it
-    newest-first returns a plausible page from the wrong end of the edge's
-    history. Which page is newest needs `link_page_max`, which nothing writes."""
-    dal, _ = account_dal(lambda cql, params: [Row(tx_id=1)])
-    with pytest.raises(core.NotAvailable, match="link_page_max"):
-        run(dal.link_transactions(ADDRESS, OTHER))
+def _link_session(page_max, pages):
+    """A fake answering the cursor read and each page of the link table."""
+
+    def rows(cql, params):
+        if "address_outgoing_relations" in cql:
+            return [] if page_max is None else [Row(link_page_max=page_max)]
+        if "address_link_transactions" in cql:
+            return pages.get(params[2], [])
+        return []
+
+    return rows
 
 
-# --------------------------------------------------------------------------- #
-# The resume cursor, where one transaction can be several rows                 #
-# --------------------------------------------------------------------------- #
+def _link_row(tx_id, currency="ETH"):
+    return Row(tx_id=tx_id, tx_reference=None, currency=currency, value=tx_id)
+
+
+def test_an_account_edge_is_read_from_its_NEWEST_page() -> None:
+    """Ordinals ascend with tx_id, so page 0 holds the OLDEST transactions.
+    Reading it would answer from the wrong end of the edge's history -- which
+    is exactly what this could not do until the backfill filled
+    `link_page_max`."""
+    dal, session = account_dal(
+        _link_session(2, {2: [_link_row(99)], 0: [_link_row(1)]})
+    )
+    found = run(dal.link_transactions(ADDRESS, OTHER, limit=1))
+    assert [row["tx_id"] for row in found] == [99]
+    pages = [p[2] for c, p in session.seen if "address_link_transactions" in c]
+    assert pages == [2]
+
+
+def test_the_walk_continues_down_until_the_page_is_full() -> None:
+    """A page holds tx_page_size rows, so one page satisfies every real
+    request -- but the newest page of an edge can be nearly empty."""
+    dal, _ = account_dal(
+        _link_session(2, {2: [_link_row(99)], 1: [_link_row(50)], 0: [_link_row(1)]})
+    )
+    found = run(dal.link_transactions(ADDRESS, OTHER, limit=3))
+    assert [row["tx_id"] for row in found] == [99, 50, 1]
+
+
+def test_no_relation_row_means_no_edge() -> None:
+    """Not an empty page of a real edge -- no edge. Reading the link table
+    anyway would be a partition read for a partition that cannot exist."""
+    dal, session = account_dal(_link_session(None, {0: [_link_row(1)]}))
+    assert run(dal.link_transactions(ADDRESS, OTHER)) == []
+    assert not any("address_link_transactions" in c for c, _ in session.seen)
+
+
+def test_a_missing_cursor_reads_page_zero() -> None:
+    """An edge written before the backfill filled the cursor. Page 0 is right
+    for it either way: an edge that small has only one page."""
+    dal, _ = account_dal(_link_session(None, {}))
+    dal_with_null, _ = account_dal(
+        lambda cql, params: (
+            [Row(link_page_max=None)]
+            if "address_outgoing_relations" in cql
+            else [_link_row(7)]
+        )
+    )
+    assert run(dal_with_null.link_transactions(ADDRESS, OTHER))[0]["tx_id"] == 7
 
 
 def test_the_cursor_re_reads_the_boundary_transaction_and_skips_what_was_sent() -> None:

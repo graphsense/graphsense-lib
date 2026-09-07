@@ -626,3 +626,78 @@ def test_tron_burns_the_fee_so_no_one_receives_it(spark, trx_traces) -> None:
     blocks = spark.createDataFrame([], schema=BLOCK_SCHEMA)
     rows = tf.fee_events(txs, blocks, fees, "trx").collect()
     assert [(bytes(r["address"]), int(r["delta"])) for r in rows] == [(ALICE, -265)]
+
+
+# --------------------------------------------------------------------------- #
+# The link page cursor, which nothing wrote until now                          #
+# --------------------------------------------------------------------------- #
+
+EDGE = "src_address BINARY, dst_address BINARY, tx_id BIGINT"
+
+
+def test_the_cursor_names_the_page_holding_the_newest_transactions(spark) -> None:
+    """Ordinals ascend with tx_id, so an edge's newest transactions are in its
+    HIGHEST page. Without this a reader can only see page 0 -- the oldest -- and
+    `/links` has to refuse a hub-to-hub edge rather than answer from the wrong
+    end of its history."""
+    from dataclasses import replace
+
+    cfg = replace(config_for("eth"), tx_page_size=2)
+    moves = spark.createDataFrame(
+        [
+            {"src_address": b"\xa1", "dst_address": b"\xb2", "tx_id": n}
+            for n in range(5)
+        ],
+        schema=EDGE,
+    )
+    row = tf.link_cursors(moves, cfg).collect()[0]
+    # 5 transactions, 2 per page -> ordinals 0..4 -> pages 0,0,1,1,2
+    assert row["link_page_max"] == 2
+    assert row["link_ordinal_next"] == 5
+
+
+def test_the_cursor_agrees_with_the_pages_actually_assigned(spark) -> None:
+    """Both come from the same per-edge ordinal, and this is what stops them
+    disagreeing about where an edge ends -- a cursor pointing past the last
+    page reads an empty partition and reports the edge as having no
+    transactions."""
+    from dataclasses import replace
+
+    cfg = replace(config_for("eth"), tx_page_size=2)
+    moves = spark.createDataFrame(
+        [
+            {
+                "src_address": b"\xa1",
+                "dst_address": b"\xb2",
+                "tx_id": n,
+                "trace_index": None,
+                "log_index": None,
+                "currency": "ETH",
+                "value": 1,
+            }
+            for n in range(5)
+        ],
+        schema=EDGE + ", trace_index INT, log_index INT, currency STRING, value BIGINT",
+    )
+    pages = {r["tx_page"] for r in tf.address_link_transactions(moves, cfg).collect()}
+    cursor = tf.link_cursors(moves, cfg).collect()[0]
+    assert max(pages) == cursor["link_page_max"]
+
+
+def test_each_edge_gets_its_own_cursor(spark) -> None:
+    """It is keyed by the EDGE. A cursor computed per source would give a quiet
+    address the page count of the busiest edge its counterparty has."""
+
+    moves = spark.createDataFrame(
+        [
+            {"src_address": b"\xa1", "dst_address": b"\xb2", "tx_id": 1},
+            {"src_address": b"\xa1", "dst_address": b"\xc3", "tx_id": 2},
+            {"src_address": b"\xa1", "dst_address": b"\xc3", "tx_id": 3},
+        ],
+        schema=EDGE,
+    )
+    rows = {
+        bytes(r["dst_address"]): r["link_ordinal_next"]
+        for r in tf.link_cursors(moves, config_for("eth")).collect()
+    }
+    assert rows == {b"\xb2": 1, b"\xc3": 2}

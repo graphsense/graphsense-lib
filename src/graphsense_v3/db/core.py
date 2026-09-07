@@ -1086,51 +1086,55 @@ class AccountDal(Dal):
     async def link_transactions(
         self, src: bytes, dst: bytes, *, limit: int = 100
     ) -> list:
-        """The transactions on one edge.
+        """The transactions on one edge, newest first.
 
         The account link table is keyed ``(src, dst, tx_page)`` where the page
-        is the edge's own ordinal // `tx_page_size`, so an edge below that --
-        every edge but a hub-to-hub one -- lives entirely in page 0, ordered
-        newest-first by the clustering.
+        is the edge's own ordinal // `tx_page_size`. Ordinals ascend with
+        tx_id, so page 0 holds the OLDEST transactions and the NEWEST are in
+        `link_page_max` -- which is why that cursor has to be read first, and
+        why reading page 0 would answer from the wrong end of the edge's
+        history.
 
-        A LARGER edge cannot be served correctly yet, and this refuses rather
-        than answering from the wrong window: page 0 holds the OLDEST
-        `tx_page_size` transactions, so a newest-first read of it would return a
-        plausible page from the wrong end of the edge's history. Knowing which
-        page is newest needs `link_page_max`, which nothing writes (see
-        `schema.definitions`, `_relations_table`).
-
-        Costs one extra point read to tell the two cases apart. That is the
-        price of failing loudly instead of silently.
+        The cursor lives on the relations row, and the bucket is computed from
+        the counterparty, so finding it is a point read rather than a scan.
+        A missing row means no such edge, and a missing cursor means an edge
+        written before the backfill filled it -- page 0 is the right answer for
+        both, since an edge that small has only one page anyway.
         """
-        overflow = await self._select(
-            f"SELECT tx_id FROM {self.derived}.address_link_transactions "
-            f"WHERE src_address = %s AND dst_address = %s AND tx_page = 1 LIMIT 1",
-            (src, dst),
-        )
-        if overflow:
-            raise NotAvailable(
-                "this edge spans more than one page of link transactions, and "
-                "which page holds the newest is recorded in `link_page_max`, "
-                "which nothing writes yet -- answering from page 0 would return "
-                "the oldest window as if it were the newest"
-            )
         rows = await self._select(
-            f"SELECT tx_id, tx_reference, currency, value FROM "
-            f"{self.derived}.address_link_transactions "
-            f"WHERE src_address = %s AND dst_address = %s AND tx_page = 0 "
-            f"LIMIT {int(limit)}",
-            (src, dst),
+            f"SELECT link_page_max FROM "
+            f"{self.derived}.address_outgoing_relations "
+            f"WHERE src_address = %s AND rel_bucket = %s AND dst_address = %s",
+            (src, self.relation_bucket(dst), dst),
         )
-        return [
-            {
-                "tx_id": r.tx_id,
-                "tx_reference": r.tx_reference,
-                "currency": r.currency,
-                "value": int(r.value or 0),
-            }
-            for r in rows
-        ]
+        if not rows:
+            return []
+        page = max(
+            (int(getattr(row, "link_page_max", 0) or 0) for row in rows), default=0
+        )
+
+        found: list = []
+        # Walk DOWN from the newest page: a page holds tx_page_size rows, so a
+        # limit smaller than that -- every real request -- stops on the first.
+        while page >= 0 and len(found) < limit:
+            slice_ = await self._select(
+                f"SELECT tx_id, tx_reference, currency, value FROM "
+                f"{self.derived}.address_link_transactions "
+                f"WHERE src_address = %s AND dst_address = %s AND tx_page = %s "
+                f"LIMIT {int(limit) - len(found)}",
+                (src, dst, page),
+            )
+            found += [
+                {
+                    "tx_id": r.tx_id,
+                    "tx_reference": r.tx_reference,
+                    "currency": r.currency,
+                    "value": int(r.value or 0),
+                }
+                for r in slice_
+            ]
+            page -= 1
+        return found
 
 
 def dal_for(session, raw: str, derived: str, config: dict) -> Dal:

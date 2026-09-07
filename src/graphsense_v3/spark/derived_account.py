@@ -438,8 +438,49 @@ def address_link_transactions(moves: "DataFrame", config: NetworkConfig) -> "Dat
     )
 
 
+def link_cursors(moves: "DataFrame", config: NetworkConfig) -> "DataFrame":
+    """``(src_address, dst_address, link_page_max, link_ordinal_next)``.
+
+    The page cursor for `address_link_transactions`, from the SAME per-edge
+    ordinal that assigns the pages -- so the two cannot disagree about where an
+    edge ends.
+
+    Without it a reader cannot tell which page of an edge holds its newest
+    transactions, and page 0 holds the OLDEST `tx_page_size` of them. That is
+    the difference between `/links` answering a hub-to-hub edge and refusing it.
+
+    Only the BACKFILL can compute this: it sees the whole edge at once. The
+    incremental path cannot, which is a real gap -- but it is a gap in that
+    path, not a reason to leave the column empty here. See `_relations_table`
+    in `schema.definitions`.
+    """
+    from pyspark.sql import functions as F
+
+    return (
+        moves.groupBy("src_address", "dst_address")
+        .agg(
+            (F.count("*") - 1).cast("int").alias("_last_ordinal"),
+            F.count("*").cast("bigint").alias("link_ordinal_next"),
+        )
+        .select(
+            F.col("src_address"),
+            F.col("dst_address"),
+            (F.col("_last_ordinal") / F.lit(config.tx_page_size))
+            .cast("int")
+            .alias("link_page_max"),
+            F.col("link_ordinal_next"),
+        )
+    )
+
+
 def _relation_side(
-    moves: "DataFrame", config: NetworkConfig, *, near: str, far: str, network: str
+    moves: "DataFrame",
+    config: NetworkConfig,
+    *,
+    near: str,
+    far: str,
+    network: str,
+    cursors: "Optional[DataFrame]" = None,
 ) -> "DataFrame":
     """One direction of the relations pair, aggregated to epoch 0.
 
@@ -478,9 +519,21 @@ def _relation_side(
             ).alias("token_values")
         )
     )
+    # The cursor is keyed by (src, dst) whichever direction this side reads, so
+    # it is joined on the edge rather than on `keys`, which are named for the
+    # side.
+    edge = ["src_address", "dst_address"]
+    if cursors is None:
+        cursors = (
+            moves.select(*edge)
+            .distinct()
+            .withColumn("link_page_max", F.lit(0))
+            .withColumn("link_ordinal_next", F.lit(0).cast("bigint"))
+        )
     return (
         counts.join(native, on=keys, how="left")
         .join(tokens, on=keys, how="left")
+        .join(cursors, on=edge, how="left")
         .select(
             F.col(near),
             common.entity_bucket(F.col(far), config).alias("rel_bucket"),
@@ -489,6 +542,8 @@ def _relation_side(
             F.col("no_transactions"),
             F.col("value"),
             F.col("token_values"),
+            F.col("link_page_max"),
+            F.col("link_ordinal_next"),
         )
     )
 
@@ -701,6 +756,10 @@ def build(
         ["address", "is_outgoing", "is_zero_value"],
         cfg,
     ).cache()
+    # One frame for both relation sides: the cursor describes the EDGE, and
+    # the two tables are the same edges read from opposite ends.
+    cursors = link_cursors(moves, cfg)
+
     return {
         "address_transactions": address_transactions(
             common.with_running_balance(paged, events, per_currency=True)
@@ -715,11 +774,23 @@ def build(
             network,
         ),
         "address_by_prefix": common.address_by_prefix(all_legs, network, cfg),
+        # One frame for both sides: the cursor describes the EDGE, and the two
+        # relation tables are the same edges read from opposite ends.
         "address_outgoing_relations": _relation_side(
-            moves, cfg, near="src_address", far="dst_address", network=network
+            moves,
+            cfg,
+            near="src_address",
+            far="dst_address",
+            network=network,
+            cursors=cursors,
         ),
         "address_incoming_relations": _relation_side(
-            moves, cfg, near="dst_address", far="src_address", network=network
+            moves,
+            cfg,
+            near="dst_address",
+            far="src_address",
+            network=network,
+            cursors=cursors,
         ),
         "address_link_transactions": address_link_transactions(moves, cfg),
         "balance": common.balance(events, cfg),
