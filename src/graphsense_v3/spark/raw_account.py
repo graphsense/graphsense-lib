@@ -423,6 +423,16 @@ def build(
 LAKE_TABLES = ("block", "transaction", "trace", "log", "fee", "trc10")
 
 
+#: The pinned tables whose tips BOUND a run. Every block has a header and at
+#: least one transaction, so these two must reach the same height -- where they
+#: do not, the snapshot caught ingest mid-cycle.
+#:
+#: Not every lake table: `log`, `trace` and `fee` are legitimately sparse at the
+#: tip (a block with no logs contributes no rows), so their maxima are reported
+#: but never used to cut a run. `trc10` is not block-scoped at all.
+BOUND_TABLES = ("block", "transaction")
+
+
 def preflight(
     lake: "LakeSource",
     network: str,

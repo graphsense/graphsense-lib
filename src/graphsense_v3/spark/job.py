@@ -15,7 +15,7 @@ instead of hours in.
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from graphsense_v3.schema import Kind, NETWORKS, Family, schema_for
 from graphsense_v3.schema.definitions import MARKER_COMPLETE, MARKERS
@@ -280,6 +280,69 @@ def mark_complete(
     logger.info("marked %s complete", keyspace)
 
 
+def snapshot_maxima(lake, tables: "Sequence[str]") -> dict:
+    """``{table: max(block_id)}`` for every pinned table that has one.
+
+    Read from the PINNED snapshot, so this is the height each table had at the
+    one moment the run fixed -- not the height it has now.
+    """
+    from pyspark.sql import functions as F
+
+    found: dict = {}
+    for table in tables:
+        frame = lake.read(table)
+        if "block_id" not in frame.columns:
+            continue
+        row = frame.agg(F.max("block_id").alias("hi")).first()
+        if row is not None and row.hi is not None:
+            found[table] = int(row.hi)
+    return found
+
+
+def bounded_end_block(
+    maxima: dict, bound_tables: "Sequence[str]", end_block: Optional[int]
+) -> tuple:
+    """``(end_block, note)`` -- the highest block this snapshot can serve.
+
+    Pinning every table at one moment makes the snapshot CONSISTENT. It does not
+    make the tables reach the same HEIGHT: ingest commits `block` before the
+    transactions of that block, so a snapshot taken between those two commits
+    holds block headers whose transactions do not exist yet.
+
+    That is not a hypothetical. The first BCH run wrote blocks 967022-967027
+    with headers and no transactions, and `list_block_txs(967027)` answered 118
+    on v2 and 0 on v3 -- a wrong answer that looks like data, from a keyspace
+    that had passed its probe.
+
+    So the run stops at the SHORTEST of the tables that must reach the tip. An
+    `end_block` already below that is left alone: the caller asked for less.
+    """
+    tips = [maxima[table] for table in bound_tables if table in maxima]
+    if not tips:
+        return end_block, None
+    bound = min(tips)
+    if end_block is not None and end_block <= bound:
+        return end_block, None
+
+    reach = max(maxima.values())
+    if bound >= reach:
+        # The dense tables reach as far as anything in the snapshot does, so
+        # nothing is being cut. Return the request UNCHANGED rather than a
+        # bound that happens to equal it: a note here would fire on every
+        # healthy run and train the reader to ignore the one that matters.
+        return end_block, None
+
+    limiting = sorted(table for table in bound_tables if maxima.get(table) == bound)
+    note = (
+        f"bounding the run to block {bound}: {', '.join(limiting)} "
+        f"{'stops' if len(limiting) == 1 else 'stop'} there while the lake "
+        f"reaches {reach}, so the last {reach - bound} block(s) of this "
+        f"snapshot have headers whose transactions are not committed yet. "
+        f"Writing them would produce blocks that return no transactions."
+    )
+    return bound, note
+
+
 def run(
     spark: "SparkSession",
     settings: "RunSettings",
@@ -316,6 +379,18 @@ def run(
         "lake pinned: %s",
         ", ".join(f"{table}@{version}" for table, version in sorted(pinned.items())),
     )
+
+    # Pinned at one moment, but not necessarily to one HEIGHT -- see
+    # `bounded_end_block`. Every table's tip is reported; only the dense ones
+    # cut the run.
+    maxima = snapshot_maxima(lake, loader.LAKE_TABLES)
+    logger.info(
+        "lake tips: %s",
+        ", ".join(f"{table}<={height}" for table, height in sorted(maxima.items())),
+    )
+    end_block, note = bounded_end_block(maxima, loader.BOUND_TABLES, end_block)
+    if note:
+        logger.warning("%s", note)
 
     with Stage(f"preflight {network}"):
         problems = loader.preflight(

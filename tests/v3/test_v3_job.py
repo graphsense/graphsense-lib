@@ -372,3 +372,75 @@ def test_preflight_problems_stop_a_run_and_name_their_own_override() -> None:
     assert "--accept-preflight" in source
     # And says so loudly when overridden, rather than proceeding quietly.
     assert "PROCEEDING PAST" in source
+
+
+# --------------------------------------------------------------------------- #
+# A snapshot is consistent, but not necessarily one height                     #
+# --------------------------------------------------------------------------- #
+
+BOUND = ("block", "transaction")
+
+
+def test_the_run_stops_where_the_shortest_dense_table_stops() -> None:
+    """The BCH tear, exactly: `block` reached 967027 and `transaction` stopped
+    at 967021, so six blocks were written with headers and no transactions and
+    `list_block_txs(967027)` answered 118 on v2 and 0 on v3."""
+    maxima = {"block": 967027, "transaction": 967021}
+    end_block, note = job.bounded_end_block(maxima, BOUND, None)
+    assert end_block == 967021
+    assert note and "967021" in note and "6 block(s)" in note
+
+
+def test_a_snapshot_that_lines_up_is_not_bounded() -> None:
+    """The normal case must not be cut, and must not log a warning that would
+    train the reader to ignore this one."""
+    maxima = {"block": 900, "transaction": 900}
+    # The request comes back UNCHANGED. A note on a healthy run would train the
+    # reader to skip past the one that matters.
+    assert job.bounded_end_block(maxima, BOUND, None) == (None, None)
+
+
+def test_an_explicit_end_block_below_the_bound_is_left_alone() -> None:
+    """The caller asked for less than the snapshot can serve. That is not a
+    problem to report."""
+    maxima = {"block": 967027, "transaction": 967021}
+    assert job.bounded_end_block(maxima, BOUND, 500_000) == (500_000, None)
+
+
+def test_an_explicit_end_block_above_the_bound_is_cut() -> None:
+    maxima = {"block": 967027, "transaction": 967021}
+    end_block, note = job.bounded_end_block(maxima, BOUND, 967_027)
+    assert end_block == 967021
+    assert note
+
+
+def test_a_sparse_table_never_cuts_the_run() -> None:
+    """`log`, `trace` and `fee` are legitimately short at the tip -- a block
+    with no logs contributes no rows -- so bounding on them would truncate
+    every run by however long the chain last went without a log."""
+    maxima = {"block": 900, "transaction": 900, "log": 300, "trace": 880}
+    assert job.bounded_end_block(maxima, BOUND, None) == (None, None)
+
+
+def test_the_note_names_every_table_that_is_short() -> None:
+    """Two tables tied at the bound means both stopped, and saying only one
+    sends the reader to the wrong ingest stage."""
+    maxima = {"block": 1000, "transaction": 900, "trace": 900}
+    _, note = job.bounded_end_block(maxima, ("block", "transaction", "trace"), None)
+    assert "trace, transaction" in note
+
+
+def test_nothing_to_bound_on_is_not_an_error() -> None:
+    """A loader whose bound tables are all absent from the maxima -- none of
+    them carry block_id -- leaves the request untouched rather than failing."""
+    assert job.bounded_end_block({"trc10": 5}, BOUND, 42) == (42, None)
+
+
+def test_the_loaders_bound_on_tables_they_actually_read() -> None:
+    """A bound table missing from LAKE_TABLES is never pinned, so it would be
+    silently skipped and the run would go back to being unbounded."""
+    from graphsense_v3.spark import raw_account, raw_utxo
+
+    for loader in (raw_utxo, raw_account):
+        assert set(loader.BOUND_TABLES) <= set(loader.LAKE_TABLES)
+        assert loader.BOUND_TABLES
