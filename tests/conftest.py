@@ -1,4 +1,5 @@
 import logging
+from functools import cache
 from os import environ
 from pathlib import Path
 import asyncio
@@ -64,9 +65,19 @@ cassandra_image = (
     FAST_CASSANDRA_IMAGE if DANGEROUSLY_ACCELERATE_TESTS else VANILLA_CASSANDRA_IMAGE
 )
 
-# Shared with web tests (imported by tests/web/conftest.py)
-cassandra = CassandraContainer(cassandra_image)
-postgres = PostgresContainer("postgres:16-alpine")
+
+# A container's constructor opens a Docker client, and pytest imports every
+# conftest before it collects, so building on first use is what lets a machine
+# without a daemon collect and run the tests that need none.
+@cache
+def cassandra_container() -> CassandraContainer:
+    return CassandraContainer(cassandra_image)
+
+
+@cache
+def postgres_container() -> PostgresContainer:
+    return PostgresContainer("postgres:16-alpine")
+
 
 # Test data directories for tagpack tests
 DATA_DIR_TP = Path(__file__).parent.resolve() / "testfiles" / "simple"
@@ -411,6 +422,7 @@ _cassandra_coords = ("localhost", "9042")
 def gs_db_setup():
     """Start Cassandra container. Only tests requesting this fixture pay the cost."""
     global _cassandra_coords
+    cassandra = cassandra_container()
     try:
         cassandra.start()
     except ImageNotFound as e:
@@ -437,6 +449,7 @@ def db_setup():
     if not TAGSTORE_AVAILABLE:
         pytest.skip("Tagstore dependencies not available")
 
+    postgres = postgres_container()
     postgres.start()
 
     postgres_sync_url = postgres.get_connection_url()
