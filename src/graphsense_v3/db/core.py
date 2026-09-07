@@ -82,7 +82,13 @@ class AddressTx:
     #: rows written before the balance column existed, and on the ingest tail,
     #: which cannot fill it without a read.
     balance: Optional[int] = None
+    #: Account only: which asset this row moved. NULL on a UTXO keyspace, whose
+    #: `address_transactions` has no such column.
     currency: Optional[str] = None
+    #: Account only: the (trace_index, log_index) that identifies WHICH transfer
+    #: within the transaction this row is. `normalize_address_transactions`
+    #: reads it, and one tx_id can carry several rows on this family.
+    tx_reference: Any = None
     is_outgoing: bool = False
 
 
@@ -198,6 +204,31 @@ class Dal:
         #: Set by `open`; None when a session was injected directly, which is
         #: how the tests drive this without a cluster.
         self.cluster = None
+
+    @property
+    def network(self) -> str:
+        """The network this keyspace serves, read off its own name.
+
+        `settings.v3_keyspace` builds every name as ``<net>_<kind>_v3[_label]``
+        and `assert_v3_keyspace` refuses anything else, so the prefix is the
+        network by construction rather than by convention.
+        """
+        return self.derived.split("_", 1)[0].lower()
+
+    @property
+    def is_account(self) -> bool:
+        """Whether this keyspace has the ACCOUNT shape.
+
+        The DAL was written UTXO-shaped throughout, and several tables differ:
+        `address_transactions` carries `currency` and `tx_reference` clustering
+        columns that no UTXO keyspace has. Selecting them unconditionally fails
+        on UTXO; not selecting them at all serves every token transfer as if it
+        were the native coin -- a wrong answer that looks like data.
+        """
+        from graphsense_v3.schema.definitions import NETWORKS
+        from graphsense_v3.schema.model import Family
+
+        return NETWORKS.get(self.network) is Family.ACCOUNT
 
     # -- lifecycle --------------------------------------------------------
 
@@ -437,11 +468,18 @@ class Dal:
         # partition key, so flattening loses it. A caller cannot re-derive it,
         # and v2 signs an outgoing value negative -- so a lost direction is a
         # wrong sign on every row of an unbounded listing.
+        # `currency` and `tx_reference` are clustering columns on the ACCOUNT
+        # layout only. Without them an account listing cannot say which asset a
+        # row moved, so every USDT transfer reads as the native coin.
+        columns = "tx_id, value, balance"
+        if self.is_account:
+            columns += ", currency, tx_reference"
+
         specs = [(outgoing, zero) for outgoing in directions for zero in zero_flags]
         results = await asyncio.gather(
             *(
                 self._select(
-                    f"SELECT tx_id, value, balance FROM "
+                    f"SELECT {columns} FROM "
                     f"{self.derived}.address_transactions "
                     f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
                     f"AND tx_page = %s{clause} LIMIT {int(limit)}",
@@ -462,6 +500,8 @@ class Dal:
                 value=int(row.value or 0),
                 balance=None if row.balance is None else int(row.balance),
                 is_outgoing=outgoing,
+                currency=getattr(row, "currency", None),
+                tx_reference=getattr(row, "tx_reference", None),
             )
             for (outgoing, _zero), rows in zip(specs, results)
             for row in rows

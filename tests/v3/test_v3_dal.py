@@ -503,3 +503,61 @@ def test_the_forward_walk_is_bounded() -> None:
     dal, session = make(lambda cql, params: [])
     assert run(dal.block_at_or_after(0)) is None
     assert len(session.seen) == core.BLOCK_BY_DATE_MAX_DAYS
+
+
+# --------------------------------------------------------------------------- #
+# The account layout has columns the UTXO one does not                         #
+# --------------------------------------------------------------------------- #
+
+
+def account_dal(rows=None):
+    """A Dal over an ACCOUNT keyspace -- the family comes from the name."""
+    session = FakeSession(rows)
+    return Dal(session, "eth_raw_v3_t1", "eth_derived_v3_t1", dict(CONFIG)), session
+
+
+def test_the_family_is_read_off_the_keyspace_name() -> None:
+    """`v3_keyspace` builds every name as <net>_<kind>_v3[_label] and
+    `assert_v3_keyspace` refuses anything else, so the prefix is the network by
+    construction rather than by convention."""
+    utxo, _ = make()
+    account, _ = account_dal()
+    assert (utxo.network, utxo.is_account) == ("ltc", False)
+    assert (account.network, account.is_account) == ("eth", True)
+
+
+def test_an_account_listing_selects_the_asset_it_moved() -> None:
+    """`currency` and `tx_reference` are clustering columns on the account
+    layout. Not selecting them serves every USDT transfer as the native coin --
+    a wrong answer that looks like data, and one no UTXO run could ever catch."""
+    dal, session = account_dal(
+        lambda cql, params: (
+            [Row(tx_id=1, value=5, balance=None, currency="USDT", tx_reference=None)]
+            if "address_transactions" in cql
+            else []
+        )
+    )
+    txs = run(dal.transactions(ADDRESS, page=0))
+    assert txs[0].currency == "USDT"
+    assert any(
+        "currency" in cql and "tx_reference" in cql
+        for cql, _ in session.seen
+        if "address_transactions" in cql
+    )
+
+
+def test_a_utxo_listing_does_not_ask_for_columns_it_has_not_got() -> None:
+    """Selecting them unconditionally is a CQL error on every UTXO keyspace,
+    so the family has to gate the projection rather than the reader."""
+    dal, session = make(
+        lambda cql, params: (
+            [Row(tx_id=1, value=5, balance=None)]
+            if "address_transactions" in cql
+            else []
+        )
+    )
+    txs = run(dal.transactions(ADDRESS, page=0))
+    assert txs[0].currency is None
+    for cql, _ in session.seen:
+        if "address_transactions" in cql:
+            assert "currency" not in cql and "tx_reference" not in cql
