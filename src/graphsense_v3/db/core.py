@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 #: than this turns a point read back into the scan the table exists to avoid.
 BLOCK_BELOW_MAX_GROUPS = 100
 
+#: How many days `block_at_or_after` will walk forward before giving up. A
+#: timestamp late in a day often has no block after it until the next one, and a
+#: chain can pause; past this it has a gap the date index cannot answer around.
+BLOCK_BY_DATE_MAX_DAYS = 30
+
 #: Columns of ``address_stats`` that are summable across epochs. Epoch 0 is the
 #: compacted base and later epochs are deltas, so a read SUMS the slice --
 #: reading epoch 0 alone silently drops everything the incremental path added.
@@ -762,14 +767,34 @@ class Dal:
         # `_gather` already flattens across queries.
         return {row.tx_id: row._asdict() for row in await self._gather(queries)}
 
-    async def blocks_on_day(self, day: int, *, limit: int = 100) -> list:
-        """``day`` is yyyymmdd as an integer, per design rule 5."""
-        rows = await self._select(
-            f"SELECT block_id, timestamp FROM {self.raw}.block_by_date "
-            f"WHERE day = %s LIMIT {int(limit)}",
-            (day,),
-        )
-        return [row._asdict() for row in rows]
+    async def block_at_or_after(
+        self, timestamp: int, *, max_days: int = BLOCK_BY_DATE_MAX_DAYS
+    ) -> Optional[dict]:
+        """The first block at or after ``timestamp``, as ``{block_id, timestamp}``.
+
+        ``block_by_date`` clusters by ``(timestamp, block_id)`` ASC, so the bound
+        is pushed into CQL and the answer is ONE row from ONE partition -- which
+        is the whole reason the table exists.
+
+        It reads the day, then walks forward: a timestamp late in the day may
+        have no block after it until the next one, and a chain can pause. The
+        walk is bounded for the same reason `block_below`'s is -- past that the
+        chain has a gap this table cannot answer around, and returning None says
+        so rather than reading forever to prove it.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        when = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        for step in range(max_days):
+            day = int((when + timedelta(days=step)).strftime("%Y%m%d"))
+            rows = await self._select(
+                f"SELECT block_id, timestamp FROM {self.raw}.block_by_date "
+                f"WHERE day = %s AND timestamp >= %s LIMIT 1",
+                (day, timestamp),
+            )
+            if rows:
+                return rows[0]._asdict()
+        return None
 
     # -- rates and meta ---------------------------------------------------
 

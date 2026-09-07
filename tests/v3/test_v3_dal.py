@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from graphsense_v3.codec import bucket
+from graphsense_v3.db import core
 from graphsense_v3.db.core import Dal
 
 RAW = "ltc_raw_v3_test"
@@ -463,3 +464,42 @@ def test_a_single_edge_point_read_sums_its_epochs_too() -> None:
     dal, _ = make(lambda cql, params: [_edge(2, 100, [1.0]), _edge(3, 50, [0.5])])
     edge = run(dal.neighbor(ADDRESS, OTHER, is_outgoing=True))
     assert (edge.no_transactions, edge.value, edge.fiat_values) == (5, 150, (1.5,))
+
+
+# --------------------------------------------------------------------------- #
+# block_by_date: the table exists to make this ONE row from ONE partition      #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_timestamp_bound_is_pushed_into_the_query() -> None:
+    """The point of `block_by_date`. It used to read a LIMIT 100 slice of the
+    day and filter client-side -- which truncates every chain with more than
+    100 blocks a day, so a timestamp late in the day could never be found."""
+    dal, session = make(lambda cql, params: [Row(block_id=7, timestamp=500)])
+    assert run(dal.block_at_or_after(500)) == {"block_id": 7, "timestamp": 500}
+    cql, params = session.seen[0]
+    assert "timestamp >= %s" in cql and "LIMIT 1" in cql
+    assert params[1] == 500
+
+
+def test_a_day_with_no_later_block_walks_to_the_next() -> None:
+    """A timestamp late in a day often has no block after it until the next
+    one. Returning the day's LAST block instead -- which is BEFORE the
+    timestamp -- was the old fallback, and it is a wrong answer, not a miss."""
+    seen: list = []
+
+    def rows(cql, params):
+        seen.append(params[0])
+        return [Row(block_id=9, timestamp=999)] if len(seen) == 3 else []
+
+    dal, _ = make(rows)
+    assert run(dal.block_at_or_after(0))["block_id"] == 9
+    assert seen == [19700101, 19700102, 19700103]
+
+
+def test_the_forward_walk_is_bounded() -> None:
+    """Past the bound the chain has a gap the date index cannot answer around,
+    and None says so rather than reading forever to prove it."""
+    dal, session = make(lambda cql, params: [])
+    assert run(dal.block_at_or_after(0)) is None
+    assert len(session.seen) == core.BLOCK_BY_DATE_MAX_DAYS

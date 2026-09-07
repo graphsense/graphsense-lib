@@ -873,3 +873,26 @@ def test_token_values_reach_the_response_as_value_objects() -> None:
         {"code": "eur", "value": 40.0},
         {"code": "usd", "value": 44.0},
     ]
+
+
+def test_block_by_date_returns_the_row_the_service_subscripts() -> None:
+    """`blocks_service.get_block_by_date` reads BOTH `x["block_id"]` and
+    `x["timestamp"]` off this. It returned a bare int until 2026-09-07, which
+    raises "'int' object is not subscriptable" from inside the service -- and
+    nothing caught it, because `block_by_date_use_linear_search` defaults to
+    False so the backtest never took this path."""
+    shim, _ = adapter(
+        lambda cql, params: (
+            [Row(block_id=1925, timestamp=1788442898)] if "block_by_date" in cql else []
+        )
+    )
+    found = run(shim.get_block_by_date_allow_filtering("ltc", 1788442000))
+    assert found["block_id"] == 1925
+    assert found["timestamp"] == 1788442898
+
+
+def test_no_block_at_or_after_is_none_not_a_crash() -> None:
+    """The service checks `if x:` before subscripting, so None is the honest
+    answer for a timestamp past the chain tip."""
+    shim, _ = adapter(lambda cql, params: [])
+    assert run(shim.get_block_by_date_allow_filtering("ltc", 1788442000)) is None

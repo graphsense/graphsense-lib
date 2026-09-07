@@ -305,15 +305,15 @@ class LegacyAdapter:
 
         The name is kept because the service layer calls it, but nothing here
         allows filtering -- the day is a partition key.
-        """
-        from datetime import datetime, timezone
 
-        day = int(datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y%m%d"))
-        blocks = await self._dal(currency).blocks_on_day(day)
-        for block in blocks:
-            if block["timestamp"] >= timestamp:
-                return block["block_id"]
-        return blocks[-1]["block_id"] if blocks else None
+        Returns the ROW, not the id: `blocks_service.get_block_by_date` reads
+        both ``["block_id"]`` and ``["timestamp"]`` off it. This returned a bare
+        int until 2026-09-07, which would have raised "'int' object is not
+        subscriptable" from inside the service -- dormant only because
+        `block_by_date_use_linear_search` defaults to False, so nothing had ever
+        called it.
+        """
+        return await self._dal(currency).block_at_or_after(timestamp)
 
     # -- rates -------------------------------------------------------------
 
