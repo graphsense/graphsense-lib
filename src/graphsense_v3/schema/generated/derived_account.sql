@@ -37,6 +37,34 @@ CREATE TYPE IF NOT EXISTS tx_reference (
 -- delete the absorbed epochs) is a single-partition batch, which Cassandra
 -- applies atomically. Compaction cannot half-happen.
 --
+-- THE FOLD DELETES BY RANGE, and the range is BOUNDED to what it summed:
+--
+--     INSERT epoch 0 = the sum
+--     DELETE ... WHERE bucket = ? AND entity = ? AND epoch >= 1
+--                                              AND epoch <= N
+--
+-- Two statements, whatever N is. Three reasons, and each is a real bug
+-- the naive version has:
+--
+-- * One tombstone, not N. epoch_size is ~1 minute of chain time, so an
+--   entity active every block carries hundreds to thousands of epoch rows
+--   between folds. Deleting them one by one leaves that many tombstones in
+--   a partition read on EVERY request for that entity -- which is v2
+--   relations at ~41% droppable, reintroduced on the exact read path this
+--   model exists to make cheap. A range tombstone is one marker however
+--   many rows it covers.
+-- * Two statements stay under batch_size_fail_threshold. A thousand-
+--   statement batch does not, and splitting it to fit forfeits the
+--   atomicity the paragraph above depends on.
+-- * BOUNDED, because an unbounded `epoch >= 1` deletes rows that arrived
+--   BETWEEN the read and the delete -- ingest never stops, so that window
+--   is always occupied. Those rows are dropped without ever being summed,
+--   which is silent data loss, not a stale number.
+--
+-- N must also be an epoch whose batch is COMPLETE. A range tombstone
+-- shadows anything later written below it, so a retry re-writing an epoch
+-- under N would be swallowed rather than added.
+--
 -- Degrees are distinct-counterparty counts and are NOT summable, so they live
 -- on epoch 0 and are maintained by compaction: stale between runs, exact
 -- after one. That is the accepted staleness tradeoff, spent where it costs
@@ -163,6 +191,10 @@ CREATE TABLE IF NOT EXISTS address_tx_pages (
 -- only_ids stays a point read: the bucket is computed from the counterparty.
 -- v2 uses 100 buckets; 16 is enough and cuts the fan-out four-fold.
 --
+-- Epoch rows fold exactly as address_stats does, range delete included --
+-- see that table for why the delete must be one bounded range and not one
+-- statement per absorbed epoch.
+--
 -- The edge carries its OWN page cursor rather than deriving one from
 -- no_transactions. The two are not interchangeable while the UTXO transform
 -- nets flows per (tx, entity) -- and that is precisely the chain where /links
@@ -187,6 +219,10 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
 -- in_degree/out_degree -- the four *_secondary_ids watermark tables are gone.
 -- only_ids stays a point read: the bucket is computed from the counterparty.
 -- v2 uses 100 buckets; 16 is enough and cuts the fan-out four-fold.
+--
+-- Epoch rows fold exactly as address_stats does, range delete included --
+-- see that table for why the delete must be one bounded range and not one
+-- statement per absorbed epoch.
 --
 -- The edge carries its OWN page cursor rather than deriving one from
 -- no_transactions. The two are not interchangeable while the UTXO transform
