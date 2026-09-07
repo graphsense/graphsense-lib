@@ -21,6 +21,10 @@ Three normalisations, each for a difference that is known and explained:
   once the lake is re-ingested; it is a workaround, not a rule.
 * **Numbers are compared by value.** A ``varint`` arrives as ``Decimal`` from
   one path and ``int`` from another; ``1`` and ``1.0`` are the same balance.
+* **D7 legs are netted before comparing** -- see :func:`net_d7_legs`. This one
+  is a RECONCILIATION rather than an exclusion: it states how the two
+  representations relate and then checks that they do, instead of agreeing to
+  stop looking.
 
 Everything else is compared exactly. A normalisation added here is a claim that
 a difference does not matter -- make it explicitly, or the harness starts
@@ -197,6 +201,81 @@ def normalise(value: Any, network: str) -> Any:
     if isinstance(value, str):
         return reversion_address(network, value)
     return value
+
+
+def net_d7_legs(body: Any) -> Any:
+    """v3's per-direction transaction legs, netted into v2's per-transaction row.
+
+    D7 (`derived_utxo.legs`): v3 tags direction BEFORE the group-by, so an
+    address on both sides of one transaction -- a UTXO spend that returns change
+    to the same address -- yields two GROSS legs where v2 yields one NET row.
+    v3 says "put in 3112, took back 2839"; v2 says "-273".
+
+    Neither is wrong and the decision is to keep D7, so this reconciles rather
+    than ignores: sum the legs of one transaction and the result must equal
+    v2's row exactly. A real error in either leg still shows up, because it
+    moves the sum -- which an ignore-list entry for `value` would have hidden.
+
+    Legs are identified by ``tx_hash``, not ``tx_id``: the id is in
+    IGNORED_FIELDS because the two backends number transactions differently,
+    and the hash is the identity this harness already trusts.
+
+    Applied to the v3 side only, and only for responses shaped like a
+    transaction listing. Anything else is returned untouched.
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("address_txs"), list):
+        return body
+
+    merged: dict = {}
+    order: list = []
+    for row in body["address_txs"]:
+        if not isinstance(row, dict) or "tx_hash" not in row:
+            return body
+        key = row["tx_hash"]
+        if key not in merged:
+            merged[key] = dict(row)
+            order.append(key)
+            continue
+        merged[key] = _add_values(merged[key], row)
+
+    if len(order) == len(body["address_txs"]):
+        # Nothing to net. Return the original object so the common case is not
+        # silently rebuilt into something subtly different.
+        return body
+    return {**body, "address_txs": [merged[key] for key in order]}
+
+
+def _add_values(into: dict, row: dict) -> dict:
+    """Sum the two legs' amounts, keeping every other field of the first.
+
+    Height, timestamp and hash are properties of the TRANSACTION and identical
+    on both legs, so the first leg's are correct for the merged row.
+    """
+    out = dict(into)
+    left, right = into.get("value"), row.get("value")
+    if isinstance(left, dict) and isinstance(right, dict):
+        out["value"] = _add_currency(left, right)
+    return out
+
+
+def _add_currency(left: dict, right: dict) -> dict:
+    """Two ``currency`` values summed: the amount and each fiat position."""
+    out = dict(left)
+    if "value" in left and "value" in right:
+        out["value"] = left["value"] + right["value"]
+    fiat_left, fiat_right = left.get("fiat_values"), right.get("fiat_values")
+    if (
+        isinstance(fiat_left, list)
+        and isinstance(fiat_right, list)
+        and len(fiat_left) == len(fiat_right)
+    ):
+        out["fiat_values"] = [
+            {**a, "value": round(a["value"] + b["value"], 2)}
+            if isinstance(a, dict) and isinstance(b, dict) and "value" in a
+            else a
+            for a, b in zip(fiat_left, fiat_right)
+        ]
+    return out
 
 
 def _presence(value: Any) -> Optional[str]:

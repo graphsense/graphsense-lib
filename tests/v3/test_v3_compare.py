@@ -216,3 +216,75 @@ def test_timing_never_affects_agreement() -> None:
     entry = compare.compare("get_address", {"a": 1}, {"a": 2}, "ltc")
     entry.left_ms, entry.right_ms = 100.0, 1.0
     assert entry.agrees is False
+
+
+# --------------------------------------------------------------------------- #
+# D7: gross legs reconciled against v2's netted row                            #
+# --------------------------------------------------------------------------- #
+
+
+def _leg(tx_hash, value, fiat, **extra):
+    return {
+        "tx_hash": tx_hash,
+        "height": 638970,
+        "timestamp": 1591786827,
+        "value": {
+            "value": value,
+            "fiat_values": [{"code": "eur", "value": fiat}],
+        },
+        **extra,
+    }
+
+
+def test_both_legs_of_one_transaction_sum_to_v2s_netted_row() -> None:
+    """The BCH case: v3 says "put in 3112, took back 2839" as two rows, v2 says
+    "-273" as one. Summing the legs must reproduce v2 exactly."""
+    v3 = {"address_txs": [_leg("aa", -3112, -0.01), _leg("aa", 2839, 0.01)]}
+    v2 = {"address_txs": [_leg("aa", -273, 0.0)]}
+    assert compare.diff(v2, compare.net_d7_legs(v3), "bch") == []
+
+
+def test_a_wrong_leg_still_shows_up_after_netting() -> None:
+    """The reason this nets rather than ignoring `value`: an error in either
+    leg moves the sum, so it is still caught."""
+    v3 = {"address_txs": [_leg("aa", -3112, -0.01), _leg("aa", 2000, 0.01)]}
+    v2 = {"address_txs": [_leg("aa", -273, 0.0)]}
+    assert compare.diff(v2, compare.net_d7_legs(v3), "bch") != []
+
+
+def test_a_listing_with_no_repeated_transaction_is_untouched() -> None:
+    """The common case must not be silently rebuilt into something subtly
+    different, so it is returned as the same object."""
+    body = {"address_txs": [_leg("aa", -273, 0.0), _leg("bb", 12, 0.0)]}
+    assert compare.net_d7_legs(body) is body
+
+
+def test_transactions_keep_their_order_after_netting() -> None:
+    """Order is part of the answer for a transaction listing, and the merged
+    row belongs where its first leg was."""
+    v3 = {
+        "address_txs": [
+            _leg("aa", -3112, 0.0),
+            _leg("bb", 5, 0.0),
+            _leg("aa", 2839, 0.0),
+        ]
+    }
+    netted = compare.net_d7_legs(v3)
+    assert [row["tx_hash"] for row in netted["address_txs"]] == ["aa", "bb"]
+
+
+def test_legs_are_matched_by_hash_because_tx_id_is_ignored() -> None:
+    """v2 and v3 number transactions differently -- `tx_id` is in
+    IGNORED_FIELDS -- so the hash is the only identity available here."""
+    v3 = {
+        "address_txs": [
+            _leg("aa", -3112, 0.0, tx_id=1),
+            _leg("aa", 2839, 0.0, tx_id=999),
+        ]
+    }
+    assert len(compare.net_d7_legs(v3)["address_txs"]) == 1
+
+
+def test_a_response_that_is_not_a_transaction_listing_is_returned_as_is() -> None:
+    for body in ({"links": [{"tx_hash": "aa"}]}, [1, 2], None, "ok"):
+        assert compare.net_d7_legs(body) is body
