@@ -31,7 +31,7 @@ import zlib
 from typing import NamedTuple, Optional
 
 from graphsense_v3.codec import encode_address, search_prefix
-from graphsense_v3.db.core import Dal
+from graphsense_v3.db.core import Dal, NotAvailable
 
 
 class _Value(NamedTuple):
@@ -78,14 +78,6 @@ class _Io(NamedTuple):
     script_hex: Optional[bytes] = None
     txinwitness: Optional[list] = None
     sequence: Optional[int] = None
-
-
-class NotAvailable(NotImplementedError):
-    """A v2 method whose data v3 does not (yet) hold.
-
-    Distinct from a bug: the caller asked for something real, and the honest
-    answer is that this backend cannot serve it -- not an empty result.
-    """
 
 
 def synthetic_id(address: bytes) -> int:
@@ -547,10 +539,16 @@ class LegacyAdapter:
             # through `txs_from_rows` rather than reporting two amounts. The
             # UTXO read below would fail on `dst_bucket` with a CQL error that
             # names a column rather than the missing feature.
+            # `AccountDal.link_transactions` can now READ the account table.
+            # What is missing is the response: `links_response` routes an
+            # account link through `txs_from_rows` and reports one row per
+            # transfer, not the two amounts a UTXO link reports -- so the rows
+            # this method returns for UTXO are the wrong shape entirely.
             raise NotAvailable(
-                "list_address_links is implemented for the UTXO layout only; "
-                "the account link table has its own shape and no v3 account "
-                "keyspace exists yet to build it against"
+                "list_address_links is implemented for the UTXO response shape "
+                "only. The account link table is readable (AccountDal), but an "
+                "account link is reported per transfer rather than as an "
+                "input/output pair, and that assembly is not written yet"
             )
         dal = self._dal(currency)
         limit = int(pagesize or 100)

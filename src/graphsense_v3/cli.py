@@ -455,7 +455,7 @@ def backtest_cmd(
     from graphsense_v3 import backtest as harness
     from graphsense_v3 import compare
     from graphsense_v3.cassandra import connect_to
-    from graphsense_v3.db.core import Dal
+    from graphsense_v3.db.core import dal_for
     from graphsense_v3.db.legacy import LegacyAdapter
     from graphsense_v3.probe import configuration
     from graphsense_v3.settings import Kind, assert_v3_keyspace, v3_keyspace
@@ -573,7 +573,11 @@ def backtest_cmd(
 
         v2_db = _v2_dal(db_config)
         v3_db = LegacyAdapter(
-            {network: Dal(session, raw, derived, configuration(session, derived, raw))},
+            {
+                network: dal_for(
+                    session, raw, derived, configuration(session, derived, raw)
+                )
+            },
             stub_clusters=stub_clusters,
         )
 

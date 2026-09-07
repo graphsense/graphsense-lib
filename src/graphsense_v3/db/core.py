@@ -72,6 +72,19 @@ EPOCH_ZERO_ONLY = (
 )
 
 
+class NotAvailable(NotImplementedError):
+    """A v2 method whose data v3 does not (yet) hold.
+
+    Distinct from a bug: the caller asked for something real, and the honest
+    answer is that this backend cannot serve it -- not an empty result.
+
+    Defined HERE rather than in the adapter because the DAL itself has cases --
+    `AccountDal.link_transactions` on a multi-page edge -- and `legacy` imports
+    `core`, so the other direction would be a cycle. `legacy` re-exports it, so
+    every existing import still resolves.
+    """
+
+
 @dataclass(frozen=True)
 class AddressTx:
     """One transaction of one address, in one direction."""
@@ -255,7 +268,10 @@ class Dal:
 
         cluster = connect_to(list(nodes), username, password)
         session = await asyncio.to_thread(cluster.connect)
-        dal = cls(session, raw, derived, {})
+        # `dal_for`, not `cls`: `open` is inherited, so calling it on the base
+        # would build a reader with no `transactions` at all. The family comes
+        # from the keyspace name either way.
+        dal = dal_for(session, raw, derived, {})
         dal.cluster = cluster
         rows = await dal._select(
             f"SELECT * FROM {derived}.configuration WHERE keyspace_name = %s",
@@ -409,6 +425,13 @@ class Dal:
         )
         return int(rows[0].balance) if rows else None
 
+    # -- family-shaped, implemented by the subclasses ---------------------
+    #
+    # These are the two reads whose shape is decided by the family rather than
+    # shared by it. They are declared here so the contract is visible and the
+    # checker can see it, and they RAISE: a base that guessed is what served
+    # every account token transfer as the native coin. Use `dal_for`.
+
     async def transactions(
         self,
         address: bytes,
@@ -420,94 +443,20 @@ class Dal:
         after_tx_id: Optional[int] = None,
         limit: int = 100,
     ) -> list:
-        """An address's transactions, newest first.
-
-        Costs one partition read per (direction x zero-ness x page) combination,
-        because all three are in the partition key -- unbound direction is two
-        reads, and including zero-value rows doubles that again. They are merged
-        here, in ``tx_id`` order.
-
-        ``page`` defaults to the address's HIGHEST page rather than 0. Pages are
-        numbered by ascending ordinal, so page 0 holds the OLDEST transactions;
-        a newest-first listing starts at ``*_tx_page_max`` from the epoch-0
-        stats row and walks down.
-
-        That maximum is PER PARTITION CLASS, and one number for all four reads
-        is wrong in both directions: a class whose max is lower than the number
-        chosen reads a page it has no rows on and returns NOTHING, so a merged
-        listing silently becomes single-direction. An address with two outgoing
-        pages and one incoming page loses every incoming transaction, which
-        reads as "these transactions do not exist" rather than as an error.
-        `address_tx_pages` is keyed per class for the same reason.
-        """
-        directions = (False, True) if is_outgoing is None else (is_outgoing,)
-        zero_flags = (False, True) if include_zero_value else (False,)
-
-        cursors: dict = {}
-        if page is None:
-            stats = await self.stats(address)
-            if stats is None:
-                return []
-            cursors = stats.epoch_zero
-
-        # Both bounds are clustering restrictions on tx_id, so a range read.
-        # `after_tx_id` is what a min_height filter becomes -- without it the
-        # height is only a hint about which page to start on, and rows BELOW it
-        # come back anyway.
-        clause = ""
-        extra: tuple = ()
-        if before_tx_id is not None:
-            clause += " AND tx_id < %s"
-            extra += (before_tx_id,)
-        if after_tx_id is not None:
-            clause += " AND tx_id >= %s"
-            extra += (after_tx_id,)
-
-        # Gathered per (direction, zero-ness) rather than through `_gather`,
-        # which flattens: the DIRECTION is not on the row, it is in the
-        # partition key, so flattening loses it. A caller cannot re-derive it,
-        # and v2 signs an outgoing value negative -- so a lost direction is a
-        # wrong sign on every row of an unbounded listing.
-        # `currency` and `tx_reference` are clustering columns on the ACCOUNT
-        # layout only. Without them an account listing cannot say which asset a
-        # row moved, so every USDT transfer reads as the native coin.
-        columns = "tx_id, value, balance"
-        if self.is_account:
-            columns += ", currency, tx_reference"
-
-        specs = [(outgoing, zero) for outgoing in directions for zero in zero_flags]
-        results = await asyncio.gather(
-            *(
-                self._select(
-                    f"SELECT {columns} FROM "
-                    f"{self.derived}.address_transactions "
-                    f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
-                    f"AND tx_page = %s{clause} LIMIT {int(limit)}",
-                    (
-                        address,
-                        outgoing,
-                        zero,
-                        page if page is not None else page_max(cursors, outgoing, zero),
-                    )
-                    + extra,
-                )
-                for outgoing, zero in specs
-            )
+        """An address's transactions, newest first. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
         )
-        merged = [
-            AddressTx(
-                tx_id=row.tx_id,
-                value=int(row.value or 0),
-                balance=None if row.balance is None else int(row.balance),
-                is_outgoing=outgoing,
-                currency=getattr(row, "currency", None),
-                tx_reference=getattr(row, "tx_reference", None),
-            )
-            for (outgoing, _zero), rows in zip(specs, results)
-            for row in rows
-        ]
-        merged.sort(key=lambda tx: tx.tx_id, reverse=True)
-        return merged[:limit]
+
+    async def link_transactions(
+        self, src: bytes, dst: bytes, *, limit: int = 100
+    ) -> list:
+        """The transactions on one edge. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
 
     async def page_for_tx(
         self, address: bytes, is_outgoing: bool, tx_id: int, *, zero_value: bool = False
@@ -620,27 +569,6 @@ class Dal:
             fiat_values=tuple(amount["fiat_values"]),
             token_values=token,
         )
-
-    async def link_transactions(
-        self, src: bytes, dst: bytes, *, limit: int = 100
-    ) -> list:
-        """The transactions on one edge. One partition, because the layout is
-        per (source, bucket) -- this is the ``/links`` fix."""
-        rows = await self._select(
-            f"SELECT tx_id, input_value, output_value FROM "
-            f"{self.derived}.address_link_transactions "
-            f"WHERE src_address = %s AND dst_bucket = %s AND dst_address = %s "
-            f"LIMIT {int(limit)}",
-            (src, self.relation_bucket(dst), dst),
-        )
-        return [
-            {
-                "tx_id": r.tx_id,
-                "input_value": int(r.input_value or 0),
-                "output_value": int(r.output_value or 0),
-            }
-            for r in rows
-        ]
 
     async def search_addresses(self, prefix: str, *, limit: int = 10) -> list:
         """Addresses starting with ``prefix``.
@@ -857,3 +785,291 @@ class Dal:
     async def token_configuration(self) -> list:
         rows = await self._select(f"SELECT * FROM {self.derived}.token_configuration")
         return [row._asdict() for row in rows]
+
+
+class UtxoDal(Dal):
+    """The reader for a UTXO keyspace.
+
+    A transaction touches an address once, so ``tx_id`` alone identifies a row
+    and orders the listing.
+    """
+
+    async def transactions(
+        self,
+        address: bytes,
+        *,
+        is_outgoing: Optional[bool] = None,
+        include_zero_value: bool = False,
+        page: Optional[int] = None,
+        before_tx_id: Optional[int] = None,
+        after_tx_id: Optional[int] = None,
+        limit: int = 100,
+    ) -> list:
+        """An address's transactions, newest first.
+
+        Costs one partition read per (direction x zero-ness x page) combination,
+        because all three are in the partition key -- unbound direction is two
+        reads, and including zero-value rows doubles that again. They are merged
+        here, in ``tx_id`` order.
+
+        ``page`` defaults to the address's HIGHEST page rather than 0. Pages are
+        numbered by ascending ordinal, so page 0 holds the OLDEST transactions;
+        a newest-first listing starts at ``*_tx_page_max`` from the epoch-0
+        stats row and walks down.
+
+        That maximum is PER PARTITION CLASS, and one number for all four reads
+        is wrong in both directions: a class whose max is lower than the number
+        chosen reads a page it has no rows on and returns NOTHING, so a merged
+        listing silently becomes single-direction. An address with two outgoing
+        pages and one incoming page loses every incoming transaction, which
+        reads as "these transactions do not exist" rather than as an error.
+        `address_tx_pages` is keyed per class for the same reason.
+        """
+        directions = (False, True) if is_outgoing is None else (is_outgoing,)
+        zero_flags = (False, True) if include_zero_value else (False,)
+
+        cursors: dict = {}
+        if page is None:
+            stats = await self.stats(address)
+            if stats is None:
+                return []
+            cursors = stats.epoch_zero
+
+        # Both bounds are clustering restrictions on tx_id, so a range read.
+        # `after_tx_id` is what a min_height filter becomes -- without it the
+        # height is only a hint about which page to start on, and rows BELOW it
+        # come back anyway.
+        clause = ""
+        extra: tuple = ()
+        if before_tx_id is not None:
+            clause += " AND tx_id < %s"
+            extra += (before_tx_id,)
+        if after_tx_id is not None:
+            clause += " AND tx_id >= %s"
+            extra += (after_tx_id,)
+
+        # Gathered per (direction, zero-ness) rather than through `_gather`,
+        # which flattens: the DIRECTION is not on the row, it is in the
+        # partition key, so flattening loses it. A caller cannot re-derive it,
+        # and v2 signs an outgoing value negative -- so a lost direction is a
+        # wrong sign on every row of an unbounded listing.
+        specs = [(outgoing, zero) for outgoing in directions for zero in zero_flags]
+        results = await asyncio.gather(
+            *(
+                self._select(
+                    f"SELECT tx_id, value, balance FROM "
+                    f"{self.derived}.address_transactions "
+                    f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
+                    f"AND tx_page = %s{clause} LIMIT {int(limit)}",
+                    (
+                        address,
+                        outgoing,
+                        zero,
+                        page if page is not None else page_max(cursors, outgoing, zero),
+                    )
+                    + extra,
+                )
+                for outgoing, zero in specs
+            )
+        )
+        merged = [
+            AddressTx(
+                tx_id=row.tx_id,
+                value=int(row.value or 0),
+                balance=None if row.balance is None else int(row.balance),
+                is_outgoing=outgoing,
+            )
+            for (outgoing, _zero), rows in zip(specs, results)
+            for row in rows
+        ]
+        merged.sort(key=lambda tx: tx.tx_id, reverse=True)
+        return merged[:limit]
+
+    async def link_transactions(
+        self, src: bytes, dst: bytes, *, limit: int = 100
+    ) -> list:
+        """The transactions on one edge. One partition, because the layout is
+        per (source, bucket) -- this is the ``/links`` fix."""
+        rows = await self._select(
+            f"SELECT tx_id, input_value, output_value FROM "
+            f"{self.derived}.address_link_transactions "
+            f"WHERE src_address = %s AND dst_bucket = %s AND dst_address = %s "
+            f"LIMIT {int(limit)}",
+            (src, self.relation_bucket(dst), dst),
+        )
+        return [
+            {
+                "tx_id": r.tx_id,
+                "input_value": int(r.input_value or 0),
+                "output_value": int(r.output_value or 0),
+            }
+            for r in rows
+        ]
+
+
+class AccountDal(Dal):
+    """The reader for an ACCOUNT keyspace.
+
+    The family differs in more than a column. One transaction can move value
+    several times for one address -- a trace and a log, or two assets -- so the
+    listing carries ``currency`` and ``tx_reference``, and the primary key is
+    ``(tx_id, tx_reference, currency)`` rather than ``tx_id`` alone.
+    """
+
+    async def transactions(
+        self,
+        address: bytes,
+        *,
+        is_outgoing: Optional[bool] = None,
+        include_zero_value: bool = False,
+        page: Optional[int] = None,
+        before_tx_id: Optional[int] = None,
+        after_tx_id: Optional[int] = None,
+        limit: int = 100,
+    ) -> list:
+        """An address's transactions, newest first.
+
+        Costs one partition read per (direction x zero-ness x page) combination,
+        because all three are in the partition key -- unbound direction is two
+        reads, and including zero-value rows doubles that again. They are merged
+        here, in ``tx_id`` order.
+
+        ``page`` defaults to the address's HIGHEST page rather than 0. Pages are
+        numbered by ascending ordinal, so page 0 holds the OLDEST transactions;
+        a newest-first listing starts at ``*_tx_page_max`` from the epoch-0
+        stats row and walks down.
+
+        That maximum is PER PARTITION CLASS, and one number for all four reads
+        is wrong in both directions: a class whose max is lower than the number
+        chosen reads a page it has no rows on and returns NOTHING, so a merged
+        listing silently becomes single-direction. An address with two outgoing
+        pages and one incoming page loses every incoming transaction, which
+        reads as "these transactions do not exist" rather than as an error.
+        `address_tx_pages` is keyed per class for the same reason.
+        """
+        directions = (False, True) if is_outgoing is None else (is_outgoing,)
+        zero_flags = (False, True) if include_zero_value else (False,)
+
+        cursors: dict = {}
+        if page is None:
+            stats = await self.stats(address)
+            if stats is None:
+                return []
+            cursors = stats.epoch_zero
+
+        # Both bounds are clustering restrictions on tx_id, so a range read.
+        # `after_tx_id` is what a min_height filter becomes -- without it the
+        # height is only a hint about which page to start on, and rows BELOW it
+        # come back anyway.
+        clause = ""
+        extra: tuple = ()
+        if before_tx_id is not None:
+            clause += " AND tx_id < %s"
+            extra += (before_tx_id,)
+        if after_tx_id is not None:
+            clause += " AND tx_id >= %s"
+            extra += (after_tx_id,)
+
+        # Gathered per (direction, zero-ness) rather than through `_gather`,
+        # which flattens: the DIRECTION is not on the row, it is in the
+        # partition key, so flattening loses it. A caller cannot re-derive it,
+        # and v2 signs an outgoing value negative -- so a lost direction is a
+        # wrong sign on every row of an unbounded listing.
+        specs = [(outgoing, zero) for outgoing in directions for zero in zero_flags]
+        results = await asyncio.gather(
+            *(
+                self._select(
+                    f"SELECT tx_id, value, balance, currency, tx_reference FROM "
+                    f"{self.derived}.address_transactions "
+                    f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
+                    f"AND tx_page = %s{clause} LIMIT {int(limit)}",
+                    (
+                        address,
+                        outgoing,
+                        zero,
+                        page if page is not None else page_max(cursors, outgoing, zero),
+                    )
+                    + extra,
+                )
+                for outgoing, zero in specs
+            )
+        )
+        merged = [
+            AddressTx(
+                tx_id=row.tx_id,
+                value=int(row.value or 0),
+                balance=None if row.balance is None else int(row.balance),
+                is_outgoing=outgoing,
+                currency=getattr(row, "currency", None),
+                tx_reference=getattr(row, "tx_reference", None),
+            )
+            for (outgoing, _zero), rows in zip(specs, results)
+            for row in rows
+        ]
+        merged.sort(key=lambda tx: tx.tx_id, reverse=True)
+        return merged[:limit]
+
+    async def link_transactions(
+        self, src: bytes, dst: bytes, *, limit: int = 100
+    ) -> list:
+        """The transactions on one edge.
+
+        The account link table is keyed ``(src, dst, tx_page)`` where the page
+        is the edge's own ordinal // `tx_page_size`, so an edge below that --
+        every edge but a hub-to-hub one -- lives entirely in page 0, ordered
+        newest-first by the clustering.
+
+        A LARGER edge cannot be served correctly yet, and this refuses rather
+        than answering from the wrong window: page 0 holds the OLDEST
+        `tx_page_size` transactions, so a newest-first read of it would return a
+        plausible page from the wrong end of the edge's history. Knowing which
+        page is newest needs `link_page_max`, which nothing writes (see
+        `schema.definitions`, `_relations_table`).
+
+        Costs one extra point read to tell the two cases apart. That is the
+        price of failing loudly instead of silently.
+        """
+        overflow = await self._select(
+            f"SELECT tx_id FROM {self.derived}.address_link_transactions "
+            f"WHERE src_address = %s AND dst_address = %s AND tx_page = 1 LIMIT 1",
+            (src, dst),
+        )
+        if overflow:
+            raise NotAvailable(
+                "this edge spans more than one page of link transactions, and "
+                "which page holds the newest is recorded in `link_page_max`, "
+                "which nothing writes yet -- answering from page 0 would return "
+                "the oldest window as if it were the newest"
+            )
+        rows = await self._select(
+            f"SELECT tx_id, tx_reference, currency, value FROM "
+            f"{self.derived}.address_link_transactions "
+            f"WHERE src_address = %s AND dst_address = %s AND tx_page = 0 "
+            f"LIMIT {int(limit)}",
+            (src, dst),
+        )
+        return [
+            {
+                "tx_id": r.tx_id,
+                "tx_reference": r.tx_reference,
+                "currency": r.currency,
+                "value": int(r.value or 0),
+            }
+            for r in rows
+        ]
+
+
+def dal_for(session, raw: str, derived: str, config: dict) -> Dal:
+    """The reader for whichever family ``derived`` belongs to.
+
+    Constructing `Dal` directly gives a reader with no `transactions` at all,
+    which is deliberate: the base cannot answer that question without knowing
+    the family, and a base that guessed is what served every token transfer as
+    the native coin.
+    """
+    from graphsense_v3.schema.definitions import NETWORKS
+    from graphsense_v3.schema.model import Family
+
+    network = derived.split("_", 1)[0].lower()
+    kind = AccountDal if NETWORKS.get(network) is Family.ACCOUNT else UtxoDal
+    return kind(session, raw, derived, config)

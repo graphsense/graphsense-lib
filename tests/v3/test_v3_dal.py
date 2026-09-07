@@ -13,7 +13,7 @@ import pytest
 
 from graphsense_v3.codec import bucket
 from graphsense_v3.db import core
-from graphsense_v3.db.core import Dal
+from graphsense_v3.db.core import Dal, dal_for
 
 RAW = "ltc_raw_v3_test"
 DERIVED = "ltc_derived_v3_test"
@@ -74,7 +74,7 @@ class FakeSession:
 
 def make(rows=None) -> tuple:
     session = FakeSession(rows)
-    return Dal(session, RAW, DERIVED, dict(CONFIG)), session
+    return dal_for(session, RAW, DERIVED, dict(CONFIG)), session
 
 
 def run(coro):
@@ -369,7 +369,7 @@ def test_the_direction_survives_the_fan_out() -> None:
         # tx_id encodes the direction so the assertion can tell them apart.
         return [Row(tx_id=2 if params[1] else 1, value=10, balance=None)]
 
-    dal = Dal(FakeSession(rows), RAW, DERIVED, dict(CONFIG))
+    dal = dal_for(FakeSession(rows), RAW, DERIVED, dict(CONFIG))
     found = asyncio.run(dal.transactions(ADDRESS))
     assert {tx.tx_id: tx.is_outgoing for tx in found} == {1: False, 2: True}
 
@@ -378,7 +378,7 @@ def test_a_missing_page_index_row_means_page_zero() -> None:
     """The index is written only for addresses that span pages, so absence is
     the answer rather than the absence of one. Returning None would make a
     height filter on an ordinary address look unanswerable."""
-    dal = Dal(FakeSession([]), RAW, DERIVED, dict(CONFIG))
+    dal = dal_for(FakeSession([]), RAW, DERIVED, dict(CONFIG))
     assert asyncio.run(dal.page_for_tx(ADDRESS, True, 12345)) == 0
 
 
@@ -511,9 +511,9 @@ def test_the_forward_walk_is_bounded() -> None:
 
 
 def account_dal(rows=None):
-    """A Dal over an ACCOUNT keyspace -- the family comes from the name."""
+    """A reader over an ACCOUNT keyspace -- the family comes from the name."""
     session = FakeSession(rows)
-    return Dal(session, "eth_raw_v3_t1", "eth_derived_v3_t1", dict(CONFIG)), session
+    return dal_for(session, "eth_raw_v3_t1", "eth_derived_v3_t1", dict(CONFIG)), session
 
 
 def test_the_family_is_read_off_the_keyspace_name() -> None:
@@ -561,3 +561,46 @@ def test_a_utxo_listing_does_not_ask_for_columns_it_has_not_got() -> None:
     for cql, _ in session.seen:
         if "address_transactions" in cql:
             assert "currency" not in cql and "tx_reference" not in cql
+
+
+def test_the_factory_picks_the_reader_for_the_family() -> None:
+    """`dal_for` is the only supported way in. The base has no `transactions`
+    at all -- deliberately, because a base that guessed is what served every
+    token transfer as the native coin."""
+    utxo, _ = make()
+    account, _ = account_dal()
+    assert isinstance(utxo, core.UtxoDal)
+    assert isinstance(account, core.AccountDal)
+    # The base DECLARES both so the contract is visible, and raises: a base
+    # that guessed is what served every account token transfer as native coin.
+    bare = core.Dal(FakeSession(None), RAW, DERIVED, dict(CONFIG))
+    with pytest.raises(NotImplementedError, match="dal_for"):
+        run(bare.transactions(ADDRESS))
+    with pytest.raises(NotImplementedError, match="dal_for"):
+        run(bare.link_transactions(ADDRESS, OTHER))
+
+
+def test_an_account_edge_within_one_page_is_served() -> None:
+    """`tx_page` is the edge's own ordinal // tx_page_size, so an edge below
+    100k transactions -- every edge but a hub-to-hub one -- is entirely in
+    page 0, ordered newest-first by its clustering."""
+    dal, _ = account_dal(
+        lambda cql, params: (
+            []
+            if "tx_page = 1" in cql
+            else [Row(tx_id=9, tx_reference=None, currency="USDT", value=42)]
+        )
+    )
+    found = run(dal.link_transactions(ADDRESS, OTHER))
+    assert found == [
+        {"tx_id": 9, "tx_reference": None, "currency": "USDT", "value": 42}
+    ]
+
+
+def test_an_account_edge_spanning_pages_refuses_rather_than_guessing() -> None:
+    """Page 0 holds the OLDEST tx_page_size transactions, so reading it
+    newest-first returns a plausible page from the wrong end of the edge's
+    history. Which page is newest needs `link_page_max`, which nothing writes."""
+    dal, _ = account_dal(lambda cql, params: [Row(tx_id=1)])
+    with pytest.raises(core.NotAvailable, match="link_page_max"):
+        run(dal.link_transactions(ADDRESS, OTHER))

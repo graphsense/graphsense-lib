@@ -12,7 +12,7 @@ import asyncio
 import pytest
 
 from graphsense_v3.codec import decode_address, encode_address
-from graphsense_v3.db.core import Dal
+from graphsense_v3.db.core import dal_for
 from graphsense_v3.db.legacy import LegacyAdapter, NotAvailable, synthetic_id
 
 from test_v3_dal import CONFIG, DERIVED, RAW, FakeSession, Row
@@ -24,7 +24,7 @@ NEIGHBOR = "Ld2LjwjfcZQTTPsfrD1xiCzkSRMM3F61hs"
 
 def adapter(rows=None) -> tuple:
     session = FakeSession(rows)
-    dal = Dal(session, RAW, DERIVED, dict(CONFIG))
+    dal = dal_for(session, RAW, DERIVED, dict(CONFIG))
     return LegacyAdapter({"ltc": dal}), session
 
 
@@ -231,7 +231,7 @@ def test_rates_come_back_as_an_ordered_list_not_a_map() -> None:
             else []
         )
     )
-    dal = Dal(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
+    dal = dal_for(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
     shim = LegacyAdapter({"ltc": dal})
     rates = run(shim.get_rates("ltc", 7))["rates"]
     assert rates == [
@@ -250,7 +250,7 @@ def test_rate_order_follows_the_keyspace_not_the_map() -> None:
             else []
         )
     )
-    dal = Dal(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["USD", "EUR"]})
+    dal = dal_for(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["USD", "EUR"]})
     shim = LegacyAdapter({"ltc": dal})
     assert [r["code"] for r in run(shim.get_rates("ltc", 7))["rates"]] == ["usd", "eur"]
 
@@ -526,7 +526,7 @@ def test_stubbed_clusters_report_none_rather_than_raising() -> None:
     call failing for a reason unrelated to what is under test."""
     session = FakeSession()
     shim = LegacyAdapter(
-        {"ltc": Dal(session, RAW, DERIVED, dict(CONFIG))}, stub_clusters=True
+        {"ltc": dal_for(session, RAW, DERIVED, dict(CONFIG))}, stub_clusters=True
     )
     assert run(shim.get_fresh_cluster_id("ltc", 1)) is None
 
@@ -537,7 +537,7 @@ def test_stubbing_does_not_fabricate_a_cluster_anywhere_else() -> None:
     the one thing v3 has not built."""
     session = FakeSession()
     shim = LegacyAdapter(
-        {"ltc": Dal(session, RAW, DERIVED, dict(CONFIG))}, stub_clusters=True
+        {"ltc": dal_for(session, RAW, DERIVED, dict(CONFIG))}, stub_clusters=True
     )
     for method in ("get_entity", "list_entity_txs", "get_address_entity_id"):
         with pytest.raises(NotAvailable, match="no cluster tables"):
@@ -747,7 +747,7 @@ def test_a_positional_udt_is_labelled_from_the_keyspaces_own_order() -> None:
     different order relabels every amount rather than failing, so the order
     must come from the keyspace that wrote them."""
     session = FakeSession()
-    dal = Dal(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
+    dal = dal_for(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
     shim = LegacyAdapter({"ltc": dal})
     assert shim._fiat_list("ltc", [1.5, 2.5]) == [
         {"code": "eur", "value": 1.5},
@@ -758,7 +758,7 @@ def test_a_positional_udt_is_labelled_from_the_keyspaces_own_order() -> None:
 def test_a_rates_map_is_still_labelled_by_key() -> None:
     """`exchange_rates` keeps its map -- 3 MB, and read directly."""
     session = FakeSession()
-    dal = Dal(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
+    dal = dal_for(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
     shim = LegacyAdapter({"ltc": dal})
     assert shim._fiat_list("ltc", {"USD": 2.5, "EUR": 1.5}) == [
         {"code": "eur", "value": 1.5},
@@ -782,7 +782,7 @@ def test_an_account_neighbour_stays_bytes_for_the_service_to_format() -> None:
         )
     )
     shim = LegacyAdapter(
-        {"eth": Dal(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
     )
     rows, _ = run(shim.list_neighbors("eth", encoded, True))
     assert isinstance(rows[0]["dst_address"], bytes)
@@ -812,9 +812,9 @@ def test_account_links_refuse_rather_than_failing_on_a_column_name() -> None:
     -- a CQL error naming a column rather than the missing feature."""
     session = FakeSession()
     shim = LegacyAdapter(
-        {"eth": Dal(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
     )
-    with pytest.raises(NotAvailable, match="UTXO layout only"):
+    with pytest.raises(NotAvailable, match="UTXO response shape"):
         run(shim.list_address_links("eth", "0xaa", "0xbb"))
 
 
