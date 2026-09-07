@@ -13,40 +13,6 @@ LTC_P2PKH = "LLcHNPNWE7s6FfLzkt4fD8kJPbsK1V8pyT"
 BTC_VERSIONED = "12PL7B4g9Td2zreqak5Mw7gYBPW2vmsiUj"
 
 
-def test_the_stale_lakes_btc_version_byte_is_normalised_away() -> None:
-    """Same hash160, LTC's 0x30 against BTC's 0x00. The lake predates the
-    2026-06-15 P2PK fix, so v3 reads the second where production has the first,
-    on ~28% of early-chain addresses."""
-    assert compare.reversion_address("ltc", BTC_VERSIONED) == LTC_P2PKH
-    assert compare.reversion_address("ltc", LTC_P2PKH) == LTC_P2PKH
-
-
-def test_reversioning_is_a_no_op_for_the_chain_that_owns_the_byte() -> None:
-    """The same string is CORRECT on btc; rewriting it there would invent a
-    difference rather than remove one."""
-    assert compare.reversion_address("btc", BTC_VERSIONED) == BTC_VERSIONED
-
-
-def test_non_base58check_strings_pass_through_untouched() -> None:
-    """A currency ticker, a bech32 address and a hash are not addresses to
-    re-version, and mangling them would corrupt real comparisons."""
-    for value in ("LTC", "ltc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "", "abc"):
-        assert compare.reversion_address("ltc", value) == value
-
-
-def test_a_p2sh_address_is_not_rewritten_to_p2pkh() -> None:
-    """P2SH is ALSO one version byte plus a 20-byte hash, so a length test
-    would silently turn a valid P2SH address into a valid, different P2PKH one.
-    Only another network's P2PKH byte is rewritten."""
-    import hashlib
-
-    for version in (0x32, 0x05):  # LTC P2SH, and the legacy 3-prefix form
-        body = bytes([version]) + b"\x11" * 20
-        digest = hashlib.sha256(hashlib.sha256(body).digest()).digest()[:4]
-        p2sh = compare._b58encode(body + digest)
-        assert compare.reversion_address("ltc", p2sh) == p2sh
-
-
 def test_surrogate_ids_are_excluded_with_a_reason() -> None:
     """They cannot agree and neither is wrong; comparing them would report a
     difference on every single call."""

@@ -91,12 +91,23 @@ class Fixtures:
 def v2_spelling(network: str, address: str) -> str:
     """``address`` as the v2 keyspace spells it.
 
+    Converts the QUESTION, not the answer. Both sides must be asked about the
+    same address, and a v3 keyspace built before `codec.reversion_address` moved
+    onto the write path still holds the lake's stale byte. Once such a keyspace
+    is rebuilt this is a no-op on every address -- but it must stay, because
+    fixtures are read out of v3 and a stale keyspace would otherwise ask v2
+    about an address v2 has never had. What it must NOT do is normalise the
+    RESPONSES: `compare` deliberately no longer does that, so a genuine v3
+    version-byte bug fails the comparison instead of being smoothed away.
+
     v2 was written by an ingest that already had the network-aware P2PK fix, so
     it holds the chain's own version byte; the v3 lake predates it. Re-versioning
     is a no-op for every address written after the fix, which is the vast
     majority -- it only moves the early-chain P2PK ones.
     """
-    return compare.reversion_address(network, address)
+    from graphsense_v3.codec import reversion_address
+
+    return reversion_address(network, address)
 
 
 @dataclass

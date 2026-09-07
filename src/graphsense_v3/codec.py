@@ -12,6 +12,7 @@ reimplementing it would be a second thing to get wrong.
 
 from __future__ import annotations
 
+import hashlib
 import zlib
 
 from graphsenselib.utils.address import address_to_bytes, address_to_str
@@ -50,6 +51,83 @@ COINBASE_BYTES = b""
 #: only re-adds it in `to_bytes` for a `bc1` address, so the two are not
 #: inverses for anything else -- see `encode_address`.
 NONSTANDARD_PREFIX = "nonstandard"
+
+
+#: Base58 alphabet, in the order the checksum encoding uses.
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _b58decode(text: str) -> bytes:
+    number = 0
+    for char in text:
+        number = number * 58 + _B58.index(char)
+    raw = number.to_bytes((number.bit_length() + 7) // 8, "big")
+    return b"\x00" * (len(text) - len(text.lstrip("1"))) + raw
+
+
+def _b58encode(raw: bytes) -> str:
+    number = int.from_bytes(raw, "big")
+    out = ""
+    while number:
+        number, remainder = divmod(number, 58)
+        out = _B58[remainder] + out
+    return "1" * (len(raw) - len(raw.lstrip(b"\x00"))) + out
+
+
+def _b58check(version: bytes, payload: bytes) -> str:
+    body = version + payload
+    digest = hashlib.sha256(hashlib.sha256(body).digest()).digest()[:4]
+    return _b58encode(body + digest)
+
+
+def reversion_address(network: str, address: str) -> str:
+    """A base58 address re-encoded with ``network``'s own P2PKH version byte.
+
+    **A LAKE REPAIR, applied on the WRITE path only.** The LTC lake predates the
+    2026-06-15 network-aware P2PK fix (c103323c): gslib DERIVES a P2PK address
+    from the script rather than reading it from the node -- the one address
+    class it computes itself -- and the pre-fix parser hardcoded BTC's version
+    byte. So the lake holds `1417...` where LTC has `LNE5...`: the same hash160
+    under the wrong network's byte. Every other class comes from the node's own
+    `addresses` field and is unaffected, which is why this is ~28% of
+    EARLY-CHAIN addresses and not everything.
+
+    Not applied when ENCODING a lookup, only when writing: v2 stores `LNE5...`
+    and answers "not found" for `1417...`, so re-versioning a caller's address
+    would make v3 find something v2 does not.
+
+    Delete this once the lake is re-ingested. It is a workaround, not a rule.
+
+    Leaves alone anything that is not a base58check address with a *different*
+    version: bech32 passes through, and so does an address already carrying the
+    right byte. Only the hash160 is preserved, which is the part both backends
+    agree on -- the version byte is exactly what the stale lake gets wrong.
+    """
+    from graphsenselib.ingest.rpc_utxo import _PUBKEY_ADDRESS_VERSION
+
+    want = _PUBKEY_ADDRESS_VERSION.get(network.lower())
+    if want is None or not address or not all(c in _B58 for c in address):
+        return address
+    try:
+        raw = _b58decode(address)
+    except ValueError:
+        return address
+    if len(raw) < 5:
+        return address
+    body, checksum = raw[:-4], raw[-4:]
+    if hashlib.sha256(hashlib.sha256(body).digest()).digest()[:4] != checksum:
+        return address  # not base58check; leave it exactly as it is
+    if body[: len(want)] == want:
+        return address
+
+    # Only rewrite a version that is ANOTHER NETWORK'S P2PKH byte. Rewriting on
+    # length alone is wrong: LTC's P2SH address is also one version byte plus a
+    # 20-byte hash, so a length test turns a valid P2SH address into a valid,
+    # different P2PKH one -- a wrong answer rather than a reported mismatch.
+    for other in _PUBKEY_ADDRESS_VERSION.values():
+        if body[: len(other)] == other and len(body) == len(other) + 20:
+            return _b58check(want, body[len(other) :])
+    return address
 
 
 def encode_address(network: str, address: str) -> bytes:

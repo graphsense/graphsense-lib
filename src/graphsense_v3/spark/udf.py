@@ -17,6 +17,7 @@ from graphsense_v3.codec import (
     TX_INDEX_BITS,
     decode_address,
     encode_address,
+    reversion_address,
     search_prefix,
 )
 
@@ -58,7 +59,11 @@ def encode_address_udf(network: str):
     # suppression -- the stub is wrong, not the call.
     @pandas_udf(BinaryType())  # ty: ignore[no-matching-overload]
     def _encode(addresses: pd.Series) -> pd.Series:
-        return addresses.map(lambda a: None if a is None else encode_address(net, a))
+        return addresses.map(
+            lambda a: (
+                None if a is None else encode_address(net, reversion_address(net, a))
+            )
+        )
 
     return _encode
 
@@ -96,7 +101,10 @@ def encode_address_list_udf(network: str):
     def _one(addresses):
         if addresses is None:
             return None
-        return [None if a is None else encode_address(net, a) for a in addresses]
+        return [
+            None if a is None else encode_address(net, reversion_address(net, a))
+            for a in addresses
+        ]
 
     @pandas_udf(ArrayType(BinaryType()))  # ty: ignore[no-matching-overload]
     def _encode(values: pd.Series) -> pd.Series:
