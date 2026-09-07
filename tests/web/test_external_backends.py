@@ -50,11 +50,43 @@ BACKEND_SEARCH = {
 }
 
 
+# what the backend answers when asked about a LOCAL network's twins (rule 5)
+BACKEND_RELATED_ADDRESSES = {
+    "related_addresses": [
+        {"address": "0xsame", "currency": "bnb", "relation_type": "pubkey"},
+        {
+            "address": "0xsame",
+            "currency": "arb",
+            "relation_type": "pubkey",
+        },  # NOT configured
+        {
+            "address": "0xsame",
+            "currency": "eth",
+            "relation_type": "pubkey",
+        },  # the source itself
+    ]
+}
+
+LOCAL_RELATED_ADDRESSES = {
+    "related_addresses": [
+        {"address": "TSAME", "currency": "trx", "relation_type": "pubkey"},
+        {
+            "address": "0xsame",
+            "currency": "bnb",
+            "relation_type": "pubkey",
+        },  # already known
+    ],
+    "next_page": None,
+}
+
+
 def make_client(
     enabled=True,
     api_key="backend-key",
     backend_stats=BACKEND_STATS,
     backend_capabilities=BACKEND_CAPABILITIES,
+    backend_related_addresses=BACKEND_RELATED_ADDRESSES,
+    merge_related_addresses=True,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
@@ -84,6 +116,10 @@ def make_client(
     @app.get("/{currency}/blocks/{height}")
     async def block(currency: str, height: int):
         return {"served": "local", "currency": currency}
+
+    @app.get("/{currency}/addresses/{address}/related_addresses")
+    async def related_addresses(currency: str, address: str):
+        return LOCAL_RELATED_ADDRESSES
 
     @app.get("/{currency}/addresses/{address}/tags")
     async def address_tags(currency: str, address: str):
@@ -117,11 +153,18 @@ def make_client(
             return httpx.Response(200, json=backend_capabilities)
         if request.url.path == "/search":
             return httpx.Response(200, json=BACKEND_SEARCH)
+        if request.url.path.endswith("/related_addresses"):
+            if backend_related_addresses is None:
+                return httpx.Response(404)
+            if backend_related_addresses == "declines":
+                return httpx.Response(501)
+            return httpx.Response(200, json=backend_related_addresses)
         return httpx.Response(200, json={"backend_path": request.url.path})
 
     config = ExternalBackendsConfig(
         enabled=enabled,
         networks={"bnb": {"url": BACKEND_URL, "api_key": api_key}},
+        merge_related_addresses=merge_related_addresses,
     )
     app.add_middleware(
         ExternalBackendMiddleware,
@@ -242,7 +285,12 @@ def test_stats_overlays_tag_counts_from_the_local_tagstore():
     client, _ = make_client(
         backend_stats={
             "currencies": [
-                {"name": "bnb", "no_blocks": 42, "no_labels": 0, "no_tagged_addresses": 0}
+                {
+                    "name": "bnb",
+                    "no_blocks": 42,
+                    "no_labels": 0,
+                    "no_tagged_addresses": 0,
+                }
             ]
         }
     )
@@ -345,6 +393,75 @@ def test_search_filtered_to_local_network_skips_backends():
     assert body["currencies"] == [
         {"currency": "btc", "addresses": ["1local"], "txs": []}
     ]
+    assert seen == []
+
+
+def test_related_addresses_of_local_network_merge_backend_twins():
+    """Rule 5: the local pubkey rows come first, the backend's rows for its
+    configured networks are appended, duplicates and the source itself and
+    unconfigured networks are dropped."""
+    client, seen = make_client()
+    response = client.get(
+        "/eth/addresses/0xsame/related_addresses?address_relation_type=pubkey&pagesize=100"
+    )
+    assert response.status_code == 200
+    assert "x-served-by" not in response.headers
+    assert response.json() == {
+        "related_addresses": [
+            {"address": "TSAME", "currency": "trx", "relation_type": "pubkey"},
+            {"address": "0xsame", "currency": "bnb", "relation_type": "pubkey"},
+        ],
+        "next_page": None,
+    }
+    assert seen[-1].url.path == "/eth/addresses/0xsame/related_addresses"
+    assert seen[-1].url.query == b"address_relation_type=pubkey&pagesize=100"
+    assert seen[-1].headers["Authorization"] == "backend-key"
+
+
+def test_related_addresses_merge_appends_new_twins():
+    client, _ = make_client(
+        backend_related_addresses={
+            "related_addresses": [
+                {"address": "0xother", "currency": "bnb", "relation_type": "pubkey"}
+            ]
+        }
+    )
+    body = client.get("/eth/addresses/0xother/related_addresses").json()
+    assert [row["currency"] for row in body["related_addresses"]] == [
+        "trx",
+        "bnb",
+        "bnb",
+    ]
+    assert body["related_addresses"][-1]["address"] == "0xother"
+
+
+def test_related_addresses_merge_can_be_switched_off():
+    client, seen = make_client(merge_related_addresses=False)
+    body = client.get("/eth/addresses/0xsame/related_addresses").json()
+    assert body == LOCAL_RELATED_ADDRESSES
+    assert seen == []
+
+
+def test_related_addresses_of_external_network_still_proxy_outright():
+    client, seen = make_client()
+    response = client.get("/bnb/addresses/0xsame/related_addresses")
+    assert response.headers["x-served-by"] == "external-backend"
+    assert response.json() == BACKEND_RELATED_ADDRESSES
+
+
+def test_related_addresses_backend_404_or_501_contributes_nothing():
+    for answer in (None, "declines"):
+        client, _ = make_client(backend_related_addresses=answer)
+        body = client.get("/eth/addresses/0xsame/related_addresses").json()
+        assert body == LOCAL_RELATED_ADDRESSES
+
+
+def test_related_addresses_other_relation_types_skip_the_backends():
+    client, seen = make_client()
+    body = client.get(
+        "/btc/addresses/1same/related_addresses?address_relation_type=something_else"
+    ).json()
+    assert body == LOCAL_RELATED_ADDRESSES
     assert seen == []
 
 

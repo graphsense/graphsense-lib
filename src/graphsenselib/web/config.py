@@ -123,6 +123,12 @@ class ExternalBackendsConfig(BaseSettings):
     timeout_s: float = Field(
         default=60.0, description="HTTP timeout towards the backends"
     )
+    merge_related_addresses: bool = Field(
+        default=True,
+        description="Rule 5: a locally served network's related_addresses "
+        "(pubkey) also lists the address's twins on the externally served "
+        "networks, asked from the backends; false keeps the local answer alone",
+    )
 
 
 class GSRestConfig(BaseSettings):

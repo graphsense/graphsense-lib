@@ -34,6 +34,20 @@ Use one changelog file, but separate entries by track in each release window.
   `DEFAULT_SCALA_JOB_EXCLUDES` is generated from the build's `exclude(...)`
   clauses by the same script, and is only emitted alongside `--packages`.
 
+### Web API + Python client
+
+#### Added
+- **Cross-chain twins of a locally served address include the externally
+  served networks.** `related_addresses` (pubkey) of a network answered from
+  Cassandra now also asks each external backend about the same address and
+  appends its rows for the backend's configured networks: an eth address
+  lists its bnb/arb twins next to the trx one from the pubkey table. A
+  backend that does not know the source network (404) or declines (501)
+  contributes nothing. `external_backends.merge_related_addresses: false`
+  switches it off (middleware/external_backends.py, rule 5).
+
+### Library
+
 #### Changed
 - **`DEFAULT_SCALA_JOB_PACKAGES` drops `org.web3j:core`**, tracking the same
   removal in `spark/build.sbt` (see `spark/CHANGELOG.md`): nothing in the Scala

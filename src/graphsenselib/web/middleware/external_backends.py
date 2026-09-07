@@ -42,6 +42,15 @@ Decision rules:
    contributes no entries — consumers already treat an absent network as
    fully enabled, the same rule they apply to an old server without the
    endpoint, so deployment skew degrades uniformly.
+5. ``/{network}/addresses/{addr}/related_addresses`` of a LOCALLY served
+   network is answered locally, then — for the pubkey relation type, the
+   only one the backends know — each backend is asked the same question
+   about the same address and its rows for the backend's configured networks
+   are appended (an eth address gains its bnb/arb twins; the trx twin from
+   the local pubkey table stays first). A backend that does not know the
+   source network (404) or declines the question (501) contributes nothing.
+   ``merge_related_addresses: false`` switches this rule off, so the local
+   answer stays exactly as without this feature.
 
 Backend transport errors propagate — a broken backend must be loud (500 via
 the generic exception handler), not silently shaped as an empty answer.
@@ -85,6 +94,10 @@ _MERGE_FIELDS = {
     "/search": ("currencies", "currency"),
     "/capabilities": ("networks", "network"),
 }
+
+# rule 5: a locally served network's cross-chain twins, merged from the backends
+_RELATED_ADDRESSES_PATH = re.compile(r"^/[^/]+/addresses/[^/]+/related_addresses$")
+_PUBKEY_RELATION = "pubkey"
 
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
@@ -147,10 +160,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return False
         if request.url.path in ("/stats", "/capabilities"):
             return True
-        return (
-            request.url.path == "/search"
-            and request.query_params.get("currency") is None
-        )
+        if request.url.path == "/search":
+            return request.query_params.get("currency") is None
+        return self._wants_related_addresses_merge(request)
+
+    def _wants_related_addresses_merge(self, request: Request) -> bool:
+        """Rule 5 applies: pubkey twins of a locally served network."""
+        if not self.config.merge_related_addresses:
+            return False
+        if not _RELATED_ADDRESSES_PATH.match(request.url.path):
+            return False
+        relation_type = request.query_params.get("address_relation_type")
+        return relation_type in (None, _PUBKEY_RELATION)
 
     async def _merge_response(
         self, request: Request, status_code: int, body: bytes
@@ -163,6 +184,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if status_code != 200:
             return None
         path = request.url.path
+        if path not in _MERGE_FIELDS:
+            return await self._merge_related_addresses(request, body)
         list_field, key = _MERGE_FIELDS[path]
         local_doc = json.loads(body)
         merged = dict(local_doc)
@@ -186,6 +209,31 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 entries = [_without_tags_disabled(entry) for entry in entries]
             merged[list_field] = _merge_keyed_lists(merged[list_field], entries, key)
         return JSONResponse(merged, status_code=200)
+
+    async def _merge_related_addresses(self, request: Request, body: bytes) -> Response:
+        """Rule 5: append the backends' twins of a locally served address.
+
+        Local rows keep their order and come first; a backend row is kept when
+        its currency is one of that backend's configured networks and no local
+        row already names the same (currency, address). Paging stays the local
+        one — the backends' unpaginated twin sets are small (one row per EVM
+        network at most) and the dashboard asks for a page of 100."""
+        local_doc = json.loads(body)
+        rows = list(local_doc.get("related_addresses", []))
+        present = {(row.get("currency"), row.get("address")) for row in rows}
+        query = ("?" + str(request.url.query)) if request.url.query else ""
+        for base_url, networks in self._backends_by_url().items():
+            backend_doc = await self._fetch_json(
+                base_url, request.url.path + query, tolerate_404=True, tolerate_501=True
+            )
+            if backend_doc is None:
+                continue
+            for row in backend_doc.get("related_addresses", []):
+                marker = (row.get("currency"), row.get("address"))
+                if row.get("currency") in networks and marker not in present:
+                    rows.append(row)
+                    present.add(marker)
+        return JSONResponse({**local_doc, "related_addresses": rows}, status_code=200)
 
     async def _overlay_tag_counts(self, request: Request, entries: list) -> list:
         """Overwrite a backend stats entry's tag counts with the local
@@ -226,7 +274,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         return None
 
     async def _fetch_json(
-        self, base_url: str, path_and_query: str, tolerate_404: bool = False
+        self,
+        base_url: str,
+        path_and_query: str,
+        tolerate_404: bool = False,
+        tolerate_501: bool = False,
     ) -> Optional[dict]:
         headers = {"Accept": "application/json"}
         api_key = self._api_key_for_url(base_url)
@@ -236,6 +288,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             base_url.rstrip("/") + path_and_query, headers=headers
         )
         if tolerate_404 and response.status_code == 404:
+            return None
+        if tolerate_501 and response.status_code == 501:
             return None
         response.raise_for_status()
         return response.json()
