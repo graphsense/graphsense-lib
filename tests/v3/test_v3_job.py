@@ -488,3 +488,81 @@ def test_a_utxo_snapshot_never_needs_the_extension() -> None:
     `block` for a legitimate reason. The extension is account-only in practice
     and must not invent headroom here."""
     assert job.extend_over_empty({967022: 1, 967023: 14}, 967021, 967023) == 967021
+
+
+# --------------------------------------------------------------------------- #
+# Seeding the v3 raw rate table, which the lake cannot fill                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_v2_coin_table_gains_the_asset_it_never_had(spark) -> None:
+    """v2's coin rates carry no `asset` column at all -- there was only ever
+    one asset -- so the ticker has to be supplied to reach v3's merged shape."""
+    v2 = spark.createDataFrame(
+        [{"date": "2026-06-20", "fiat_values": {"EUR": 172.7, "USD": 198.0}}],
+        schema=V2_RAW,
+    )
+    rows = job.raw_rate_rows(v2, None, symbol="BCH").collect()
+    assert [(r["asset"], r["date"]) for r in rows] == [("BCH", "2026-06-20")]
+    assert rows[0]["fiat_values"] == {"EUR": 172.7, "USD": 198.0}
+
+
+def test_the_account_token_table_is_merged_in(spark) -> None:
+    """v2 splits rates in two and v3 keeps one table, so seeding an account
+    keyspace has to union them -- otherwise every token rate is dropped."""
+    coin = spark.createDataFrame(
+        [{"date": "2026-06-20", "fiat_values": {"EUR": 2000.0}}], schema=V2_RAW
+    )
+    tokens = spark.createDataFrame(
+        [{"asset": "USDT", "date": "2026-06-20", "fiat_values": {"EUR": 0.9}}],
+        schema=V2_TOKEN,
+    )
+    rows = job.raw_rate_rows(coin, tokens, symbol="ETH").collect()
+    assert sorted((r["asset"], r["date"]) for r in rows) == [
+        ("ETH", "2026-06-20"),
+        ("USDT", "2026-06-20"),
+    ]
+
+
+def test_a_v3_source_needs_no_union_and_keeps_its_assets(spark) -> None:
+    v3 = spark.createDataFrame(
+        [
+            {"asset": "ETH", "date": "2026-06-20", "fiat_values": {"EUR": 2000.0}},
+            {"asset": "USDT", "date": "2026-06-20", "fiat_values": {"EUR": 0.9}},
+        ],
+        schema=V3_RAW,
+    )
+    rows = job.raw_rate_rows(v3, None, symbol="IGNORED").collect()
+    assert sorted(r["asset"] for r in rows) == ["ETH", "USDT"]
+
+
+def test_one_row_per_asset_and_date(spark) -> None:
+    """(asset, date) is the primary key, so a duplicated source row would be a
+    silent upsert rather than the two rows the count reports."""
+    v2 = spark.createDataFrame(
+        [
+            {"date": "2026-06-20", "fiat_values": {"EUR": 1.0}},
+            {"date": "2026-06-20", "fiat_values": {"EUR": 1.0}},
+        ],
+        schema=V2_RAW,
+    )
+    assert job.raw_rate_rows(v2, None, symbol="BCH").count() == 1
+
+
+def test_a_per_block_source_cannot_seed_a_date_keyed_table(spark) -> None:
+    """A derived keyspace has already resolved dates to blocks, so it cannot
+    fill a table keyed by date -- and failing loudly beats writing a table with
+    a `date` column full of nulls."""
+    derived = spark.createDataFrame(
+        [
+            {
+                "asset": "BCH",
+                "block_id_group": 0,
+                "block_id": 2,
+                "fiat_values": {"EUR": 9.0},
+            }
+        ],
+        schema=V3_DERIVED,
+    )
+    with pytest.raises(SystemExit, match="keyed by block"):
+        job.raw_rate_rows(derived, None, symbol="BCH")

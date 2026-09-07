@@ -78,6 +78,87 @@ def normalise_rates(rates: "DataFrame", *, symbol: str) -> "DataFrame":
     )
 
 
+def raw_rate_rows(
+    rates: "DataFrame", tokens: "Optional[DataFrame]", *, symbol: str
+) -> "DataFrame":
+    """``(asset, date, fiat_values)`` -- the v3 RAW rate table's own shape.
+
+    v2 splits rates in two, and the coin half carries no `asset` column at all,
+    so the ticker is supplied. v3 merged them, so a v3 source needs no union.
+    """
+    merged = normalise_rates(rates, symbol=symbol)
+    if tokens is not None:
+        merged = merged.unionByName(normalise_rates(tokens, symbol=symbol))
+    if "date" not in merged.columns:
+        raise SystemExit(
+            "the rate source is keyed by block, so it cannot seed a raw rate "
+            "table, which is keyed by date. Point --rates-keyspace at a RAW "
+            "keyspace."
+        )
+    return merged.select("asset", "date", "fiat_values").dropDuplicates(
+        ["asset", "date"]
+    )
+
+
+def seed_raw_rates(
+    spark: "SparkSession",
+    network: str,
+    source_keyspace: str,
+    target_keyspace: str,
+    *,
+    dry_run: bool = False,
+) -> int:
+    """Copy the rate table into a v3 raw keyspace that has none. Rows written.
+
+    Rates are not in the lake -- gslib's `exchange-rates` path owns them -- so a
+    fresh v3 keyspace has an EMPTY `exchange_rates` while its derived per-block
+    rates are built by reading whatever `rates_keyspace` names. That leaves the
+    v3 keyspace unable to be rebuilt without the older one, and leaves a
+    declared table sitting empty, which reads as "no data" rather than as "not
+    populated yet" -- the failure mode this schema removes cluster tables to
+    avoid.
+
+    ONLY when the target is empty. Once gslib's rates path is pointed at this
+    keyspace it will hold fresher rates than the source, and re-copying on every
+    run would drag them backwards.
+    """
+    from graphsense_v3.spark.derived_account import NATIVE
+
+    assert_v3_keyspace(target_keyspace)
+    existing = read_cassandra(spark, target_keyspace, "exchange_rates")
+    if existing.limit(1).count():
+        logger.info(
+            "%s.exchange_rates already has rows; leaving it alone", target_keyspace
+        )
+        return 0
+
+    symbol = NATIVE[network][0] if network in NATIVE else network.upper()
+    source = read_cassandra(spark, source_keyspace, "exchange_rates")
+    tokens = None
+    # Only a v2 ACCOUNT keyspace has the second table; v3 merged them, and no
+    # UTXO keyspace has ever had one.
+    if "asset" not in source.columns and NETWORKS[network] is Family.ACCOUNT:
+        tokens = read_cassandra(spark, source_keyspace, "token_exchange_rates")
+
+    frame = raw_rate_rows(source, tokens, symbol=symbol)
+    rows = frame.count()
+    if dry_run:
+        logger.info("would seed %s.exchange_rates with %d rows", target_keyspace, rows)
+        return rows
+    writer.write(
+        frame,
+        schema_for(network, Kind.RAW).table("exchange_rates"),
+        target_keyspace,
+    )
+    logger.info(
+        "seeded %s.exchange_rates with %d rows from %s",
+        target_keyspace,
+        rows,
+        source_keyspace,
+    )
+    return rows
+
+
 def rates_by_block(blocks: "DataFrame", rates: "DataFrame") -> "DataFrame":
     """``(asset, block_id, fiat_values)``, resolving dates against the blocks.
 
@@ -503,6 +584,13 @@ def run(
                     settings.raw_keyspace,
                     sidecar=settings.sidecar,
                 )
+        with Stage("seed raw.exchange_rates"):
+            seed_raw_rates(
+                spark,
+                network,
+                settings.rates_keyspace,
+                settings.raw_keyspace,
+            )
         with Stage("write raw.summary_statistics"):
             writer.write(
                 summary.statistics_for(spark, raw_frames),
