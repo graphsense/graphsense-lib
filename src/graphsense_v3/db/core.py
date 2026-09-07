@@ -90,6 +90,21 @@ class Neighbor:
     value: Optional[int] = None
 
 
+def page_max(epoch_zero: dict, is_outgoing: bool, is_zero_value: bool) -> int:
+    """The newest page of ONE partition class of ``address_transactions``.
+
+    Pages are numbered per class, so there is one cursor per class and the four
+    do not move together: an address can have two outgoing pages and one
+    incoming. Reading them all at the highest of the four returns nothing for
+    every class that has not reached it.
+    """
+    name = (
+        f"{'out' if is_outgoing else 'in'}"
+        f"{'_zero' if is_zero_value else ''}_tx_page_max"
+    )
+    return int(epoch_zero.get(name) or 0)
+
+
 @dataclass(frozen=True)
 class Stats:
     """``address_stats``, with the epoch slice already resolved."""
@@ -324,21 +339,24 @@ class Dal:
         numbered by ascending ordinal, so page 0 holds the OLDEST transactions;
         a newest-first listing starts at ``*_tx_page_max`` from the epoch-0
         stats row and walks down.
+
+        That maximum is PER PARTITION CLASS, and one number for all four reads
+        is wrong in both directions: a class whose max is lower than the number
+        chosen reads a page it has no rows on and returns NOTHING, so a merged
+        listing silently becomes single-direction. An address with two outgoing
+        pages and one incoming page loses every incoming transaction, which
+        reads as "these transactions do not exist" rather than as an error.
+        `address_tx_pages` is keyed per class for the same reason.
         """
         directions = (False, True) if is_outgoing is None else (is_outgoing,)
         zero_flags = (False, True) if include_zero_value else (False,)
 
+        cursors: dict = {}
         if page is None:
             stats = await self.stats(address)
             if stats is None:
                 return []
-            page = max(
-                (
-                    int(stats.epoch_zero.get(name) or 0)
-                    for name in ("in_tx_page_max", "out_tx_page_max")
-                ),
-                default=0,
-            )
+            cursors = stats.epoch_zero
 
         # Both bounds are clustering restrictions on tx_id, so a range read.
         # `after_tx_id` is what a min_height filter becomes -- without it the
@@ -366,7 +384,13 @@ class Dal:
                     f"{self.derived}.address_transactions "
                     f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
                     f"AND tx_page = %s{clause} LIMIT {int(limit)}",
-                    (address, outgoing, zero, page) + extra,
+                    (
+                        address,
+                        outgoing,
+                        zero,
+                        page if page is not None else page_max(cursors, outgoing, zero),
+                    )
+                    + extra,
                 )
                 for outgoing, zero in specs
             )

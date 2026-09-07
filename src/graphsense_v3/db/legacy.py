@@ -558,7 +558,21 @@ class LegacyAdapter:
                     "tx_hash": tx.get("tx_hash"),
                     "block_id": tx.get("block_id"),
                     "timestamp": tx.get("block_timestamp"),
-                    "input_value": row["input_value"],
+                    # SIGNED, as v2 signs it. v2 does not read a link table:
+                    # it takes each side's `address_transactions.value`, which
+                    # is already signed by direction, so the source's input --
+                    # an outgoing leg -- arrives negative
+                    # (`cassandra.py:2631-2632`). The sign has to go on before
+                    # `convert_value` rather than after, or the fiat rounds off
+                    # the positive magnitude and lands a cent away from v2's.
+                    "input_value": -row["input_value"],
+                    # NOT negated, and it does not always agree with v2. v3
+                    # stores what each side GROSSLY put in and took out; v2
+                    # reports the destination's NET flow for that transaction,
+                    # so the two differ exactly when the destination is also an
+                    # input to the same transaction (UTXO change). See the
+                    # `_link_txs_table` comment: reporting the gross amounts is
+                    # the deliberate choice, not an oversight.
                     "output_value": row["output_value"],
                 }
             )

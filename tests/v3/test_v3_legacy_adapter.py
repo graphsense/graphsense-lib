@@ -673,7 +673,31 @@ def test_a_link_reports_the_real_amounts_not_the_apportioned_one() -> None:
 
     shim, _ = adapter(rows)
     found, _ = run(shim.list_address_links("ltc", ADDRESS, NEIGHBOR))
-    assert (found[0]["input_value"], found[0]["output_value"]) == (1000, 250)
+    assert (found[0]["input_value"], found[0]["output_value"]) == (-1000, 250)
+
+
+def test_the_link_input_value_is_signed_the_way_v2_signs_it() -> None:
+    """v2 has no link table: it takes each side's `address_transactions.value`,
+    which is already signed by direction, so the source's input arrives NEGATIVE
+    (`cassandra.py:2631-2632`). v3 stores the magnitude, and the first BCH
+    backtest showed the sign flipped on every one of 51 sampled links.
+
+    The sign has to go on before the service converts to fiat, not after: v2
+    rounds the negative number, and rounding the positive one then negating
+    lands a cent away on half-cent values."""
+
+    def rows(cql, params):
+        if "address_link_transactions" in cql:
+            return [Row(tx_id=1, input_value=1100000, output_value=1099000)]
+        if ".transaction " in cql:
+            return [Row(tx_id=1, block_id=1, block_timestamp=1, tx_hash=b"\xaa")]
+        return []
+
+    shim, _ = adapter(rows)
+    found, _ = run(shim.list_address_links("ltc", ADDRESS, NEIGHBOR))
+    assert found[0]["input_value"] == -1100000
+    # The destination RECEIVED, so its side stays positive.
+    assert found[0]["output_value"] == 1099000
 
 
 def test_min_height_becomes_a_lower_bound_on_the_query() -> None:

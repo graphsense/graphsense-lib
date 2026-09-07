@@ -174,9 +174,8 @@ def test_transactions_come_back_newest_first_across_partitions() -> None:
     assert [tx.tx_id for tx in txs] == [30, 30, 10, 10]
 
 
-def test_the_default_page_is_the_highest_not_zero() -> None:
-    """Pages are numbered by ASCENDING ordinal, so page 0 holds the OLDEST
-    transactions. A newest-first listing has to start at *_tx_page_max."""
+def _stats_rows(**cursors):
+    """A stats reader whose epoch-0 row carries the given paging cursors."""
 
     def rows(cql, params):
         if "address_stats" in cql:
@@ -189,16 +188,68 @@ def test_the_default_page_is_the_highest_not_zero() -> None:
                     no_outgoing_txs_zero_value=0,
                     first_tx_id=1,
                     last_tx_id=2,
-                    in_tx_page_max=4,
-                    out_tx_page_max=2,
+                    **cursors,
                 )
             ]
         return []
 
-    dal, session = make(rows)
+    return rows
+
+
+def _pages_by_class(session) -> dict:
+    """``{(is_outgoing, is_zero_value): tx_page}`` actually queried."""
+    return {
+        (params[1], params[2]): params[3]
+        for cql, params in session.seen
+        if "address_transactions" in cql
+    }
+
+
+def test_the_default_page_is_the_highest_not_zero() -> None:
+    """Pages are numbered by ASCENDING ordinal, so page 0 holds the OLDEST
+    transactions. A newest-first listing has to start at *_tx_page_max."""
+    dal, session = make(_stats_rows(in_tx_page_max=4, out_tx_page_max=4))
     run(dal.transactions(ADDRESS))
-    pages = {params[3] for cql, params in session.seen if "address_transactions" in cql}
-    assert pages == {4}
+    assert set(_pages_by_class(session).values()) == {4}
+
+
+def test_each_direction_starts_on_its_own_highest_page() -> None:
+    """The cursors are PER PARTITION CLASS and do not move together. Taking one
+    number for all of them is what the first BCH backtest caught: an address
+    with two outgoing pages and one incoming read the incoming class at the
+    outgoing page, found nothing there, and returned an outgoing-only listing
+    that looked like a complete one."""
+    dal, session = make(_stats_rows(in_tx_page_max=1, out_tx_page_max=2))
+    run(dal.transactions(ADDRESS))
+    assert _pages_by_class(session) == {(False, False): 1, (True, False): 2}
+
+
+def test_the_zero_value_classes_have_their_own_cursors_too() -> None:
+    """Zero-ness is in the partition key, so its pages are numbered separately
+    from the non-zero ones -- and nothing was reading its cursors at all."""
+    dal, session = make(
+        _stats_rows(
+            in_tx_page_max=1,
+            out_tx_page_max=2,
+            in_zero_tx_page_max=3,
+            out_zero_tx_page_max=4,
+        )
+    )
+    run(dal.transactions(ADDRESS, include_zero_value=True))
+    assert _pages_by_class(session) == {
+        (False, False): 1,
+        (True, False): 2,
+        (False, True): 3,
+        (True, True): 4,
+    }
+
+
+def test_an_explicit_page_overrides_every_cursor() -> None:
+    """A caller walking pages passes the number it wants; the cursors are only
+    the DEFAULT entry point."""
+    dal, session = make(_stats_rows(in_tx_page_max=1, out_tx_page_max=2))
+    run(dal.transactions(ADDRESS, page=0))
+    assert set(_pages_by_class(session).values()) == {0}
 
 
 def test_neighbors_scatter_over_every_relation_bucket() -> None:
