@@ -756,6 +756,13 @@ def _txs_table(name: str, entity: str, family: Family, *, recent: bool) -> Table
         else ()
     )
     clustering = ("tx_id", *(c.name for c in account_only))
+    # `currency` is ASC while tx_id and tx_reference are DESC. That mixed
+    # direction is the reason `Dal.paging_bounds` resumes by re-reading a
+    # transaction rather than by a multi-column slice on the clustering prefix
+    # -- a comparison across a direction change does not mean what reading it
+    # suggests. Making this DESC would settle that, and costs nothing while no
+    # account keyspace exists. See `paging_bounds` for the other two questions
+    # it does NOT settle.
     order = (("tx_id", "DESC"),) + tuple(
         (c.name, "DESC" if c.name == "tx_reference" else "ASC") for c in account_only
     )

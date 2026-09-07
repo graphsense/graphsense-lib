@@ -9,6 +9,8 @@ harness would report it as agreement.
 
 import asyncio
 
+from types import SimpleNamespace
+
 import pytest
 
 from graphsense_v3.codec import decode_address, encode_address
@@ -583,7 +585,10 @@ def test_a_full_page_offers_a_next_page() -> None:
         shim.list_address_txs("ltc", ADDRESS, direction="out", pagesize=3)
     )
     assert len(found) == 3
-    assert token == str(found[-1]["tx_id"])
+    # "<tx_id>:<rows of it already delivered>". The count is what an account
+    # listing needs: one transaction there produces several rows, so a page can
+    # end mid-transaction and resuming at `tx_id <` would drop the rest of it.
+    assert token == f"{found[-1]['tx_id']}:1"
 
 
 def test_a_short_page_is_the_last_one() -> None:
@@ -604,7 +609,7 @@ def test_an_empty_listing_offers_no_token() -> None:
     assert found == [] and token is None
 
 
-def test_a_resume_token_becomes_an_exclusive_tx_id_bound() -> None:
+def test_a_resume_token_becomes_an_inclusive_tx_id_bound() -> None:
     """`before_tx_id` is exclusive, so resuming from the last tx_id handed out
     continues after it rather than repeating it."""
     asked = []
@@ -623,7 +628,9 @@ def test_a_resume_token_becomes_an_exclusive_tx_id_bound() -> None:
         )
     )
     cql, params = asked[0]
-    assert "tx_id < %s" in cql
+    # INCLUSIVE, and the already-delivered rows are dropped client-side. An
+    # exclusive bound cannot express "the rest of that transaction".
+    assert "tx_id <= %s" in cql
     assert params[-1] == 8270462039621668
 
 
@@ -930,3 +937,27 @@ def test_filtering_by_io_index_keeps_the_result_set_shape() -> None:
     assert run(shim.get_spending_txs("ltc", "ab" * 32, io_index=3)).current_rows
     assert run(shim.get_spent_in_txs("ltc", "ab" * 32, io_index=7)).current_rows
     assert run(shim.get_spending_txs("ltc", "ab" * 32, io_index=99)).current_rows == []
+
+
+def test_the_token_counts_rows_carried_across_a_page_boundary() -> None:
+    """Two pages ending inside the SAME transaction must accumulate. Counting
+    only this page's rows would tell the next page to skip fewer than were
+    actually delivered, and it would repeat them."""
+    from graphsense_v3.db.legacy import decode_page_token, encode_page_token
+
+    page = [SimpleNamespace(tx_id=9), SimpleNamespace(tx_id=9)]
+    assert encode_page_token(page, None) == "9:2"
+    # Resuming inside tx 9, having already been given 2 of its rows.
+    assert encode_page_token(page, (9, 2)) == "9:4"
+    # A boundary that moved on: the previous count does not carry.
+    assert encode_page_token(page, (11, 3)) == "9:2"
+    assert decode_page_token("9:4") == (9, 4)
+
+
+def test_a_bare_tx_id_token_still_resumes() -> None:
+    """A token minted before the count existed resumes as zero delivered, which
+    RE-READS the boundary transaction rather than skipping it. Re-reading is
+    the safe direction to be wrong in -- it can duplicate, never lose."""
+    from graphsense_v3.db.legacy import decode_page_token
+
+    assert decode_page_token("8270462039621668") == (8270462039621668, 0)

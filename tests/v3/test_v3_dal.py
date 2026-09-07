@@ -604,3 +604,55 @@ def test_an_account_edge_spanning_pages_refuses_rather_than_guessing() -> None:
     dal, _ = account_dal(lambda cql, params: [Row(tx_id=1)])
     with pytest.raises(core.NotAvailable, match="link_page_max"):
         run(dal.link_transactions(ADDRESS, OTHER))
+
+
+# --------------------------------------------------------------------------- #
+# The resume cursor, where one transaction can be several rows                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_cursor_re_reads_the_boundary_transaction_and_skips_what_was_sent() -> None:
+    """An account transaction produces several rows, so a page can end inside
+    one. An exclusive `tx_id <` bound drops the rest of it silently; an
+    inclusive bound plus a skip cannot lose a row."""
+    rows = [
+        Row(tx_id=9, value=1, balance=None, currency="A", tx_reference=None),
+        Row(tx_id=9, value=2, balance=None, currency="B", tx_reference=None),
+        Row(tx_id=9, value=3, balance=None, currency="C", tx_reference=None),
+    ]
+    dal, session = account_dal(
+        lambda cql, params: rows if "address_transactions" in cql else []
+    )
+    found = run(
+        dal.transactions(ADDRESS, is_outgoing=True, page=0, before_row=(9, 2), limit=1)
+    )
+    # The first two rows of tx 9 were already delivered; the third is next.
+    assert [tx.currency for tx in found] == ["C"]
+    cql, _ = next(c for c in session.seen if "address_transactions" in c[0])
+    assert "tx_id <= %s" in cql
+    # It has to ASK for the skipped rows to be able to drop them.
+    assert "LIMIT 3" in cql
+
+
+def test_no_cursor_means_no_skip_and_no_extra_rows_fetched() -> None:
+    """The first page must not pay for a cursor it does not have."""
+    dal, session = account_dal(
+        lambda cql, params: (
+            [Row(tx_id=9, value=1, balance=None, currency="A", tx_reference=None)]
+            if "address_transactions" in cql
+            else []
+        )
+    )
+    run(dal.transactions(ADDRESS, is_outgoing=True, page=0, limit=5))
+    cql, _ = next(c for c in session.seen if "address_transactions" in c[0])
+    assert "LIMIT 5" in cql and "tx_id <=" not in cql
+
+
+def test_a_height_bound_stays_exclusive_and_is_not_a_cursor() -> None:
+    """`max_height` is a FILTER, not a position -- it has no rows already
+    delivered, so it keeps the exclusive bound and adds nothing to the limit."""
+    dal, session = account_dal(lambda cql, params: [])
+    run(dal.transactions(ADDRESS, is_outgoing=True, page=0, before_tx_id=99, limit=4))
+    cql, _ = next(c for c in session.seen if "address_transactions" in c[0])
+    assert "tx_id < %s" in cql and "tx_id <=" not in cql
+    assert "LIMIT 4" in cql

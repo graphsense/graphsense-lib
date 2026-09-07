@@ -80,6 +80,32 @@ class _Io(NamedTuple):
     sequence: Optional[int] = None
 
 
+def decode_page_token(page) -> tuple:
+    """``"<tx_id>:<delivered>"`` -> ``(tx_id, delivered)``.
+
+    Tolerates a bare tx_id so a token minted before the count existed still
+    resumes -- as zero delivered, which re-reads the boundary transaction
+    rather than skipping it. Re-reading is the safe direction to be wrong in.
+    """
+    text = str(page)
+    head, _, tail = text.partition(":")
+    return int(head), int(tail or 0)
+
+
+def encode_page_token(found: list, before_row: Optional[tuple]) -> str:
+    """The cursor for the page just handed out.
+
+    ``delivered`` counts the rows of the LAST transaction that the caller has
+    now seen -- this page's, plus any it had already been given if the previous
+    page ended inside the same transaction.
+    """
+    last = found[-1].tx_id
+    delivered = sum(1 for row in found if row.tx_id == last)
+    if before_row is not None and before_row[0] == last:
+        delivered += before_row[1]
+    return f"{last}:{delivered}"
+
+
 def synthetic_id(address: bytes) -> int:
     """A stable stand-in for v2's ``address_id``.
 
@@ -438,12 +464,18 @@ class LegacyAdapter:
         # no error and a plausible-looking answer.
         is_outgoing = None if direction is None else "out" in str(direction).lower()
         before = None
+        before_row = None
         if page:
             # A resume token from a previous call. The format is OURS -- the
-            # service treats it as opaque -- so it is the last tx_id handed
-            # out, and `before_tx_id` is exclusive, which makes resuming exact
-            # rather than off by one row.
-            before = int(page)
+            # service treats it as opaque -- and it carries TWO things: the last
+            # tx_id handed out, and how many rows OF THAT TRANSACTION have been
+            # delivered so far.
+            #
+            # The count is what an account listing needs. One transaction there
+            # produces several rows -- a trace and a log, or two assets -- so a
+            # page can end mid-transaction, and resuming at `tx_id <` would drop
+            # the rest of it silently. See `Dal.paging_bounds`.
+            before_row = decode_page_token(page)
         elif max_height is not None:
             from graphsense_v3.codec import tx_id_range
 
@@ -463,6 +495,7 @@ class LegacyAdapter:
             raw,
             is_outgoing=is_outgoing,
             before_tx_id=before,
+            before_row=before_row,
             after_tx_id=after,
             limit=limit,
         )
@@ -475,7 +508,11 @@ class LegacyAdapter:
         # than tx_page_size transactions stops at that boundary. Nothing on LTC
         # comes close (tx_page_size is 100_000); crossing it needs the page
         # index, and the direction-merged case needs a cursor per direction.
-        token = str(found[-1].tx_id) if found and len(found) == limit else None
+        token = (
+            encode_page_token(found, before_row)
+            if found and len(found) == limit
+            else None
+        )
         return await self._as_v2_txs(currency, found), token
 
     async def _as_v2_txs(self, currency: str, found: list) -> list:

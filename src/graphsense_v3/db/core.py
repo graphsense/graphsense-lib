@@ -425,6 +425,80 @@ class Dal:
         )
         return int(rows[0].balance) if rows else None
 
+    @staticmethod
+    def paging_bounds(
+        before_row: Optional[tuple],
+        before_tx_id: Optional[int],
+        after_tx_id: Optional[int],
+    ) -> tuple:
+        """``(clause, params, skip)`` for a resume cursor and the height bounds.
+
+        The resume cursor is ``(tx_id, rows_of_it_already_delivered)`` and its
+        tx_id bound is INCLUSIVE -- not the exclusive ``tx_id <`` a UTXO listing
+        could get away with.
+
+        On the account family one transaction produces SEVERAL rows: a trace and
+        a log, or two assets, keyed ``(tx_id, tx_reference, currency)``. A page
+        can therefore end in the middle of a transaction, and an exclusive
+        ``tx_id <`` bound would silently drop whatever of it did not fit. Re-
+        reading that transaction and skipping what was already sent cannot lose
+        a row, and costs at most one transaction's worth of rows.
+
+        THE ALTERNATIVE, and why it is not what runs
+        --------------------------------------------
+        Cassandra can express this as one bound, on the whole clustering
+        prefix::
+
+            WHERE address = ? AND is_outgoing = ? AND is_zero_value = ?
+              AND tx_page = ?
+              AND (tx_id, tx_reference, currency) < (?, ?, ?)
+
+        That is strictly better on paper. It is exact in one round trip, it
+        re-reads nothing, and the cursor is the row's own identity rather than a
+        position plus a count -- so it cannot drift if the merge order ever
+        changes. If the re-read ever costs real time -- a contract emitting
+        thousands of transfers in ONE transaction would re-read all of them on
+        every page boundary -- this is the fix.
+
+        Three things have to be settled before it can be trusted, and none of
+        them could be settled from a laptop:
+
+        1. **Mixed clustering directions.** The account table is
+           ``tx_id DESC, tx_reference DESC, currency ASC``. A multi-column
+           comparison follows clustering order rather than value order, so with
+           a direction change partway through the tuple, ``<`` does not mean
+           what reading it suggests. Making ``currency`` DESC in
+           `schema.definitions._txs_table` removes the question entirely and
+           costs nothing while no account keyspace exists -- do that first.
+        2. **Binding the UDT.** ``tx_reference`` is ``frozen<tx_reference>``
+           and has to arrive as a bound parameter. That means registering the
+           type on the session or passing the driver's tuple form, and getting
+           it wrong is a query error rather than a wrong answer -- the least
+           dangerous of the three, because it fails loudly.
+        3. **A NULL in the tuple.** ``tx_reference`` is null on rows that are
+           neither a trace nor a log. Comparison against a null clustering
+           value is the case most likely to silently skip rows, and it is the
+           one to write a test for FIRST.
+
+        Until those are answered on a real account keyspace, this reads a
+        transaction twice rather than risk a bound that looks right and quietly
+        drops rows at every page boundary -- which is the exact bug being
+        fixed, and the kind that surfaces months later as "some transactions
+        are missing".
+        """
+        clause, params, skip = "", (), 0
+        if before_row is not None:
+            bound, skip = before_row
+            clause += " AND tx_id <= %s"
+            params += (bound,)
+        elif before_tx_id is not None:
+            clause += " AND tx_id < %s"
+            params += (before_tx_id,)
+        if after_tx_id is not None:
+            clause += " AND tx_id >= %s"
+            params += (after_tx_id,)
+        return clause, params, int(skip or 0)
+
     # -- family-shaped, implemented by the subclasses ---------------------
     #
     # These are the two reads whose shape is decided by the family rather than
@@ -441,6 +515,8 @@ class Dal:
         page: Optional[int] = None,
         before_tx_id: Optional[int] = None,
         after_tx_id: Optional[int] = None,
+        #: ``(tx_id, rows_of_it_already_delivered)`` -- see `paging_bounds`.
+        before_row: Optional[tuple] = None,
         limit: int = 100,
     ) -> list:
         """An address's transactions, newest first. See the subclasses."""
@@ -803,6 +879,8 @@ class UtxoDal(Dal):
         page: Optional[int] = None,
         before_tx_id: Optional[int] = None,
         after_tx_id: Optional[int] = None,
+        #: ``(tx_id, rows_of_it_already_delivered)`` -- see `paging_bounds`.
+        before_row: Optional[tuple] = None,
         limit: int = 100,
     ) -> list:
         """An address's transactions, newest first.
@@ -839,14 +917,7 @@ class UtxoDal(Dal):
         # `after_tx_id` is what a min_height filter becomes -- without it the
         # height is only a hint about which page to start on, and rows BELOW it
         # come back anyway.
-        clause = ""
-        extra: tuple = ()
-        if before_tx_id is not None:
-            clause += " AND tx_id < %s"
-            extra += (before_tx_id,)
-        if after_tx_id is not None:
-            clause += " AND tx_id >= %s"
-            extra += (after_tx_id,)
+        clause, extra, skip = self.paging_bounds(before_row, before_tx_id, after_tx_id)
 
         # Gathered per (direction, zero-ness) rather than through `_gather`,
         # which flattens: the DIRECTION is not on the row, it is in the
@@ -860,7 +931,7 @@ class UtxoDal(Dal):
                     f"SELECT tx_id, value, balance FROM "
                     f"{self.derived}.address_transactions "
                     f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
-                    f"AND tx_page = %s{clause} LIMIT {int(limit)}",
+                    f"AND tx_page = %s{clause} LIMIT {int(limit) + skip}",
                     (
                         address,
                         outgoing,
@@ -883,7 +954,11 @@ class UtxoDal(Dal):
             for row in rows
         ]
         merged.sort(key=lambda tx: tx.tx_id, reverse=True)
-        return merged[:limit]
+        # `skip` rows of the boundary transaction were already delivered. The
+        # merge is deterministic -- each partition arrives in clustering order
+        # and the sort is stable over a fixed spec list -- so the same rows come
+        # back in the same order and dropping the leading `skip` is exact.
+        return merged[skip : skip + limit]
 
     async def link_transactions(
         self, src: bytes, dst: bytes, *, limit: int = 100
@@ -925,6 +1000,8 @@ class AccountDal(Dal):
         page: Optional[int] = None,
         before_tx_id: Optional[int] = None,
         after_tx_id: Optional[int] = None,
+        #: ``(tx_id, rows_of_it_already_delivered)`` -- see `paging_bounds`.
+        before_row: Optional[tuple] = None,
         limit: int = 100,
     ) -> list:
         """An address's transactions, newest first.
@@ -961,14 +1038,7 @@ class AccountDal(Dal):
         # `after_tx_id` is what a min_height filter becomes -- without it the
         # height is only a hint about which page to start on, and rows BELOW it
         # come back anyway.
-        clause = ""
-        extra: tuple = ()
-        if before_tx_id is not None:
-            clause += " AND tx_id < %s"
-            extra += (before_tx_id,)
-        if after_tx_id is not None:
-            clause += " AND tx_id >= %s"
-            extra += (after_tx_id,)
+        clause, extra, skip = self.paging_bounds(before_row, before_tx_id, after_tx_id)
 
         # Gathered per (direction, zero-ness) rather than through `_gather`,
         # which flattens: the DIRECTION is not on the row, it is in the
@@ -982,7 +1052,7 @@ class AccountDal(Dal):
                     f"SELECT tx_id, value, balance, currency, tx_reference FROM "
                     f"{self.derived}.address_transactions "
                     f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
-                    f"AND tx_page = %s{clause} LIMIT {int(limit)}",
+                    f"AND tx_page = %s{clause} LIMIT {int(limit) + skip}",
                     (
                         address,
                         outgoing,
@@ -1007,7 +1077,11 @@ class AccountDal(Dal):
             for row in rows
         ]
         merged.sort(key=lambda tx: tx.tx_id, reverse=True)
-        return merged[:limit]
+        # `skip` rows of the boundary transaction were already delivered. The
+        # merge is deterministic -- each partition arrives in clustering order
+        # and the sort is stable over a fixed spec list -- so the same rows come
+        # back in the same order and dropping the leading `skip` is exact.
+        return merged[skip : skip + limit]
 
     async def link_transactions(
         self, src: bytes, dst: bytes, *, limit: int = 100
