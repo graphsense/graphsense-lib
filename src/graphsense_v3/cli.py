@@ -560,6 +560,17 @@ def backtest_cmd(
             err=True,
         )
 
+        v3_rest_config, overridden = harness.v3_config(rest_config)
+        if overridden:
+            click.echo(
+                "\nWARNING: the v3 side runs with "
+                + ", ".join(f"{k}={v!r}" for k, v in sorted(overridden.items()))
+                + ", where the v2 side keeps the loaded value. These are"
+                " settings v2 physically cannot use (see backtest.V3_SETTINGS),"
+                " so the two sides no longer differ ONLY in the DAL.\n",
+                err=True,
+            )
+
         v2_db = _v2_dal(db_config)
         v3_db = LegacyAdapter(
             {network: Dal(session, raw, derived, configuration(session, derived, raw))},
@@ -572,7 +583,7 @@ def backtest_cmd(
             await v3_db.preload_token_configuration()
             return await harness.run(
                 harness.build_services(rest_config, v2_db),
-                harness.build_services(rest_config, v3_db),
+                harness.build_services(v3_rest_config, v3_db),
                 fixtures,
             )
 
@@ -590,6 +601,14 @@ def backtest_cmd(
         )
     if warning:
         notes.append(warning)
+    if overridden:
+        notes.append(
+            "THE TWO SIDES RAN DIFFERENT SETTINGS: the v3 side had "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(overridden.items()))
+            + ". Each is a setting v2 cannot use -- its flag-on path is a full "
+            "table scan -- so this measures each backend as it would actually "
+            "be deployed, not one configuration against itself."
+        )
     click.echo(compare.report(reports, notes))
     disagreed = [r for r in reports if not r.agrees and r.skipped is None]
     if disagreed:

@@ -626,3 +626,66 @@ def test_a_date_fixture_is_its_own_kind() -> None:
     fixtures = backtest.Fixtures(network="bch", blocks=[7], dates=[when])
     assert fixtures.values_for(backtest.DATE) == [when]
     assert fixtures.values_for(backtest.BLOCK) == [7]
+
+
+# --------------------------------------------------------------------------- #
+# Per-side settings: only where v2 physically cannot use the same value        #
+# --------------------------------------------------------------------------- #
+
+
+class _Config:
+    """Enough of a pydantic config to copy."""
+
+    #: Declared so the checker can see it; the fields are set dynamically.
+    block_by_date_use_linear_search: bool
+
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+    def model_copy(self, *, update):
+        return _Config(**{**self.__dict__, **update})
+
+
+def test_the_v3_side_gets_the_setting_v2_cannot_use() -> None:
+    """v2's flag-on path is `ALLOW FILTERING` over the whole block table, so
+    False is right for it. Left at that default, v3 answers a date lookup by
+    ~20 point reads and `block_by_date` is never read."""
+    config = _Config(block_by_date_use_linear_search=False)
+    v3, overridden = backtest.v3_config(config)
+    assert v3.block_by_date_use_linear_search is True
+    assert overridden == {"block_by_date_use_linear_search": True}
+
+
+def test_the_v2_side_config_is_not_mutated() -> None:
+    """A copy, not an in-place update: the v2 side must keep the value it was
+    loaded with, or both sides silently move together."""
+    config = _Config(block_by_date_use_linear_search=False)
+    backtest.v3_config(config)
+    assert config.block_by_date_use_linear_search is False
+
+
+def test_nothing_is_reported_when_the_config_already_agrees() -> None:
+    """No divergence, no warning. A warning on every run is a warning nobody
+    reads."""
+    config = _Config(block_by_date_use_linear_search=True)
+    v3, overridden = backtest.v3_config(config)
+    assert overridden == {}
+    assert v3 is config
+
+
+def test_every_override_is_justified_in_the_source() -> None:
+    """The guard on the guard. This table is the one place the comparison stops
+    being apples-to-apples, so an entry added without a reason written next to
+    it is exactly the drift that makes the whole harness worthless."""
+    import inspect
+
+    source = inspect.getsource(backtest)
+    table = source[source.index("V3_SETTINGS: dict = {") :]
+    table = table[: table.index("\n}")]
+    for name in backtest.V3_SETTINGS:
+        before = table[: table.index(f'"{name}"')]
+        assert "#" in before, f"{name} has no comment explaining why v2 differs"
+    assert len(backtest.V3_SETTINGS) <= 3, (
+        "this table is meant to stay tiny; a growing one means v3 is being "
+        "tuned into looking good rather than measured"
+    )

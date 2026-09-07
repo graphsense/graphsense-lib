@@ -277,9 +277,16 @@ def _timing_lines(reports: list) -> list:
         ratio = f"{v3 / v2:.2f}x" if v2 else "-"
         lines.append(f"  {name:<34}{len(left):>4}{v2:>10.1f}{v3:>10.1f}{ratio:>9}")
     lines.append("")
+    # NOT unconditional. When the two sides ran different settings the caller
+    # puts a note in `notes` saying which, and repeating "the difference is the
+    # DAL" here would contradict it -- a silently false claim in the output is
+    # worse than the distortion it describes.
     lines.append(
-        "  Same cluster and same service stack on both sides, so the difference "
-        "is the DAL."
+        "  Same cluster and same service stack on both sides; where the two ran "
+        "different"
+    )
+    lines.append(
+        "  settings it is stated above, and otherwise the difference is the DAL."
     )
     lines.append(
         "  v2 caches rates (alru_cache on get_rates), so repeated fixtures "

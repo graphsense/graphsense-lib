@@ -652,6 +652,43 @@ async def _second_page(services: Any, network: str, address: str):
     )
 
 
+#: Settings the V3 side runs with that the v2 side does not.
+#:
+#: Each entry is a place where the two backends have genuinely DIFFERENT
+#: optima -- not a place v3 is flattered. Keep it tiny, and justify every entry
+#: with why v2 physically cannot use the same value: the moment this becomes
+#: somewhere to tune v3 into looking good, the whole comparison is worthless.
+V3_SETTINGS: dict = {
+    # v3 has `block_by_date`, keyed by the day; v2 has no date index at all, so
+    # its flag-on path is `SELECT min(block_id) ... ALLOW FILTERING` over the
+    # entire block table. False is the correct default FOR V2 and nobody would
+    # turn it on there.
+    #
+    # Left at that default, v3 answers a date lookup through the service's
+    # binary search -- ~20 point reads per call -- and `block_by_date` is never
+    # read at all. The table v3 added for this call has never been exercised by
+    # a backtest, which is how three bugs came to be sitting in the method that
+    # serves it.
+    "block_by_date_use_linear_search": True,
+}
+
+
+def v3_config(config: Any) -> tuple:
+    """``(the config the v3 side runs with, the settings that actually differ)``.
+
+    A copy: the v2 side keeps the config as loaded, so a setting only ever
+    diverges where :data:`V3_SETTINGS` says so and the caller is told which.
+    """
+    differs = {
+        name: value
+        for name, value in V3_SETTINGS.items()
+        if getattr(config, name, None) != value
+    }
+    if not differs:
+        return config, {}
+    return config.model_copy(update=differs), differs
+
+
 def build_services(config: Any, db: Any, log: Any = None) -> Any:
     """A :class:`ServiceContainer` over ``db`` with **no tagstore**.
 
