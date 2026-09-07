@@ -432,29 +432,70 @@ def preflight(
 ) -> list[str]:
     """Check what the range pointers assume. Empty means go.
 
-    The doc's PRE-RUN CHECK: contiguity is certain for ETH logs, unverified for
-    ``trace_index``, and TRON's trace model is different again. If traces are not
-    contiguous, the fallback is a duplicated table for traces only -- so this
-    must be answered before a backfill, not after.
+    The doc's PRE-RUN CHECK. `transaction` carries (first_log_index, no_logs)
+    and (first_trace_index, no_traces) INSTEAD of a per-transaction copy of the
+    events -- ~46 GB against ~2 TB on ETH -- and the read they serve is
+
+        WHERE block_id_group = ? AND block_id = ?
+          AND <index> >= first AND <index> < first + count
+
+    which returns whatever sits in that range, whoever it belongs to. So the
+    property is not "each transaction's indices are contiguous" but the whole
+    of :func:`contiguity_problems`: within a block, the transactions' runs must
+    TILE the index space -- contiguous, disjoint, and dense from zero.
+
+    Contiguity is certain for ETH logs, unverified for ``trace_index``, and
+    TRON's trace model is different again. If traces do not tile, the fallback
+    is a duplicated table for traces only, so this must be answered before a
+    backfill rather than after: every failure here produces a plausible wrong
+    answer, never an error.
     """
     problems: list[str] = []
     for table, index_column in (("log", "log_index"), ("trace", "trace_index")):
         events = lake.read(table, start_block=start_block, end_block=end_block)
-        gaps = non_contiguous(events, index_column)
-        if gaps:
-            problems.append(
-                f"{gaps} transactions whose {index_column} values are not "
-                f"contiguous; (first, count) pointers cannot address their {table}s"
-            )
+        problems += contiguity_problems(events, index_column, table)
     return problems
 
 
-def non_contiguous(events: "DataFrame", index_column: str) -> int:
-    """How many transactions hold a non-contiguous run of ``index_column``."""
+def contiguity_problems(
+    events: "DataFrame", index_column: str, table: str
+) -> list[str]:
+    """Every way ``index_column`` can break the (first, count) pointers.
+
+    Four checks, because each fails differently and the first one alone passes
+    on data that would still serve wrong rows:
+
+    1. **Per transaction, no holes.** A gap makes (first, count) span rows that
+       are not the transaction's.
+    2. **Per block, no duplicate index.** This is what proves the index is
+       BLOCK-scoped rather than transaction-scoped. Per-transaction numbering
+       would leave every run internally contiguous -- check 1 passes -- while
+       every transaction in the block claims the same range, so a read for one
+       returns the logs of all of them.
+    3. **Per block, dense from zero.** With 1 and 2 holding, this is what makes
+       the runs TILE: disjoint contiguous runs covering 0..n-1 cannot overlap.
+    4. **One block per transaction hash.** :func:`_pointers` groups by
+       ``tx_hash`` alone, so a hash occurring in two blocks would take a min
+       across both and point into the wrong one.
+
+    Rows with no ``tx_hash`` -- ETH block-REWARD traces belong to the block,
+    not to a transaction -- are one group of their own under check 1. They are
+    never addressed by a pointer, but they do occupy index space, so if they
+    are interleaved with transaction traces rather than appended they split a
+    transaction's run and check 1 reports it. That is the honest outcome: it
+    means the tiling does not hold for traces, and the fallback applies. Read a
+    trace failure here as "which rows" before assuming the whole table needs
+    duplicating.
+
+    A block whose transactions emitted nothing has no rows at all and never
+    reaches these aggregations, so it cannot fail check 3.
+    """
     from pyspark.sql import functions as F
 
-    return (
-        events.groupBy("tx_hash")
+    problems: list[str] = []
+
+    holed = (
+        events.groupBy("block_id", "tx_hash")
         .agg(
             F.min(index_column).alias("lo"),
             F.max(index_column).alias("hi"),
@@ -463,6 +504,46 @@ def non_contiguous(events: "DataFrame", index_column: str) -> int:
         .where(F.col("hi") - F.col("lo") + 1 != F.col("n"))
         .count()
     )
+    if holed:
+        problems.append(
+            f"{holed} transactions whose {index_column} values are not "
+            f"contiguous; (first, count) pointers cannot address their {table}s"
+        )
+
+    per_block = events.groupBy("block_id").agg(
+        F.count("*").alias("n"),
+        F.countDistinct(index_column).alias("distinct"),
+        F.min(index_column).alias("lo"),
+        F.max(index_column).alias("hi"),
+    )
+    shared = per_block.where(F.col("distinct") != F.col("n")).count()
+    if shared:
+        problems.append(
+            f"{shared} blocks reuse a {index_column} within the block, so it is "
+            f"not block-scoped; the pointers of every transaction in such a "
+            f"block address the same {table} rows"
+        )
+    sparse = per_block.where(
+        (F.col("lo") != 0) | (F.col("hi") - F.col("lo") + 1 != F.col("n"))
+    ).count()
+    if sparse:
+        problems.append(
+            f"{sparse} blocks whose {index_column} values are not dense from 0, "
+            f"so the transactions' runs do not tile the block's {table}s"
+        )
+
+    split = (
+        events.groupBy("tx_hash")
+        .agg(F.countDistinct("block_id").alias("blocks"))
+        .where(F.col("blocks") > 1)
+        .count()
+    )
+    if split:
+        problems.append(
+            f"{split} transaction hashes carry {table}s in more than one block; "
+            f"the pointer would take a min across both and address the wrong one"
+        )
+    return problems
 
 
 def load(

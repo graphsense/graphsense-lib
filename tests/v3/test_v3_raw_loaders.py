@@ -662,6 +662,66 @@ def test_eth_preflight_catches_a_log_index_gap(spark, eth_lake) -> None:
     assert problems and "log_index" in problems[0]
 
 
+def test_eth_preflight_catches_a_transaction_scoped_index(spark, eth_lake) -> None:
+    """The check the old one missed. If `log_index` restarted at 0 per
+    TRANSACTION, every run would still be internally contiguous -- so a
+    per-transaction contiguity test passes -- while every transaction in the
+    block claims the same range and a read for one returns the logs of all."""
+    from pyspark.sql import functions as F
+
+    rows = eth_lake.tables["log"]
+    # A second transaction in block 0, numbering its own logs from 0 again.
+    second = rows.where(F.col("log_index") < 2).withColumn(
+        "tx_hash", F.lit(b"\xc0" * 32)
+    )
+    lake = FakeLake(spark, {**eth_lake.tables, "log": rows.union(second)})
+    problems = raw_account.preflight(lake, "eth")
+    assert any("not block-scoped" in problem for problem in problems)
+
+
+def test_eth_preflight_catches_a_block_that_does_not_start_at_zero(
+    spark, eth_lake
+) -> None:
+    """Runs that are contiguous and unique still have to TILE the block. An
+    index space starting at 1 means the pointers address one row past the end
+    of what the block holds."""
+    from pyspark.sql import functions as F
+
+    shifted = eth_lake.tables["log"].withColumn(
+        "log_index", F.col("log_index") + F.lit(1)
+    )
+    lake = FakeLake(spark, {**eth_lake.tables, "log": shifted})
+    problems = raw_account.preflight(lake, "eth")
+    assert any("dense from 0" in problem for problem in problems)
+
+
+def test_eth_preflight_catches_a_hash_that_spans_two_blocks(spark, eth_lake) -> None:
+    """`_pointers` groups by tx_hash alone, so the same hash in two blocks
+    yields a min across both -- a pointer into the wrong block."""
+    from pyspark.sql import functions as F
+
+    rows = eth_lake.tables["log"]
+    elsewhere = rows.where(F.col("log_index") == 0).withColumn(
+        "block_id", F.lit(1).cast("int")
+    )
+    lake = FakeLake(spark, {**eth_lake.tables, "log": rows.union(elsewhere)})
+    problems = raw_account.preflight(lake, "eth")
+    assert any("more than one block" in problem for problem in problems)
+
+
+def test_eth_preflight_does_not_fault_a_block_that_emitted_nothing(
+    spark, eth_lake
+) -> None:
+    """Most blocks have transactions with no logs at all. They contribute no
+    rows, so they must never reach the density check -- faulting them would
+    make the check fire on every real chain."""
+    from pyspark.sql import functions as F
+
+    only_block_zero = eth_lake.tables["log"].where(F.col("block_id") == 0)
+    lake = FakeLake(spark, {**eth_lake.tables, "log": only_block_zero})
+    assert raw_account.preflight(lake, "eth") == []
+
+
 @pytest.fixture(scope="module")
 def trx_lake(spark, eth_lake):
     traces = spark.createDataFrame(
