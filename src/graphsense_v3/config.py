@@ -12,10 +12,57 @@ from dataclasses import dataclass
 
 from graphsense_v3.schema.model import Family
 
-#: Blocks per stats epoch (the doc calls this ``fold_batch_size``). One constant
-#: serves both the ``epoch`` of a stats delta row and the ``block_batch`` of an
-#: ``*_transactions_recent`` partition -- they batch the same blocks.
-DEFAULT_EPOCH_SIZE = 1_000
+#: Blocks per stats epoch: how often ingest may PUBLISH, and therefore the
+#: keyspace's staleness bound.
+#:
+#: A stats/relations row is keyed ``(entity, epoch)``, so there is exactly one
+#: row per entity per epoch and a second write to it is an upsert rather than an
+#: addend. Ingest must therefore emit an entity's row once, when the epoch's
+#: blocks are done -- which means nothing from the current epoch is visible
+#: until it closes. **The epoch IS the staleness.**
+#:
+#: Sized to roughly ONE MINUTE of chain time, floored at one block, which is as
+#: fresh as a chain can be. That lands every network at ~1 440 epochs a day
+#: (144 on the ten-minute chains), so an entity active every single minute
+#: accumulates ~1 440 rows between daily compactions and a typical one
+#: accumulates one or two.
+#:
+#: A single 1 000 for every network -- what this was -- meant a 200x spread in
+#: what it bounded: ~6.9 days on BCH against ~50 minutes on TRON. Blocks are
+#: not a unit of time, so one block count cannot mean one thing across chains.
+EPOCH_SIZE: dict[str, int] = {
+    "btc": 1,  # ~10 min
+    "bch": 1,  # ~10 min
+    "ltc": 1,  # ~2.5 min
+    "zec": 1,  # ~75 s
+    "eth": 5,  # ~60 s
+    "trx": 20,  # ~60 s
+}
+
+#: Blocks per ``*_transactions_recent`` partition, and therefore the cadence the
+#: tail drain runs at.
+#:
+#: SPLIT FROM `epoch_size`, which it used to share. The two pull in opposite
+#: directions: `epoch` is a CLUSTERING column, so fine granularity costs only
+#: rows and buys freshness; `block_batch` is a PARTITION KEY, so fine
+#: granularity multiplies partitions and the reads that scan them -- a tail read
+#: touches one partition per un-drained batch. Tying them together forced the
+#: clustering column to accept the partition key's granularity, which is exactly
+#: where the staleness came from.
+#:
+#: Sized to ~1 hour of chain time on the UTXO chains and ~15 minutes on the
+#: account chains, where the hot addresses are: a tail partition holds one
+#: entity's transactions for that span, so this bounds the partition a busy
+#: address builds up before the drain clears it. Lower it, or drain more often,
+#: if a chain grows an address hotter than this keeps bounded.
+BLOCK_BATCH_SIZE: dict[str, int] = {
+    "btc": 6,  # ~1 h
+    "bch": 6,  # ~1 h
+    "ltc": 24,  # ~1 h
+    "zec": 48,  # ~1 h
+    "eth": 75,  # ~15 min
+    "trx": 300,  # ~15 min
+}
 
 #: Rows per ``*_transactions`` partition, assigned by ordinal at compaction.
 DEFAULT_TX_PAGE_SIZE = 100_000
@@ -34,9 +81,9 @@ SCHEMA_VERSION = 1
 #: Spark schema of the ``configuration`` row, in ``as_row`` order.
 CONFIGURATION_SCHEMA = (
     "keyspace_name STRING, entity_buckets INT, tx_page_size INT, "
-    "relation_buckets INT, epoch_size INT, address_prefix_length INT, "
-    "tx_prefix_length INT, block_bucket_size INT, tx_block_bucket_size INT, "
-    "fiat_currencies ARRAY<STRING>, schema_version INT"
+    "relation_buckets INT, epoch_size INT, block_batch_size INT, "
+    "address_prefix_length INT, tx_prefix_length INT, block_bucket_size INT, "
+    "tx_block_bucket_size INT, fiat_currencies ARRAY<STRING>, schema_version INT"
 )
 
 
@@ -49,7 +96,8 @@ class NetworkConfig:
     entity_buckets: int
     block_bucket_size: int
     tx_block_bucket_size: int
-    epoch_size: int = DEFAULT_EPOCH_SIZE
+    epoch_size: int
+    block_batch_size: int
     tx_page_size: int = DEFAULT_TX_PAGE_SIZE
     relation_buckets: int = DEFAULT_RELATION_BUCKETS
     address_prefix_length: int = DEFAULT_ADDRESS_PREFIX_LENGTH
@@ -69,6 +117,7 @@ class NetworkConfig:
             self.tx_page_size,
             self.relation_buckets,
             self.epoch_size,
+            self.block_batch_size,
             self.address_prefix_length,
             self.tx_prefix_length,
             self.block_bucket_size,
@@ -90,6 +139,8 @@ def _utxo(
         entity_buckets=entity_buckets,
         block_bucket_size=100,
         tx_block_bucket_size=tx_block_bucket_size,
+        epoch_size=EPOCH_SIZE[network],
+        block_batch_size=BLOCK_BATCH_SIZE[network],
     )
 
 
@@ -105,6 +156,8 @@ def _account(network: str, entity_buckets: int) -> NetworkConfig:
         # block's calldata is gas-bounded at ~2 MB, so a wider bucket has a fat
         # tail even though the typical partition is small.
         tx_block_bucket_size=4,
+        epoch_size=EPOCH_SIZE[network],
+        block_batch_size=BLOCK_BATCH_SIZE[network],
     )
 
 

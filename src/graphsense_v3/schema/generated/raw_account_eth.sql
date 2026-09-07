@@ -185,7 +185,8 @@ CREATE TABLE IF NOT EXISTS configuration (
     entity_buckets int,                     -- crc32(entity) % this; see codec.bucket
     tx_page_size int,                       -- rows per *_transactions partition
     relation_buckets int,
-    epoch_size int,                         -- blocks per stats epoch
+    epoch_size int,                         -- blocks per stats epoch; the staleness bound
+    block_batch_size int,                   -- blocks per *_transactions_recent
     address_prefix_length int,
     tx_prefix_length int,
     block_bucket_size int,

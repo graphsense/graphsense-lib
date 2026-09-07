@@ -17,7 +17,7 @@ from graphsense_v3.db.core import Dal
 RAW = "ltc_raw_v3_test"
 DERIVED = "ltc_derived_v3_test"
 
-CONFIG = {
+CONFIG: dict = {
     "entity_buckets": 100_000,
     "tx_page_size": 100_000,
     "relation_buckets": 16,
@@ -25,6 +25,11 @@ CONFIG = {
     "tx_block_bucket_size": 16,
     "address_prefix_length": 4,
     "tx_prefix_length": 5,
+    # Every real keyspace has this -- `NetworkConfig.fiat_currencies` defaults
+    # to ("EUR", "USD") and is written into `configuration` by the same run.
+    # Without it here, `_fiat_list` takes its empty-order branch and returns []
+    # for everything, so a test asserting a fiat amount passes vacuously.
+    "fiat_currencies": ["EUR", "USD"],
 }
 
 ADDRESS = b"\xa1" * 21
@@ -374,3 +379,87 @@ def test_a_missing_page_index_row_means_page_zero() -> None:
     height filter on an ordinary address look unanswerable."""
     dal = Dal(FakeSession([]), RAW, DERIVED, dict(CONFIG))
     assert asyncio.run(dal.page_for_tx(ADDRESS, True, 12345)) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Edge amounts: summed over epochs like every other relations column           #
+# --------------------------------------------------------------------------- #
+
+
+def _edge(no_transactions, value=None, fiat=None, token_values=None):
+    return Row(
+        src_address=ADDRESS,
+        dst_address=OTHER,
+        no_transactions=no_transactions,
+        value=None if value is None else {"value": value, "fiat_values": fiat or []},
+        token_values=token_values,
+    )
+
+
+def _one_bucket(rows):
+    return lambda cql, params: rows if params[1] == 0 else []
+
+
+def test_an_edges_fiat_is_summed_across_epochs() -> None:
+    """The regression: the DAL read `value.fiat_values` off the row and threw
+    it away, so no neighbour edge ever carried a fiat amount. Nothing failed --
+    the adapter then did `getattr(int, "fiat_values", None)`, which is None
+    every time, so the field was simply always empty."""
+    dal, _ = make(_one_bucket([_edge(2, 100, [1.5, 2.0]), _edge(3, 50, [0.5, 1.0])]))
+    edge = run(dal.neighbors(ADDRESS, is_outgoing=True))[0]
+    assert (edge.no_transactions, edge.value) == (5, 150)
+    assert edge.fiat_values == (2.0, 3.0)
+
+
+def test_fiat_is_summed_positionally_not_by_name() -> None:
+    """The `currency` UDT is a positional list ordered by the keyspace's own
+    `configuration.fiat_currencies`. Adding by index is the only correct
+    merge; anything else relabels amounts rather than failing."""
+    dal, _ = make(_one_bucket([_edge(1, 1, [10.0, 0.0]), _edge(1, 1, [0.0, 20.0])]))
+    assert run(dal.neighbors(ADDRESS, is_outgoing=True))[0].fiat_values == (10.0, 20.0)
+
+
+def test_token_values_are_merged_by_asset_not_zipped() -> None:
+    """The one merge in the summable model that is not a scalar add: a map,
+    so epochs union by asset and then add per asset."""
+    dal, _ = make(
+        _one_bucket(
+            [
+                _edge(1, 0, [], {"USDT": {"value": 10, "fiat_values": [1.0]}}),
+                _edge(1, 0, [], {"USDT": {"value": 5, "fiat_values": [0.5]}}),
+            ]
+        )
+    )
+    tokens = run(dal.neighbors(ADDRESS, is_outgoing=True))[0].token_values
+    assert tokens == {"USDT": {"value": 15, "fiat_values": [1.5]}}
+
+
+def test_an_asset_carried_in_only_one_epoch_survives_the_merge() -> None:
+    """A union, not an intersection: an edge that moved USDC once and USDT
+    twice must report both."""
+    dal, _ = make(
+        _one_bucket(
+            [
+                _edge(1, 0, [], {"USDT": {"value": 10, "fiat_values": [1.0]}}),
+                _edge(1, 0, [], {"USDC": {"value": 7, "fiat_values": [0.7]}}),
+            ]
+        )
+    )
+    tokens = run(dal.neighbors(ADDRESS, is_outgoing=True))[0].token_values
+    assert sorted(tokens) == ["USDC", "USDT"]
+    assert tokens["USDT"]["value"] == 10 and tokens["USDC"]["value"] == 7
+
+
+def test_a_utxo_edge_has_no_token_values_at_all() -> None:
+    """UTXO relations carry no token column, so the merge must leave None
+    rather than inventing an empty map the service would iterate."""
+    dal, _ = make(_one_bucket([_edge(2, 100, [1.0])]))
+    assert run(dal.neighbors(ADDRESS, is_outgoing=True))[0].token_values is None
+
+
+def test_a_single_edge_point_read_sums_its_epochs_too() -> None:
+    """`neighbor()` answers "is X a neighbour of Y" from the same rows, and
+    was summing only the transaction count."""
+    dal, _ = make(lambda cql, params: [_edge(2, 100, [1.0]), _edge(3, 50, [0.5])])
+    edge = run(dal.neighbor(ADDRESS, OTHER, is_outgoing=True))
+    assert (edge.no_transactions, edge.value, edge.fiat_values) == (5, 150, (1.5,))

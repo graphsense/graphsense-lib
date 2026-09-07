@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from graphsense_v3.codec import bucket, tx_id_range
 from graphsense_v3.settings import assert_v3_keyspace
@@ -88,6 +88,62 @@ class Neighbor:
     address: bytes
     no_transactions: int
     value: Optional[int] = None
+    #: The native amount's fiat, POSITIONAL and ordered by the keyspace's
+    #: `configuration.fiat_currencies` -- the `currency` UDT's own order.
+    fiat_values: tuple = ()
+    #: ``{ticker: {"value": int, "fiat_values": [float]}}``, account only.
+    #: A map, so summing epochs is a union by asset then an add per asset --
+    #: the one place in the summable model where a merge is not a scalar add.
+    token_values: Optional[dict] = None
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    """One field of a ``currency`` UDT, however the driver handed it over.
+
+    Registered UDTs arrive as objects and unregistered ones as namedtuples,
+    while a test double is usually a dict. Reading it three ways here keeps
+    that detail out of every caller -- and an isinstance check that silently
+    fell through was what dropped these values in the first place.
+    """
+    if value is None:
+        return default
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def add_currency(into: Optional[dict], value: Any) -> dict:
+    """One epoch's ``currency`` added to a running total.
+
+    The amount is a scalar add; the fiat list is added POSITIONALLY, because
+    the UDT is positional and ordered by the keyspace's own
+    `configuration.fiat_currencies`.
+    """
+    previous = into or {}
+    amount = int(previous.get("value") or 0) + int(_field(value, "value", 0) or 0)
+
+    running: list = [float(item or 0.0) for item in previous.get("fiat_values") or []]
+    fiat: list = list(_field(value, "fiat_values", []) or [])
+    if len(fiat) > len(running):
+        running += [0.0] * (len(fiat) - len(running))
+    for index, item in enumerate(fiat):
+        running[index] += float(item or 0.0)
+    return {"value": amount, "fiat_values": running}
+
+
+def add_token_values(into: Optional[dict], values: Any) -> Optional[dict]:
+    """One epoch's ``token_values`` map merged into a running total.
+
+    Union by asset, then :func:`add_currency` per asset. An asset the edge
+    only carried in one epoch must survive, so this cannot be a positional
+    zip -- which is why it is the one merge in this model that is not an add.
+    """
+    if not values:
+        return into
+    total = dict(into or {})
+    for ticker, amount in dict(values).items():
+        total[ticker] = add_currency(total.get(ticker), amount)
+    return total
 
 
 def page_max(epoch_zero: dict, is_outgoing: bool, is_zero_value: bool) -> int:
@@ -455,20 +511,30 @@ class Dal:
                 for index in range(buckets)
             ]
         )
-        totals: dict = {}
+        counts: dict = {}
+        amounts: dict = {}
+        tokens: dict = {}
+        order: list = []
         for row in rows:
             data = row._asdict()
             key = bytes(data[far])
-            count, value = totals.get(key, (0, 0))
-            totals[key] = (
-                count + int(data.get("no_transactions") or 0),
-                value + int((data.get("value") or {}).get("value", 0) or 0)
-                if isinstance(data.get("value"), dict)
-                else value,
-            )
+            if key not in counts:
+                order.append(key)
+                counts[key] = 0
+            counts[key] += int(data.get("no_transactions") or 0)
+            amounts[key] = add_currency(amounts.get(key), data.get("value"))
+            merged = add_token_values(tokens.get(key), data.get("token_values"))
+            if merged is not None:
+                tokens[key] = merged
         return [
-            Neighbor(address=key, no_transactions=count, value=value)
-            for key, (count, value) in totals.items()
+            Neighbor(
+                address=key,
+                no_transactions=counts[key],
+                value=amounts[key]["value"],
+                fiat_values=tuple(amounts[key]["fiat_values"]),
+                token_values=tokens.get(key),
+            )
+            for key in order
         ]
 
     async def neighbor(
@@ -493,8 +559,22 @@ class Dal:
         )
         if not rows:
             return None
-        total = sum(int(r._asdict().get("no_transactions") or 0) for r in rows)
-        return Neighbor(address=counterparty, no_transactions=total)
+        total = 0
+        amount: Optional[dict] = None
+        token: Optional[dict] = None
+        for row in rows:
+            data = row._asdict()
+            total += int(data.get("no_transactions") or 0)
+            amount = add_currency(amount, data.get("value"))
+            token = add_token_values(token, data.get("token_values"))
+        amount = amount or {"value": 0, "fiat_values": []}
+        return Neighbor(
+            address=counterparty,
+            no_transactions=total,
+            value=amount["value"],
+            fiat_values=tuple(amount["fiat_values"]),
+            token_values=token,
+        )
 
     async def link_transactions(
         self, src: bytes, dst: bytes, *, limit: int = 100

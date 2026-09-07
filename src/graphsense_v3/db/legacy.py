@@ -657,13 +657,29 @@ class LegacyAdapter:
                     # the call fails honestly on "v3 has no cluster tables".
                     f"{side}_id": synthetic_id(bytes(edge.address)),
                     "no_transactions": edge.no_transactions,
+                    # `edge.value` is the summed AMOUNT and `edge.fiat_values`
+                    # its summed fiat, both already folded over the epochs by
+                    # the DAL. They were previously read as attributes OF the
+                    # amount -- `getattr(edge.value, "fiat_values", None)` on
+                    # an int, which resolves to None every time, so no
+                    # neighbour edge ever carried a fiat value.
                     "value": _Value(
-                        value=int(getattr(edge.value, "value", edge.value) or 0),
-                        fiat_values=self._fiat_list(
-                            currency, getattr(edge.value, "fiat_values", None)
-                        ),
+                        value=int(edge.value or 0),
+                        fiat_values=self._fiat_list(currency, edge.fiat_values),
                     ),
-                    "token_values": None,
+                    "token_values": (
+                        {
+                            ticker: _Value(
+                                value=int(amount.get("value") or 0),
+                                fiat_values=self._fiat_list(
+                                    currency, amount.get("fiat_values")
+                                ),
+                            )
+                            for ticker, amount in edge.token_values.items()
+                        }
+                        if edge.token_values
+                        else None
+                    ),
                     "labels": None,
                 }
             )

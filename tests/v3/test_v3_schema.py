@@ -268,8 +268,49 @@ def test_configuration_row_matches_the_table_and_its_spark_schema() -> None:
     for network in NETWORKS:
         table = schema_for(network, Kind.RAW).table("configuration")
         assert set(names) == set(table.column_names())
-        assert len(config_for(network).as_row("ks")) == len(names)
+        # ORDER, not just membership: the row is a positional tuple, so a
+        # column inserted in the middle of one list and appended to the other
+        # writes every later value into the wrong column -- silently, because
+        # they are nearly all ints. `column_names()` is a frozenset, so the
+        # declaration order has to come from `columns`.
+        assert names == [column.name for column in table.columns]
+
+        config = config_for(network)
+        row = config.as_row("ks")
+        assert len(row) == len(names)
+        assert row[0] == "ks"
+        for index, name in enumerate(names[1:], start=1):
+            expected = getattr(config, name)
+            assert row[index] == (
+                list(expected) if isinstance(expected, tuple) else expected
+            ), f"{network}: {name} is not at position {index} of as_row"
     assert names[0] == "keyspace_name"
+
+
+def test_every_network_sizes_both_batching_constants() -> None:
+    """`epoch_size` and `block_batch_size` were one constant. Blocks are not a
+    unit of time, so a single value meant a 200x spread in what it bounded --
+    ~6.9 days of staleness on BCH against ~50 minutes on TRON."""
+    from graphsense_v3.config import BLOCK_BATCH_SIZE, EPOCH_SIZE, config_for
+
+    assert set(EPOCH_SIZE) == set(NETWORKS)
+    assert set(BLOCK_BATCH_SIZE) == set(NETWORKS)
+    for network in NETWORKS:
+        config = config_for(network)
+        assert config.epoch_size >= 1
+        assert config.block_batch_size >= 1
+
+
+def test_the_tail_batch_is_never_finer_than_the_epoch() -> None:
+    """They point opposite ways. `epoch` is a clustering column, so fine costs
+    rows and buys freshness; `block_batch` is a PARTITION KEY, so fine
+    multiplies partitions and the reads that scan them. A batch finer than an
+    epoch would pay the partition cost for freshness the epoch already caps."""
+    from graphsense_v3.config import config_for
+
+    for network in NETWORKS:
+        config = config_for(network)
+        assert config.block_batch_size >= config.epoch_size, network
 
 
 def test_no_unexplained_type_drift_between_any_two_schemas() -> None:

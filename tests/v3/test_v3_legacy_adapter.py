@@ -816,3 +816,60 @@ def test_account_links_refuse_rather_than_failing_on_a_column_name() -> None:
     )
     with pytest.raises(NotAvailable, match="UTXO layout only"):
         run(shim.list_address_links("eth", "0xaa", "0xbb"))
+
+
+def _relation_rows(**extra):
+    """One edge, in ONE bucket.
+
+    A neighbour listing scatters over every `relation_buckets` partition, so a
+    fake that answers every bucket with the same row multiplies each summed
+    amount by 16 -- which is invisible on the identity fields the older tests
+    assert, and exactly wrong on the amounts these do.
+    """
+    encoded = encode_address("ltc", NEIGHBOR)
+    return lambda cql, params: (
+        [Row(dst_address=encoded, no_transactions=3, epoch=0, **extra)]
+        if "relations" in cql and params[1] == 0
+        else []
+    )
+
+
+def test_a_neighbour_edge_reports_its_fiat_values() -> None:
+    """The regression this pins: the adapter read the fiat off the AMOUNT --
+    `getattr(edge.value, "fiat_values", None)` where `edge.value` is an int --
+    so it resolved to None on every edge of every call and the field was
+    always empty. The relations row has held the numbers all along."""
+    shim, _ = adapter(_relation_rows(value={"value": 500, "fiat_values": [1.25, 1.5]}))
+    rows, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
+    assert rows[0]["value"].value == 500
+    assert rows[0]["value"].fiat_values == [
+        {"code": "eur", "value": 1.25},
+        {"code": "usd", "value": 1.5},
+    ]
+
+
+def test_a_utxo_neighbour_carries_no_token_values() -> None:
+    """UTXO relations have no token column. None, not an empty map: the
+    service iterates this field."""
+    shim, _ = adapter(_relation_rows(value={"value": 1, "fiat_values": [0.0, 0.0]}))
+    rows, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
+    assert rows[0]["token_values"] is None
+
+
+def test_token_values_reach_the_response_as_value_objects() -> None:
+    """`to_values` reads `.value` and `.fiat_values` as ATTRIBUTES, so a bare
+    dict per asset raises AttributeError inside the service rather than at the
+    boundary -- the same trap `_Value` exists for on the native amount."""
+    shim, _ = adapter(
+        _relation_rows(
+            value={"value": 0, "fiat_values": [0.0, 0.0]},
+            token_values={"USDT": {"value": 42, "fiat_values": [40.0, 44.0]}},
+        )
+    )
+    rows, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
+    token = rows[0]["token_values"]["USDT"]
+    assert token.value == 42
+    assert token.fiat_values == [
+        {"code": "eur", "value": 40.0},
+        {"code": "usd", "value": 44.0},
+    ]

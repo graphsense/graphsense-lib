@@ -91,7 +91,8 @@ def _housekeeping(kind: Kind) -> tuple[Table, ...]:
                 C("entity_buckets", "int", "crc32(entity) % this; see codec.bucket"),
                 C("tx_page_size", "int", "rows per *_transactions partition"),
                 C("relation_buckets", "int"),
-                C("epoch_size", "int", "blocks per stats epoch"),
+                C("epoch_size", "int", "blocks per stats epoch; the staleness bound"),
+                C("block_batch_size", "int", "blocks per *_transactions_recent"),
                 C("address_prefix_length", "int"),
                 C("tx_prefix_length", "int"),
                 C("block_bucket_size", "int"),
@@ -647,6 +648,12 @@ def _stats_table(name: str, entity: str, family: Family, extra: tuple[C, ...]) -
             C(bucket, "int", "crc32(entity) % entity_buckets"),
             C(entity, "blob"),
             C("epoch", "int", "0 = compacted base; else block_id // epoch_size + 1"),
+            # NOTE the epoch is also the write granularity: one row per
+            # (entity, epoch), so a second write to it upserts rather than
+            # adds, and ingest can only publish when an epoch closes. That
+            # makes `epoch_size` the keyspace's STALENESS BOUND, which is why
+            # it is sized per network in `config.py` and no longer shares a
+            # constant with `block_batch`.
             # --- summable: every epoch row carries a partial value ---
             # varint, per design rule 8: these are counts, and the median
             # address has 1 of each.
@@ -710,6 +717,10 @@ def _stats_table(name: str, entity: str, family: Family, extra: tuple[C, ...]) -
 
 
 def _txs_table(name: str, entity: str, family: Family, *, recent: bool) -> Table:
+    # `block_batch` is block_id // block_batch_size -- its OWN constant, not the
+    # epoch's. It is a partition key, so its granularity trades partition count
+    # against partition size; the epoch is a clustering column, where fine
+    # granularity costs only rows and buys freshness. See `config.py`.
     split = ("block_batch", "int") if recent else ("tx_page", "int")
     account_only: tuple[C, ...] = (
         (C("tx_reference", "frozen<tx_reference>"), C("currency", "text"))
