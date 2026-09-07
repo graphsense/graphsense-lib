@@ -95,6 +95,24 @@ def currency_struct(value: "Column", fiat: "Column") -> "Column":
     )
 
 
+def zero_currency(currencies: Sequence[str]) -> "Column":
+    """A ``currency`` of nothing: zero, and a zero for each fiat position.
+
+    An address that never received within the built range has no incoming row
+    to aggregate, and the sides are outer-joined, so `total_received` comes out
+    NULL. That is not "unknown" -- it is zero, and the difference matters at the
+    boundary: the REST layer reads `.value` and `.fiat_values` off this struct,
+    so a NULL arrives as an AttributeError from inside the service rather than
+    as a zero.
+
+    Reachable for any address that only spends within the range, which a
+    `--start-block` run makes ordinary rather than exotic.
+    """
+    from pyspark.sql import functions as F
+
+    return currency_struct(F.lit(0), F.array(*[F.lit(0.0) for _ in currencies]))
+
+
 def with_zero_flag(legs: "DataFrame") -> "DataFrame":
     """Tag each leg with whether it moved anything.
 

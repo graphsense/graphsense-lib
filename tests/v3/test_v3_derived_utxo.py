@@ -121,11 +121,12 @@ def test_the_aggregates_count_transactions_not_legs(
     assert int(alice["no_incoming_txs"]) == 0
     assert int(alice["no_outgoing_txs"]) == 1
     assert int(alice["total_spent"]["value"]) == 7
-    # NULL, not a zero currency: Alice has no netted INCOMING row at all, and
-    # the sides are outer-joined. Pre-existing -- any address that only spends
-    # within the built range hits this -- but netting makes it reachable more
-    # often, since a self-change receipt no longer counts as a receipt.
-    assert alice["total_received"] is None
+    # ZERO, not NULL. Alice has no netted incoming row at all and the sides are
+    # outer-joined, so this used to come out None -- and the REST layer reads
+    # `.value` off it, so None arrives as an AttributeError from inside the
+    # service rather than as a zero.
+    assert int(alice["total_received"]["value"]) == 0
+    assert list(alice["total_received"]["fiat_values"]) == [0.0, 0.0]
 
 
 def test_one_row_per_transaction_reaches_the_listing(
@@ -745,3 +746,25 @@ def test_block_id_is_recomputed_from_the_transaction_id(spark) -> None:
         ],
     )
     assert derived_utxo.net_legs(spine).collect()[0]["block_id"] == 4242
+
+
+def test_a_side_with_no_rows_is_zero_not_null(spark, rates, blocks) -> None:
+    """The boundary case a `--start-block` run makes ordinary: an address that
+    only SPENDS within the built range has no incoming rows to aggregate, and an
+    outer join leaves the total NULL unless something says otherwise."""
+    tx = tx_id(1, 0)
+    io = spark.createDataFrame(
+        [_io(tx, False, 0, [ALICE], 10), _io(tx, True, 0, [BOB], 10)],
+        schema=IO_SCHEMA,
+    )
+    txs = spark.createDataFrame(
+        [{"tx_id": tx, "total_input": 10}], schema="tx_id BIGINT, total_input BIGINT"
+    )
+    stats = derived_utxo.build(io, txs, blocks, rates, "btc")["address_stats"]
+    alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
+    bob = next(r for r in stats.collect() if bytes(r["address"]) == BOB)
+    assert int(alice["total_received"]["value"]) == 0
+    assert int(bob["total_spent"]["value"]) == 0
+    # And the side that DID move is untouched.
+    assert int(alice["total_spent"]["value"]) == 10
+    assert int(bob["total_received"]["value"]) == 10

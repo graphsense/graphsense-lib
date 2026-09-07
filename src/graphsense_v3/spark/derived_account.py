@@ -611,6 +611,7 @@ def address_stats(
         .join(degree, on="address", how="left")
         .join(is_contract, on="address", how="left")
     )
+    nothing = config.fiat_currencies
     return joined.select(
         common.entity_bucket(F.col("address"), config).alias("address_bucket"),
         F.col("address"),
@@ -619,8 +620,13 @@ def address_stats(
         common.count_column("no_outgoing_txs"),
         common.count_column("no_incoming_txs_zero_value"),
         common.count_column("no_outgoing_txs_zero_value"),
-        F.col("total_received"),
-        F.col("total_spent"),
+        # A side with no rows is zero, not unknown; see `common.zero_currency`.
+        F.coalesce(F.col("total_received"), common.zero_currency(nothing)).alias(
+            "total_received"
+        ),
+        F.coalesce(F.col("total_spent"), common.zero_currency(nothing)).alias(
+            "total_spent"
+        ),
         F.col("total_tokens_received"),
         F.col("total_tokens_spent"),
         F.col("first_tx_id"),
