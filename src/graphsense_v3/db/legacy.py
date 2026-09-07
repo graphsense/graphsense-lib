@@ -46,6 +46,24 @@ class _Value(NamedTuple):
     fiat_values: list
 
 
+class _Rows(list):
+    """A list that also answers ``.current_rows``.
+
+    `txs_service.get_spent_in_txs` and `get_spending_txs` iterate
+    ``results.current_rows``, because v2 hands back a driver ``ResultSet`` and
+    that is how you read one. A plain list raises AttributeError there --
+    reported from inside the service, naming neither the method nor the cause.
+
+    A list subclass rather than a wrapper: everything else that touches these
+    rows treats them as a list, and the one caller that wants the ResultSet
+    shape gets it without the rest having to know.
+    """
+
+    @property
+    def current_rows(self) -> list:
+        return self
+
+
 class _Io(NamedTuple):
     """One input or output, as `services.common.io_from_rows` reads it.
 
@@ -355,16 +373,16 @@ class LegacyAdapter:
         raw = bytes.fromhex(tx_hash) if isinstance(tx_hash, str) else bytes(tx_hash)
         rows = await dal.spending(raw, raw.hex()[: dal.config["tx_prefix_length"]])
         if io_index is None:
-            return rows
-        return [r for r in rows if r.get("spending_input_index") == io_index]
+            return _Rows(rows)
+        return _Rows(r for r in rows if r.get("spending_input_index") == io_index)
 
     async def get_spent_in_txs(self, currency: str, tx_hash, io_index=None) -> list:
         dal = self._dal(currency)
         raw = bytes.fromhex(tx_hash) if isinstance(tx_hash, str) else bytes(tx_hash)
         rows = await dal.spent_in(raw, raw.hex()[: dal.config["tx_prefix_length"]])
         if io_index is None:
-            return rows
-        return [r for r in rows if r.get("spent_output_index") == io_index]
+            return _Rows(rows)
+        return _Rows(r for r in rows if r.get("spent_output_index") == io_index)
 
     # -- addresses ---------------------------------------------------------
 

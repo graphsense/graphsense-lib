@@ -896,3 +896,37 @@ def test_no_block_at_or_after_is_none_not_a_crash() -> None:
     answer for a timestamp past the chain tip."""
     shim, _ = adapter(lambda cql, params: [])
     assert run(shim.get_block_by_date_allow_filtering("ltc", 1788442000)) is None
+
+
+def test_the_spend_tables_answer_current_rows() -> None:
+    """`txs_service` iterates `results.current_rows` on both of these, because
+    v2 hands back a driver ResultSet. A plain list raises AttributeError from
+    inside the service, naming neither the method nor the cause -- and nothing
+    caught it, because the backtest never calls /spending or /spent_in."""
+    row = Row(
+        spending_tx_hash=b"\xaa" * 32,
+        spent_tx_hash=b"\xbb" * 32,
+        spending_input_index=0,
+        spent_output_index=1,
+    )
+    shim, _ = adapter(lambda cql, params: [row])
+    for method in ("get_spending_txs", "get_spent_in_txs"):
+        found = run(getattr(shim, method)("ltc", "ab" * 32))
+        assert list(found.current_rows) == list(found)
+        assert len(found) == 1
+
+
+def test_filtering_by_io_index_keeps_the_result_set_shape() -> None:
+    """The filtered branch built a plain list, so passing io_index -- which the
+    service always does -- took the AttributeError path even once the unfiltered
+    one was fixed."""
+    row = Row(
+        spending_tx_hash=b"\xaa" * 32,
+        spent_tx_hash=b"\xbb" * 32,
+        spending_input_index=3,
+        spent_output_index=7,
+    )
+    shim, _ = adapter(lambda cql, params: [row])
+    assert run(shim.get_spending_txs("ltc", "ab" * 32, io_index=3)).current_rows
+    assert run(shim.get_spent_in_txs("ltc", "ab" * 32, io_index=7)).current_rows
+    assert run(shim.get_spending_txs("ltc", "ab" * 32, io_index=99)).current_rows == []
