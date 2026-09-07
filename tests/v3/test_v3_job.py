@@ -444,3 +444,47 @@ def test_the_loaders_bound_on_tables_they_actually_read() -> None:
     for loader in (raw_utxo, raw_account):
         assert set(loader.BOUND_TABLES) <= set(loader.LAKE_TABLES)
         assert loader.BOUND_TABLES
+
+
+# --------------------------------------------------------------------------- #
+# An empty block is complete at zero transactions                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_empty_blocks_at_the_tip_are_not_a_tear() -> None:
+    """ETH permits a block with no transactions. It contributes no rows to
+    `transaction`, so the table legitimately ends below `block` -- bounding
+    there would drop a block that was complete."""
+    assert job.extend_over_empty({901: 0, 902: 0}, 900, 902) == 902
+
+
+def test_the_walk_stops_at_the_first_block_that_claims_transactions() -> None:
+    """The BCH case sits right after an empty one: block 901 held nothing and
+    902 held 118 that were never written. Reaching past 901 is correct,
+    reaching past 902 is the bug."""
+    assert job.extend_over_empty({901: 0, 902: 118, 903: 0}, 900, 903) == 901
+
+
+def test_a_block_missing_from_the_map_stops_the_walk() -> None:
+    """Absence is not evidence of completeness. Guessing the other way writes
+    a block whose transactions do not exist, which is the failure this whole
+    path exists to prevent."""
+    assert job.extend_over_empty({902: 0}, 900, 902) == 900
+
+
+def test_nothing_above_the_transaction_tip_leaves_it_alone() -> None:
+    assert job.extend_over_empty({}, 900, 900) == 900
+
+
+def test_the_walk_is_capped() -> None:
+    """A gap of thousands of empty blocks is not a run of empty blocks, it is
+    a tear -- and extending over it is exactly the mistake being prevented."""
+    huge = {block: 0 for block in range(901, 9001)}
+    assert job.extend_over_empty(huge, 900, 9000) == 900 + job.MAX_EMPTY_TIP
+
+
+def test_a_utxo_snapshot_never_needs_the_extension() -> None:
+    """Every UTXO block carries a coinbase, so `transaction` cannot end below
+    `block` for a legitimate reason. The extension is account-only in practice
+    and must not invent headroom here."""
+    assert job.extend_over_empty({967022: 1, 967023: 14}, 967021, 967023) == 967021

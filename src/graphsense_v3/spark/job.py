@@ -299,6 +299,55 @@ def snapshot_maxima(lake, tables: "Sequence[str]") -> dict:
     return found
 
 
+#: How far above the transaction tip to look for legitimately empty blocks. A
+#: gap wider than this is not a run of empty blocks at the tip -- it is a tear,
+#: and extending over it is exactly the mistake this whole path exists to stop.
+MAX_EMPTY_TIP = 1_000
+
+
+def extend_over_empty(no_transactions: dict, tx_tip: int, block_tip: int) -> int:
+    """How far above ``tx_tip`` the snapshot is still COMPLETE.
+
+    `transaction` stopping below `block` is not always a tear. A block that
+    holds no transactions is complete at zero, and contributes no rows to
+    `transaction` -- so its absence there is the correct state, not a missing
+    write. ETH permits empty blocks. UTXO does not: the coinbase makes every
+    block non-empty, so this never fires there.
+
+    Walks up from the transaction tip while `block` says the next block held
+    nothing, and stops at the first block that claims transactions it does not
+    have. A block missing from the map is treated as NOT empty: absence is not
+    evidence of completeness, and guessing the wrong way here writes a block
+    whose transactions do not exist.
+    """
+    reach = tx_tip
+    for block_id in range(tx_tip + 1, min(block_tip, tx_tip + MAX_EMPTY_TIP) + 1):
+        if no_transactions.get(block_id) != 0:
+            break
+        reach = block_id
+    return reach
+
+
+def empty_tip_blocks(lake, tx_tip: int, block_tip: int) -> dict:
+    """``{block_id: no_transactions}`` for the blocks above the transaction tip.
+
+    A small read -- the gap is a handful of blocks, or it is a tear and
+    :data:`MAX_EMPTY_TIP` caps what is looked at.
+    """
+    from pyspark.sql import functions as F
+
+    if block_tip <= tx_tip:
+        return {}
+    top = min(block_tip, tx_tip + MAX_EMPTY_TIP)
+    rows = (
+        lake.read("block")
+        .where((F.col("block_id") > tx_tip) & (F.col("block_id") <= top))
+        .select("block_id", "no_transactions")
+        .collect()
+    )
+    return {int(row.block_id): int(row.no_transactions or 0) for row in rows}
+
+
 def bounded_end_block(
     maxima: dict, bound_tables: "Sequence[str]", end_block: Optional[int]
 ) -> tuple:
@@ -388,6 +437,21 @@ def run(
         "lake tips: %s",
         ", ".join(f"{table}<={height}" for table, height in sorted(maxima.items())),
     )
+    # An empty block is complete at zero transactions, so `transaction` ending
+    # below `block` is only a tear if the blocks in between claim transactions.
+    if "transaction" in maxima and "block" in maxima:
+        gap = empty_tip_blocks(lake, maxima["transaction"], maxima["block"])
+        reached = extend_over_empty(gap, maxima["transaction"], maxima["block"])
+        if reached > maxima["transaction"]:
+            logger.info(
+                "blocks %d-%d hold no transactions, so the snapshot is complete "
+                "through %d despite `transaction` ending at %d",
+                maxima["transaction"] + 1,
+                reached,
+                reached,
+                maxima["transaction"],
+            )
+            maxima = {**maxima, "transaction": reached}
     end_block, note = bounded_end_block(maxima, loader.BOUND_TABLES, end_block)
     if note:
         logger.warning("%s", note)
