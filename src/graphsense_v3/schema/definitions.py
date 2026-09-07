@@ -23,6 +23,12 @@ Design rules, each of which the v2 schema violates somewhere:
 6. Every collection is frozen. A non-frozen collection overwrite emits a range
    tombstone.
 7. Every table declares its compaction, compression and caching.
+8. A COUNT is ``varint``, not ``bigint``. Cassandra stores a fixed-width type
+   as its full width whatever the value, so every ``no_transactions`` of 1 cost
+   eight bytes; ``varint`` is length-prefixed, so it costs two. The counts here
+   are per-edge and per-address, which is where the row count is, and their
+   distribution is dominated by 1. Ids stay ``bigint`` (rule 5): a tx_id is
+   ``block_id << 32``, so it is wide by construction and would save nothing.
 """
 
 from __future__ import annotations
@@ -642,20 +648,22 @@ def _stats_table(name: str, entity: str, family: Family, extra: tuple[C, ...]) -
             C(entity, "blob"),
             C("epoch", "int", "0 = compacted base; else block_id // epoch_size + 1"),
             # --- summable: every epoch row carries a partial value ---
-            C("no_incoming_txs", "bigint"),
-            C("no_outgoing_txs", "bigint"),
-            C("no_incoming_txs_zero_value", "bigint"),
-            C("no_outgoing_txs_zero_value", "bigint"),
+            # varint, per design rule 8: these are counts, and the median
+            # address has 1 of each.
+            C("no_incoming_txs", "varint"),
+            C("no_outgoing_txs", "varint"),
+            C("no_incoming_txs_zero_value", "varint"),
+            C("no_outgoing_txs_zero_value", "varint"),
             C("total_received", "frozen<currency>"),
             C("total_spent", "frozen<currency>"),
             *tokens,
             C("first_tx_id", "bigint", "min-merge"),
             C("last_tx_id", "bigint", "max-merge"),
             # --- epoch 0 only ---
-            C("in_degree", "bigint", "epoch 0 only: not summable"),
-            C("out_degree", "bigint"),
-            C("in_degree_zero_value", "bigint"),
-            C("out_degree_zero_value", "bigint"),
+            C("in_degree", "varint", "epoch 0 only: not summable"),
+            C("out_degree", "varint"),
+            C("in_degree_zero_value", "varint"),
+            C("out_degree_zero_value", "varint"),
             # One cursor pair per partition class of *_transactions, which is
             # (direction x zero-ness) since both are in that partition key.
             C("in_tx_page_max", "int", "epoch 0 only: paging cursors"),
@@ -787,7 +795,7 @@ def _relations_table(name: str, near: str, far: str, family: Family) -> Table:
             C("rel_bucket", "int", "crc32(far side) % relation_buckets"),
             C(far, "blob"),
             C("epoch", "int", "as address_stats: summable"),
-            C("no_transactions", "bigint", "was int"),
+            C("no_transactions", "varint", "was int; see design rule 8"),
             C("value", "frozen<currency>"),
             *tokens,
             C("link_page_max", "int", "epoch 0 only"),

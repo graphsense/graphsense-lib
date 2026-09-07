@@ -26,7 +26,7 @@ from graphsense_v3.schema import Kind, schema_for
 from graphsense_v3.schema.definitions import EPOCH_BASE
 from graphsense_v3.spark import derived_common as common
 from graphsense_v3.spark import writer
-from graphsense_v3.spark.columns import bytes_to_varint_udf
+from graphsense_v3.spark.columns import as_varint, bytes_to_varint_udf
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
@@ -450,9 +450,7 @@ def _relation_side(
 
     symbol, _ = NATIVE[network]
     keys = [near, far]
-    counts = moves.groupBy(*keys).agg(
-        F.count("*").cast("bigint").alias("no_transactions")
-    )
+    counts = moves.groupBy(*keys).agg(as_varint(F.count("*")).alias("no_transactions"))
 
     def totals(rows: "DataFrame", extra_keys: list):
         amounts = rows.groupBy(*keys, *extra_keys).agg(
@@ -613,29 +611,24 @@ def address_stats(
         .join(degree, on="address", how="left")
         .join(is_contract, on="address", how="left")
     )
-    zero = F.lit(0).cast("bigint")
     return joined.select(
         common.entity_bucket(F.col("address"), config).alias("address_bucket"),
         F.col("address"),
         F.lit(EPOCH_BASE).alias("epoch"),
-        F.coalesce(F.col("no_incoming_txs"), zero).alias("no_incoming_txs"),
-        F.coalesce(F.col("no_outgoing_txs"), zero).alias("no_outgoing_txs"),
-        F.coalesce(F.col("no_incoming_txs_zero_value"), zero).alias(
-            "no_incoming_txs_zero_value"
-        ),
-        F.coalesce(F.col("no_outgoing_txs_zero_value"), zero).alias(
-            "no_outgoing_txs_zero_value"
-        ),
+        common.count_column("no_incoming_txs"),
+        common.count_column("no_outgoing_txs"),
+        common.count_column("no_incoming_txs_zero_value"),
+        common.count_column("no_outgoing_txs_zero_value"),
         F.col("total_received"),
         F.col("total_spent"),
         F.col("total_tokens_received"),
         F.col("total_tokens_spent"),
         F.col("first_tx_id"),
         F.col("last_tx_id"),
-        F.coalesce(F.col("in_degree"), zero).alias("in_degree"),
-        F.coalesce(F.col("out_degree"), zero).alias("out_degree"),
-        F.coalesce(F.col("in_degree_zero_value"), zero).alias("in_degree_zero_value"),
-        F.coalesce(F.col("out_degree_zero_value"), zero).alias("out_degree_zero_value"),
+        common.count_column("in_degree"),
+        common.count_column("out_degree"),
+        common.count_column("in_degree_zero_value"),
+        common.count_column("out_degree_zero_value"),
         F.col("in_tx_page_max"),
         F.col("out_tx_page_max"),
         F.col("in_tx_ordinal_next"),

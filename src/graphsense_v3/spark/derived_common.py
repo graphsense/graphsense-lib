@@ -12,6 +12,7 @@ and fiat conversion are the same operation.
 from typing import TYPE_CHECKING, Sequence
 
 from graphsense_v3.config import NetworkConfig
+from graphsense_v3.spark.columns import as_varint
 from graphsense_v3.spark.udf import bucket_expr, search_prefix_bytes_udf
 
 if TYPE_CHECKING:
@@ -72,6 +73,17 @@ def sum_fiat(
             *[F.sum(F.col(column).getItem(index)) for index in range(len(currencies))]
         ).alias("_fiat")
     )
+
+
+def count_column(name: str) -> "Column":
+    """A null-safe stats count, typed for its ``varint`` column.
+
+    Null because the sides are outer-joined: an address that only ever received
+    has no outgoing row to contribute. Zero is the count, not "unknown".
+    """
+    from pyspark.sql import functions as F
+
+    return as_varint(F.coalesce(F.col(name), F.lit(0))).alias(name)
 
 
 def currency_struct(value: "Column", fiat: "Column") -> "Column":

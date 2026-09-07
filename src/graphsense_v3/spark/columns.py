@@ -105,6 +105,20 @@ def hex_to_bytes(column: "Column") -> "Column":
     return F.unhex(column)
 
 
+def as_varint(column: "Column") -> "Column":
+    """A Spark integer column in the shape a Cassandra ``varint`` takes.
+
+    Counts are aggregated as `bigint` and stored as `varint` (design rule 8),
+    and the gap has to be closed on the FRAME rather than left to the writer:
+    both write paths dispatch on the frame's Spark type, not on the CQL type,
+    so an uncast long takes the wrong branch in `sidecar.cast_varints_to_string`
+    and reaches the converter as a Long where a BigInteger is expected.
+    """
+    from pyspark.sql.types import DecimalType
+
+    return column.cast(DecimalType(VARINT_PRECISION, 0))
+
+
 def bytes_to_varint_udf():
     """Big-endian bytes -> the decimal a Cassandra ``varint`` column takes.
 

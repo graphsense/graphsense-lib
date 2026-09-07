@@ -46,20 +46,20 @@ CREATE TABLE IF NOT EXISTS address_stats (
     address_bucket int,                     -- crc32(entity) % entity_buckets
     address blob,
     epoch int,                              -- 0 = compacted base; else block_id // epoch_size + 1
-    no_incoming_txs bigint,
-    no_outgoing_txs bigint,
-    no_incoming_txs_zero_value bigint,
-    no_outgoing_txs_zero_value bigint,
+    no_incoming_txs varint,
+    no_outgoing_txs varint,
+    no_incoming_txs_zero_value varint,
+    no_outgoing_txs_zero_value varint,
     total_received frozen<currency>,
     total_spent frozen<currency>,
     total_tokens_received frozen<map<text, frozen<currency>>>,
     total_tokens_spent frozen<map<text, frozen<currency>>>,
     first_tx_id bigint,                     -- min-merge
     last_tx_id bigint,                      -- max-merge
-    in_degree bigint,                       -- epoch 0 only: not summable
-    out_degree bigint,
-    in_degree_zero_value bigint,
-    out_degree_zero_value bigint,
+    in_degree varint,                       -- epoch 0 only: not summable
+    out_degree varint,
+    in_degree_zero_value varint,
+    out_degree_zero_value varint,
     in_tx_page_max int,                     -- epoch 0 only: paging cursors
     out_tx_page_max int,
     in_tx_ordinal_next bigint,
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
     rel_bucket int,                         -- crc32(far side) % relation_buckets
     src_address blob,
     epoch int,                              -- as address_stats: summable
-    no_transactions bigint,                 -- was int
+    no_transactions varint,                 -- was int; see design rule 8
     value frozen<currency>,
     token_values frozen<map<text, frozen<currency>>>,
     link_page_max int,                      -- epoch 0 only
@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS address_outgoing_relations (
     rel_bucket int,                         -- crc32(far side) % relation_buckets
     dst_address blob,
     epoch int,                              -- as address_stats: summable
-    no_transactions bigint,                 -- was int
+    no_transactions varint,                 -- was int; see design rule 8
     value frozen<currency>,
     token_values frozen<map<text, frozen<currency>>>,
     link_page_max int,                      -- epoch 0 only
