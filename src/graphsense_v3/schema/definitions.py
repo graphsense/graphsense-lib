@@ -798,7 +798,21 @@ def _relations_table(name: str, near: str, far: str, family: Family) -> Table:
             C("no_transactions", "varint", "was int; see design rule 8"),
             C("value", "frozen<currency>"),
             *tokens,
-            C("link_page_max", "int", "epoch 0 only"),
+            # RESERVED, and written by nothing today -- deliberately kept.
+            #
+            # They are the cursor for `address_link_transactions`, which only
+            # the ACCOUNT layout pages: it keys (src, dst, tx_page), so a
+            # writer has to know how many transactions the edge already holds
+            # to pick a page. That is a read, which rule 4 forbids, so the
+            # account link table has no incremental write path yet and these
+            # have nothing to maintain them. The UTXO layout clusters by tx_id
+            # directly and can be blind-inserted, so it never needs them.
+            #
+            # Do not delete them as dead columns: they are the placeholder for
+            # that unsolved problem, and removing them would make the gap
+            # invisible until someone hits it. See the `_link_txs_table`
+            # comment for the two layouts.
+            C("link_page_max", "int", "epoch 0 only; RESERVED, see definitions.py"),
             C("link_ordinal_next", "bigint"),
         ),
         Key((near, "rel_bucket"), (far, "epoch"), ((far, "ASC"), ("epoch", "ASC"))),

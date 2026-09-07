@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
     no_transactions varint,                 -- was int; see design rule 8
     value frozen<currency>,
     token_values frozen<map<text, frozen<currency>>>,
-    link_page_max int,                      -- epoch 0 only
+    link_page_max int,                      -- epoch 0 only; RESERVED, see definitions.py
     link_ordinal_next bigint,
     PRIMARY KEY ((dst_address, rel_bucket), src_address, epoch)
 )
@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS address_outgoing_relations (
     no_transactions varint,                 -- was int; see design rule 8
     value frozen<currency>,
     token_values frozen<map<text, frozen<currency>>>,
-    link_page_max int,                      -- epoch 0 only
+    link_page_max int,                      -- epoch 0 only; RESERVED, see definitions.py
     link_ordinal_next bigint,
     PRIMARY KEY ((src_address, rel_bucket), dst_address, epoch)
 )
