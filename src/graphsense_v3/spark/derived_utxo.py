@@ -228,6 +228,57 @@ def _native(network: str):
     return F.lit(network.upper())
 
 
+def net_legs(spine: "DataFrame") -> "DataFrame":
+    """One row per (transaction, address): the address's NET flow, as v2 has it.
+
+    The gross spine gives an address on BOTH sides of a transaction two rows --
+    "put in 3112, took back 2839" -- where v2 gives one, "-273". Same shape, so
+    everything downstream reads it identically: ``value`` stays a magnitude and
+    ``is_outgoing`` carries the sign.
+
+    Applied to the listing and the aggregates, NOT to :func:`relation_edges`.
+    That split is the whole point:
+
+    * `address_transactions` pages by ROW, so gross legs make a page of 20 rows
+      fewer than 20 transactions -- thinner pages than v2 returns for the same
+      request, by a factor that varies per address.
+    * `address_stats` counts rows, so gross legs count legs where v2 counts
+      transactions, and `no_incoming_txs` drifts on exactly the addresses that
+      self-spend.
+    * `relation_edges` apportions by an address's share of the input, and its
+      real contribution is the GROSS 3112, not the net 273. Netting there is
+      what forces v2's `total_input` correction
+      (`Transformator.scala:206-225`), which D7 exists to delete. So it keeps
+      the gross spine and the correction stays identically zero.
+
+    Nothing is lost that is not still in raw: `transaction_io` holds every input
+    and output, so the gross detail remains derivable.
+
+    A net of exactly zero -- an address that put in and took out the same amount
+    in one transaction -- is tagged incoming and zero-value, so the default
+    listing excludes it where v2 shows a row of 0. It needs an exact match on
+    one transaction and is vanishingly rare, but it is a real difference.
+    """
+    from pyspark.sql import functions as F
+
+    signed = F.when(F.col("is_outgoing"), -F.col("value")).otherwise(F.col("value"))
+    return (
+        spine.withColumn("_signed", signed)
+        .groupBy("tx_id", "address")
+        .agg(F.sum("_signed").cast("bigint").alias("_net"))
+        .select(
+            F.col("tx_id"),
+            F.col("address"),
+            (F.col("_net") < 0).alias("is_outgoing"),
+            F.abs(F.col("_net")).cast("bigint").alias("value"),
+            # Recomputed rather than carried through the group-by: block_id is
+            # a function of tx_id, so an aggregate over it would be a
+            # nondeterministic `first` for a value that is already known.
+            block_of_tx_id_expr(F.col("tx_id")).alias("block_id"),
+        )
+    )
+
+
 def relation_edges(spine: "DataFrame", transactions: "DataFrame") -> "DataFrame":
     """One row per (transaction, source, destination), with an attributed value.
 
@@ -399,17 +450,23 @@ def build(
     is used only by the callers that need the full table.
     """
     cfg = config or config_for(network)
-    spine = (
+    # GROSS legs: one row per (transaction, address, direction). `relation_edges`
+    # needs them -- an address's share of a transaction's input is what it really
+    # put in, not what it net-spent.
+    gross = (
         legs(transaction_io)
         if single_address_io is None
         else aggregate_legs(single_address_io)
     ).cache()
+    # NETTED: one row per (transaction, address), which is what v2 lists and
+    # counts. See `net_legs` for why the two consumers differ.
+    spine = net_legs(gross).cache()
     # UTXO needs no fee events: a transaction's fee is its inputs minus its
     # outputs, so the spender's own legs already carry it. The miner is paid by
     # the coinbase output, which is a leg like any other.
     events = common.leg_events(spine, _native(network)).cache()
     paged = address_transactions(spine, cfg).cache()
-    edges = relation_edges(spine, transactions).cache()
+    edges = relation_edges(gross, transactions).cache()
     return {
         "address_transactions": common.with_running_balance(
             paged.drop("ordinal"), events, per_currency=False

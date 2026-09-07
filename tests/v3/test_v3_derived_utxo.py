@@ -82,7 +82,9 @@ def self_change_io(spark):
     """One transaction where Alice spends 10 and takes 3 back as change.
 
     graphsense-spark nets this to a single -7 outgoing row and the 3 receipt
-    does not exist in the model (App. B.1). v3 keeps both legs.
+    does not exist in the model (App. B.1). v3 keeps both legs on the GROSS
+    spine, which is what `relation_edges` apportions from, and nets them for the
+    listing and the aggregates -- see `derived_utxo.net_legs`.
     """
     tx = tx_id(1, 0)
     return spark.createDataFrame(
@@ -105,17 +107,59 @@ def test_an_address_on_both_sides_yields_two_legs(self_change_io) -> None:
     assert [(r["is_outgoing"], r["value"]) for r in rows if bytes(r["address"]) == BOB]
 
 
-def test_legs_are_gross_not_net(self_change_io, self_change_txs, rates, blocks) -> None:
-    """The visible consequence: total_received and total_spent are both real
-    amounts, and a self-change transaction counts once in each direction."""
+def test_the_aggregates_count_transactions_not_legs(
+    self_change_io, self_change_txs, rates, blocks
+) -> None:
+    """Alice spends 10 and takes 3 back, so v2 records one outgoing transaction
+    of 7 and no receipt. Counting the gross legs instead gave one of EACH, which
+    drifts from v2 on precisely the addresses that self-spend -- and nothing
+    caught it, because `get_address` is skipped on the cluster path."""
     stats = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")[
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
-    assert alice["no_incoming_txs"] == 1
-    assert alice["no_outgoing_txs"] == 1
-    assert int(alice["total_received"]["value"]) == 3
-    assert int(alice["total_spent"]["value"]) == 10
+    assert int(alice["no_incoming_txs"]) == 0
+    assert int(alice["no_outgoing_txs"]) == 1
+    assert int(alice["total_spent"]["value"]) == 7
+    # NULL, not a zero currency: Alice has no netted INCOMING row at all, and
+    # the sides are outer-joined. Pre-existing -- any address that only spends
+    # within the built range hits this -- but netting makes it reachable more
+    # often, since a self-change receipt no longer counts as a receipt.
+    assert alice["total_received"] is None
+
+
+def test_one_row_per_transaction_reaches_the_listing(
+    self_change_io, self_change_txs, rates, blocks
+) -> None:
+    """The thin-page fix. Two rows for one transaction made a page of N rows
+    fewer than N transactions, by a factor that varied per address."""
+    paged = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")[
+        "address_transactions"
+    ]
+    alice = [r for r in paged.collect() if bytes(r["address"]) == ALICE]
+    assert len(alice) == 1
+    assert (alice[0]["is_outgoing"], int(alice[0]["value"])) == (True, 7)
+
+
+def test_edges_still_apportion_from_the_gross_input(
+    self_change_io, self_change_txs, rates, blocks
+) -> None:
+    """The half that must NOT be netted. Alice really put 10 into the
+    transaction, not 7, and that is the numerator the value apportioning needs.
+    Netting here is what forces v2's `total_input` correction
+    (`Transformator.scala:206-225`), which D7 exists to delete."""
+    edges = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")[
+        "address_outgoing_relations"
+    ]
+    alice_to_bob = [
+        r
+        for r in edges.collect()
+        if bytes(r["src_address"]) == ALICE and bytes(r["dst_address"]) == BOB
+    ]
+    assert len(alice_to_bob) == 1
+    # Alice supplied the whole 10-satoshi input, so she is credited with all of
+    # Bob's 7-satoshi output. Netted to 7/10 she would get 4.
+    assert int(alice_to_bob[0]["value"]["value"]) == 7
 
 
 def test_multi_address_ios_are_excluded(spark, rates) -> None:
@@ -566,3 +610,138 @@ def test_a_self_change_transaction_reports_one_post_transaction_balance(
     for (address, _), balances in per_tx.items():
         # one balance per transaction, and it is the post-transaction one
         assert balances == {closing[address]}
+
+
+# --------------------------------------------------------------------------- #
+# Netting the listing, keeping the graph gross                                 #
+# --------------------------------------------------------------------------- #
+
+GROSS = "tx_id BIGINT, address BINARY, is_outgoing BOOLEAN, value BIGINT, block_id INT"
+
+
+def _gross(spark, rows):
+    return spark.createDataFrame(rows, schema=GROSS)
+
+
+def test_both_legs_of_one_transaction_become_one_netted_row(spark) -> None:
+    """The BCH case: v3 held "put in 3112, took back 2839" as two rows where v2
+    holds "-273" as one. Two rows per transaction is what made a page of 20
+    return 12, and what made `no_incoming_txs` count legs where v2 counts
+    transactions."""
+    spine = _gross(
+        spark,
+        [
+            {
+                "tx_id": 1,
+                "address": b"\xa1",
+                "is_outgoing": True,
+                "value": 3112,
+                "block_id": 0,
+            },
+            {
+                "tx_id": 1,
+                "address": b"\xa1",
+                "is_outgoing": False,
+                "value": 2839,
+                "block_id": 0,
+            },
+        ],
+    )
+    rows = derived_utxo.net_legs(spine).collect()
+    assert len(rows) == 1
+    assert (rows[0]["is_outgoing"], rows[0]["value"]) == (True, 273)
+
+
+def test_the_value_stays_a_magnitude_with_the_sign_on_the_direction(spark) -> None:
+    """`leg_events` and the adapter both re-apply the sign from `is_outgoing`,
+    so a signed `value` here would double-negate every outgoing row."""
+    spine = _gross(
+        spark,
+        [
+            {
+                "tx_id": 1,
+                "address": b"\xa1",
+                "is_outgoing": True,
+                "value": 500,
+                "block_id": 0,
+            }
+        ],
+    )
+    row = derived_utxo.net_legs(spine).collect()[0]
+    assert (row["is_outgoing"], row["value"]) == (True, 500)
+
+
+def test_an_address_on_one_side_only_is_unchanged(spark) -> None:
+    """The overwhelming majority. Netting must be a no-op for them, or it is
+    not netting, it is a rewrite."""
+    spine = _gross(
+        spark,
+        [
+            {
+                "tx_id": 1,
+                "address": b"\xa1",
+                "is_outgoing": False,
+                "value": 700,
+                "block_id": 0,
+            },
+            {
+                "tx_id": 2,
+                "address": b"\xb2",
+                "is_outgoing": True,
+                "value": 900,
+                "block_id": 0,
+            },
+        ],
+    )
+    rows = {
+        (r["tx_id"], r["is_outgoing"], r["value"])
+        for r in derived_utxo.net_legs(spine).collect()
+    }
+    assert rows == {(1, False, 700), (2, True, 900)}
+
+
+def test_a_net_of_zero_is_tagged_incoming_and_zero_value(spark) -> None:
+    """Deterministic rather than arbitrary. It also means the default listing
+    excludes it where v2 shows a row of 0 -- rare enough to accept, real enough
+    to write down."""
+    spine = _gross(
+        spark,
+        [
+            {
+                "tx_id": 1,
+                "address": b"\xa1",
+                "is_outgoing": True,
+                "value": 500,
+                "block_id": 0,
+            },
+            {
+                "tx_id": 1,
+                "address": b"\xa1",
+                "is_outgoing": False,
+                "value": 500,
+                "block_id": 0,
+            },
+        ],
+    )
+    row = derived_utxo.net_legs(spine).collect()[0]
+    assert (row["is_outgoing"], row["value"]) == (False, 0)
+
+
+def test_block_id_is_recomputed_from_the_transaction_id(spark) -> None:
+    """It is a function of tx_id, so carrying it through the group-by would be
+    a nondeterministic `first` over a value that is already known."""
+    from graphsense_v3.codec import tx_id as make_tx_id
+
+    spine = _gross(
+        spark,
+        [
+            {
+                "tx_id": make_tx_id(4242, 7),
+                "address": b"\xa1",
+                "is_outgoing": True,
+                "value": 5,
+                "block_id": 0,
+            }
+        ],
+    )
+    assert derived_utxo.net_legs(spine).collect()[0]["block_id"] == 4242

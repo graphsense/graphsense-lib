@@ -117,12 +117,6 @@ class Call:
     label: str
     needs: str
     invoke: Callable[..., Awaitable]
-    #: Applied to the V3 body before comparing, for a call whose two backends
-    #: are known to answer in different but reconcilable shapes. `net_d7_legs`
-    #: is the only one: see its docstring. None means compare the body as it
-    #: came back, which is the default and should stay the default -- every
-    #: entry here is a claim that a difference is explained.
-    normalise_v3: Optional[Callable[[Any], Any]] = None
 
 
 #: How much of an exception message a difference line carries.
@@ -214,10 +208,9 @@ async def run_call(
             network,
         )
     else:
-        right_plain = to_plain(right_body)
-        if call.normalise_v3 is not None:
-            right_plain = call.normalise_v3(right_plain)
-        report = compare.compare(label, to_plain(left_body), right_plain, network)
+        report = compare.compare(
+            label, to_plain(left_body), to_plain(right_body), network
+        )
     # Only time calls that BOTH sides completed: a raised call measures how
     # fast something failed, which would flatter whichever side broke earlier.
     if left_kind == "ok" and right_kind == "ok":
@@ -260,7 +253,6 @@ CALLS: list = [
         "list_address_txs",
         ADDRESS,
         lambda s, n, v: s.addresses_service.list_address_txs(n, v, pagesize=20),
-        normalise_v3=compare.net_d7_legs,
     ),
     Call(
         "list_address_txs_in",
@@ -268,11 +260,6 @@ CALLS: list = [
         lambda s, n, v: s.addresses_service.list_address_txs(
             n, v, direction="in", pagesize=20
         ),
-        # A DIRECTION-FILTERED listing has only one leg of a both-sides
-        # transaction, so there is nothing to net and this is a no-op. Set
-        # anyway: it is the same call, and leaving it off would say the
-        # reconciliation does not apply here rather than that it does nothing.
-        normalise_v3=compare.net_d7_legs,
     ),
     Call(
         "list_address_neighbors_out",
@@ -345,13 +332,11 @@ CALLS: list = [
         lambda s, n, v: s.addresses_service.list_address_txs(
             n, v, min_height=1_000_000, pagesize=20
         ),
-        normalise_v3=compare.net_d7_legs,
     ),
     Call(
         "list_address_txs_second_page",
         ADDRESS,
         lambda s, n, v: _second_page(s, n, v),
-        normalise_v3=compare.net_d7_legs,
     ),
     Call(
         # `Dal.block_below` walks partitions where v2 scans the whole block
