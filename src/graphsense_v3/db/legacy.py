@@ -133,6 +133,12 @@ def _fee_of(detail: dict) -> Optional[int]:
     return int(used) * int(price)
 
 
+#: How many neighbours a page holds when the caller names no size. The
+#: service builds one full address row per neighbour, so an unbounded page is
+#: an unbounded number of round trips -- this is a ceiling on work, not a
+#: display preference.
+DEFAULT_NEIGHBOUR_PAGE = 100
+
 #: ``Transfer(address,address,uint256)``. The one log signature a token
 #: transfer is, and the topic v2 restricts on (`cassandra.py:3613`).
 TRANSFER_TOPIC = bytes.fromhex(
@@ -714,12 +720,28 @@ class LegacyAdapter:
         ``cluster_id`` is absent rather than zero: v3 has no clusters yet, and a
         zero would be read as cluster 0.
         """
+        return await self._address_row(
+            currency, self._bytes(currency, address), address
+        )
+
+    async def _address_row(self, currency: str, raw: bytes, address) -> Optional[dict]:
+        """The same row, from the address BYTES.
+
+        Split out for the neighbour listing, which holds the bytes already and
+        needs one of these per neighbour -- see `_as_v2_neighbors`. ``address``
+        is what the service will format for the response, so it is passed
+        through rather than re-derived: an account keyspace wants the bytes and
+        a UTXO one the decoded string, and `address_to_user_format` keys off
+        which it is handed.
+        """
+        import asyncio
+
         dal = self._dal(currency)
-        raw = self._bytes(currency, address)
-        stats = await dal.stats(raw)
+        # Concurrent, not sequential: this runs once per neighbour of a page,
+        # so a serial pair of round trips here is 2N latencies per listing.
+        stats, balances = await asyncio.gather(dal.stats(raw), dal.balance(raw))
         if stats is None:
             return None
-        balances = await dal.balance(raw)
         native = next(iter(balances), None)
         symbol = currency.upper()
         row = {
@@ -1176,31 +1198,72 @@ class LegacyAdapter:
                 "list_neighbors needs an address; v3 has no surrogate id to "
                 "resolve a numeric one back to an address"
             )
+        import asyncio
+
         dal = self._dal(currency)
         raw = id if isinstance(id, (bytes, bytearray)) else self._bytes(currency, id)
+        token = None
         if targets:
-            found = []
-            for target in targets:
-                key = (
-                    target
-                    if isinstance(target, (bytes, bytearray))
-                    else self._bytes(currency, target)
+            # A named set is already the page; `only_ids` is a point read per
+            # target, not a listing.
+            found = list(
+                filter(
+                    None,
+                    await asyncio.gather(
+                        *(
+                            dal.neighbor(
+                                raw,
+                                bytes(
+                                    target
+                                    if isinstance(target, (bytes, bytearray))
+                                    else self._bytes(currency, target)
+                                ),
+                                is_outgoing=is_outgoing,
+                            )
+                            for target in targets
+                        )
+                    ),
                 )
-                edge = await dal.neighbor(raw, bytes(key), is_outgoing=is_outgoing)
-                if edge is not None:
-                    found.append(edge)
+            )
         else:
-            found = await dal.neighbors(bytes(raw), is_outgoing=is_outgoing)
-        return self._as_v2_neighbors(currency, found, is_outgoing), None
+            found = await dal.neighbors(
+                bytes(raw),
+                is_outgoing=is_outgoing,
+                after=bytes.fromhex(page) if page else None,
+            )
+            # PAGED, and it has to be. The service builds a full address row
+            # per neighbour of the page, so handing it every edge of a hub
+            # turns one request into thousands of sequential round trips --
+            # 3 573 of them for WETH, which is a request that never returns
+            # rather than a slow one.
+            limit = int(pagesize or DEFAULT_NEIGHBOUR_PAGE)
+            if len(found) > limit:
+                found = found[:limit]
+                # The cursor is the last address emitted, and the listing is
+                # ordered by it -- see `Dal.neighbors`.
+                token = bytes(found[-1].address).hex()
+        return await self._as_v2_neighbors(currency, found, is_outgoing), token
 
-    def _as_v2_neighbors(self, currency: str, found: list, is_outgoing: bool) -> list:
+    async def _as_v2_neighbors(
+        self, currency: str, found: list, is_outgoing: bool
+    ) -> list:
         """v3's `Neighbor` rows as the dicts the service reads.
 
-        Two conversions. The counterparty is keyed ``dst_address`` or
-        ``src_address`` by DIRECTION, which is how the service finds it; and
+        Three conversions. The counterparty is keyed ``dst_address`` or
+        ``src_address`` by DIRECTION, which is how the service finds it;
         ``value`` becomes an object with ``.value`` and ``.fiat_values``,
-        because `to_values` reads attributes rather than keys.
+        because `to_values` reads attributes rather than keys; and each
+        neighbour's full ADDRESS ROW is attached.
+
+        That third one is why this is async. `addresses_service` reads
+        ``{dst}_address_row`` off each neighbour and falls back to a per-row
+        ``await self.get_address(...)`` when it is missing -- the N+1 its own
+        comment says was removed. Without the key every neighbour of every
+        listing paid a full service round trip, one after another; the batch
+        below is the same reads, concurrently and once.
         """
+        import asyncio
+
         from graphsenselib.utils.rest_utils import is_eth_like
 
         from graphsense_v3.codec import decode_address
@@ -1257,6 +1320,23 @@ class LegacyAdapter:
                     "labels": None,
                 }
             )
+        # One concurrent round for the page, not one round trip per neighbour.
+        details = await asyncio.gather(
+            *(
+                self._address_row(currency, bytes(edge.address), row[side])
+                for edge, row in zip(found, rows)
+            )
+        )
+        for row, detail in zip(rows, details):
+            # Absent rather than None when the counterparty has no stats row:
+            # the service tests `is None` and falls back to fetching it, which
+            # is the honest answer for an edge whose far side is missing.
+            if detail is not None:
+                # `{dst}_address_row`, where dst is "dst"/"src" -- NOT
+                # `{side}_address_row`, which would spell it
+                # "dst_address_address_row" and leave the service on its
+                # fallback path with the key silently unread.
+                row[f"{'dst' if is_outgoing else 'src'}_address_row"] = detail
         return rows
 
     async def list_matching_addresses(

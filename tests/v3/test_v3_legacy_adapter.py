@@ -8,6 +8,7 @@ harness would report it as agreement.
 """
 
 import asyncio
+import zlib
 
 from types import SimpleNamespace
 
@@ -1685,3 +1686,93 @@ def test_a_link_row_carries_the_token_rate_too() -> None:
         {"code": "usd", "value": 0.5},
     ]
     assert len(seen) == 1
+
+
+def _many_neighbours(count: int, *, stats=True):
+    """``count`` edges spread over the relation buckets, plus their stats."""
+    addresses = [bytes([0]) + index.to_bytes(19, "big") for index in range(count)]
+    seen: list = []
+
+    def rows(cql, params):
+        if "relations" in cql:
+            seen.append((cql, params))
+            bucket = params[1]
+            after = params[2] if len(params) > 2 else None
+            return [
+                Row(dst_address=a, no_transactions=3, epoch=0)
+                for a in addresses
+                if zlib.crc32(a) % CONFIG["relation_buckets"] == bucket
+                and (after is None or a > after)
+            ]
+        if "address_stats" in cql and stats:
+            return [Row(epoch=0)]
+        return []
+
+    shim = LegacyAdapter(
+        {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
+    )
+    return shim, seen
+
+
+def test_a_neighbour_listing_is_paged() -> None:
+    """The service builds a full address row per neighbour of the page, so an
+    unpaged listing is one round trip per edge -- 3573 of them for WETH, which
+    is a request that never returns rather than a slow one. pagesize was
+    accepted and ignored."""
+    shim, _ = _many_neighbours(50)
+    rows, token = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    assert len(rows) == 20
+    assert token is not None
+
+
+def test_a_short_neighbour_page_has_no_cursor() -> None:
+    shim, _ = _many_neighbours(5)
+    rows, token = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    assert len(rows) == 5 and token is None
+
+
+def test_the_neighbour_cursor_resumes_where_the_page_ended() -> None:
+    """Ordered by the far address, which every bucket clusters on -- so the
+    cursor is that address and the next page reads LESS rather than re-reading
+    and discarding."""
+    shim, seen = _many_neighbours(50)
+    first, token = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    assert token == bytes(first[-1]["dst_address"]).hex()
+
+    second, _ = run(
+        shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20, page=token)
+    )
+    assert [r["dst_address"] for r in second][:1] > [r["dst_address"] for r in first][
+        -1:
+    ]
+    # The bound is in CQL, not a client-side filter.
+    resumed = [cql for cql, _p in seen if "dst_address > %s" in cql]
+    assert resumed
+
+
+def test_a_neighbour_listing_is_ordered_by_address() -> None:
+    """Arrival order is whatever `_gather` returned the buckets in: stable
+    within a call, meaningless across them -- so a cursor built on it would
+    skip and repeat neighbours."""
+    shim, _ = _many_neighbours(50)
+    rows, _ = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=50))
+    addresses = [bytes(r["dst_address"]) for r in rows]
+    assert addresses == sorted(addresses)
+
+
+def test_each_neighbour_carries_the_address_row_the_service_would_refetch() -> None:
+    """`addresses_service` reads {dst}_address_row and falls back to a per-row
+    `await self.get_address(...)` when it is missing -- the N+1 its own comment
+    says was removed."""
+    shim, _ = _many_neighbours(3)
+    rows, _ = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    assert all("dst_address_row" in row for row in rows)
+    assert rows[0]["dst_address_row"]["total_received"].value == 0
+
+
+def test_a_neighbour_with_no_stats_row_is_left_for_the_service_to_fetch() -> None:
+    """`is None` is what the service tests, so an absent key sends it down the
+    fallback -- the honest answer for an edge whose far side has no row."""
+    shim, _ = _many_neighbours(3, stats=False)
+    rows, _ = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    assert all("dst_address_row" not in row for row in rows)

@@ -656,12 +656,30 @@ class Dal:
         )
         return rows[0].tx_page if rows else 0
 
-    async def neighbors(self, address: bytes, *, is_outgoing: bool) -> list:
-        """Every counterparty, summed over epochs.
+    async def neighbors(
+        self, address: bytes, *, is_outgoing: bool, after: Optional[bytes] = None
+    ) -> list:
+        """Every counterparty, summed over epochs, ORDERED BY ADDRESS.
 
         Costs ``relation_buckets`` partition reads, unconditionally: the bucket
         is derived from the FAR side, which is unknown here, and there is no
         watermark table to stop early. Issued concurrently for that reason.
+
+        The order is the point, not a detail. Each bucket clusters by the far
+        address ASC, so merging them on that column gives one total order that
+        is the same on every call -- which is what makes ``after`` a usable
+        cursor and the listing pageable at all. Arrival order (the buckets as
+        `_gather` happened to return them) is stable within a call and
+        meaningless across them.
+
+        ``after`` is pushed into CQL per bucket, so a later page reads less
+        rather than re-reading and discarding.
+
+        What this still does NOT do is bound the read to one page: a hub with
+        50 000 edges reads all of them to return 20. Bounding it needs a
+        per-bucket LIMIT, and a row is not a neighbour -- the epoch rows of one
+        counterparty would be cut in half by it -- so that is a real change,
+        not a parameter. It is the read, not the response, that is unbounded.
         """
         table = (
             "address_outgoing_relations"
@@ -671,12 +689,14 @@ class Dal:
         near = "src_address" if is_outgoing else "dst_address"
         far = "dst_address" if is_outgoing else "src_address"
         buckets = self.config["relation_buckets"]
+        clause = f" AND {far} > %s" if after is not None else ""
+        extra = (after,) if after is not None else ()
         rows = await self._gather(
             [
                 (
                     f"SELECT * FROM {self.derived}.{table} "
-                    f"WHERE {near} = %s AND rel_bucket = %s",
-                    (address, index),
+                    f"WHERE {near} = %s AND rel_bucket = %s{clause}",
+                    (address, index) + extra,
                 )
                 for index in range(buckets)
             ]
@@ -704,7 +724,7 @@ class Dal:
                 fiat_values=tuple(amounts[key]["fiat_values"]),
                 token_values=tokens.get(key),
             )
-            for key in order
+            for key in sorted(order)
         ]
 
     async def neighbor(
