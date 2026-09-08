@@ -501,10 +501,17 @@ class Dal:
 
     # -- family-shaped, implemented by the subclasses ---------------------
     #
-    # These are the two reads whose shape is decided by the family rather than
-    # shared by it. They are declared here so the contract is visible and the
-    # checker can see it, and they RAISE: a base that guessed is what served
-    # every account token transfer as the native coin. Use `dal_for`.
+    # The reads whose shape is decided by the family rather than shared by it.
+    # They are declared here so the contract is visible and the checker can see
+    # it, and they RAISE: a base that guessed is what served every account
+    # token transfer as the native coin. Use `dal_for`.
+    #
+    # The last four are the inputs/outputs and spending graph. They lived on
+    # this class and queried `transaction_io` unconditionally, which is a table
+    # only a UTXO keyspace has -- so `get_tx` and `list_block_txs` on eth died
+    # with a CQL error naming a table rather than the family mismatch. UtxoDal
+    # queries; AccountDal answers empty, because an account transaction having
+    # no inputs is a fact about the family and not a missing feature.
 
     async def transactions(
         self,
@@ -529,6 +536,36 @@ class Dal:
         self, src: bytes, dst: bytes, *, limit: int = 100
     ) -> list:
         """The transactions on one edge. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
+    async def transaction_io(
+        self, tx_id: int, *, is_output: Optional[bool] = None
+    ) -> list:
+        """A transaction's inputs and outputs. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
+    async def transaction_io_many(self, tx_ids: Sequence[int]) -> dict:
+        """``{tx_id: [io rows]}`` for several transactions. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
+    async def spent_in(self, tx_hash: bytes, prefix: str) -> list:
+        """What spent this transaction's outputs. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
+    async def spending(self, tx_hash: bytes, prefix: str) -> list:
+        """What this transaction's inputs spent. See the subclasses."""
         raise NotImplementedError(
             f"{type(self).__name__} does not know which family it is reading; "
             "build the reader with `dal_for`"
@@ -679,62 +716,6 @@ class Dal:
         )
         return rows[0]._asdict() if rows else None
 
-    async def transaction_io(
-        self, tx_id: int, *, is_output: Optional[bool] = None
-    ) -> list:
-        """A transaction's inputs and outputs -- same partition key as the
-        transaction itself, so it is one extra read rather than a lookup."""
-        clause = "" if is_output is None else " AND is_output = %s"
-        params: tuple = (self.tx_group(tx_id), tx_id)
-        if is_output is not None:
-            params += (is_output,)
-        rows = await self._select(
-            f"SELECT * FROM {self.raw}.transaction_io "
-            f"WHERE block_id_group = %s AND tx_id = %s{clause}",
-            params,
-        )
-        return [row._asdict() for row in rows]
-
-    async def transaction_io_many(self, tx_ids: Sequence[int]) -> dict:
-        """``{tx_id: [io rows]}`` for several transactions at once.
-
-        A block's transactions each need their inputs and outputs; sequentially
-        that is one round trip per transaction, which on a full block is
-        hundreds of times the latency for the same work.
-        """
-        if not tx_ids:
-            return {}
-        queries = [
-            (
-                f"SELECT * FROM {self.raw}.transaction_io "
-                f"WHERE block_id_group = %s AND tx_id = %s",
-                (self.tx_group(tx_id), tx_id),
-            )
-            for tx_id in tx_ids
-        ]
-        grouped: dict = {}
-        for row in await self._gather(queries):
-            grouped.setdefault(row.tx_id, []).append(row._asdict())
-        return grouped
-
-    async def spent_in(self, tx_hash: bytes, prefix: str) -> list:
-        """What spent this transaction's outputs."""
-        rows = await self._select(
-            f"SELECT * FROM {self.raw}.transaction_spent_in "
-            f"WHERE spent_tx_prefix = %s AND spent_tx_hash = %s",
-            (prefix, tx_hash),
-        )
-        return [row._asdict() for row in rows]
-
-    async def spending(self, tx_hash: bytes, prefix: str) -> list:
-        """What this transaction's inputs spent."""
-        rows = await self._select(
-            f"SELECT * FROM {self.raw}.transaction_spending "
-            f"WHERE spending_tx_prefix = %s AND spending_tx_hash = %s",
-            (prefix, tx_hash),
-        )
-        return [row._asdict() for row in rows]
-
     # -- block ------------------------------------------------------------
 
     async def block(self, height: int) -> Optional[dict]:
@@ -870,6 +851,72 @@ class UtxoDal(Dal):
     and orders the listing.
     """
 
+    # -- inputs, outputs and the spending graph ---------------------------
+    #
+    # UTXO-ONLY, and on this class rather than on `Dal` for that reason. An
+    # account transaction has no inputs, no outputs and no spending edges,
+    # and `transaction_io`, `transaction_spent_in` and `transaction_spending`
+    # are not in an account keyspace AT ALL -- so inheriting these read a
+    # table that does not exist and failed `get_tx` and `list_block_txs` on
+    # eth with a CQL error naming a table rather than the family mismatch.
+    # `AccountDal` answers the same four with empty results.
+
+    async def transaction_io(
+        self, tx_id: int, *, is_output: Optional[bool] = None
+    ) -> list:
+        """A transaction's inputs and outputs -- same partition key as the
+        transaction itself, so it is one extra read rather than a lookup."""
+        clause = "" if is_output is None else " AND is_output = %s"
+        params: tuple = (self.tx_group(tx_id), tx_id)
+        if is_output is not None:
+            params += (is_output,)
+        rows = await self._select(
+            f"SELECT * FROM {self.raw}.transaction_io "
+            f"WHERE block_id_group = %s AND tx_id = %s{clause}",
+            params,
+        )
+        return [row._asdict() for row in rows]
+
+    async def transaction_io_many(self, tx_ids: Sequence[int]) -> dict:
+        """``{tx_id: [io rows]}`` for several transactions at once.
+
+        A block's transactions each need their inputs and outputs; sequentially
+        that is one round trip per transaction, which on a full block is
+        hundreds of times the latency for the same work.
+        """
+        if not tx_ids:
+            return {}
+        queries = [
+            (
+                f"SELECT * FROM {self.raw}.transaction_io "
+                f"WHERE block_id_group = %s AND tx_id = %s",
+                (self.tx_group(tx_id), tx_id),
+            )
+            for tx_id in tx_ids
+        ]
+        grouped: dict = {}
+        for row in await self._gather(queries):
+            grouped.setdefault(row.tx_id, []).append(row._asdict())
+        return grouped
+
+    async def spent_in(self, tx_hash: bytes, prefix: str) -> list:
+        """What spent this transaction's outputs."""
+        rows = await self._select(
+            f"SELECT * FROM {self.raw}.transaction_spent_in "
+            f"WHERE spent_tx_prefix = %s AND spent_tx_hash = %s",
+            (prefix, tx_hash),
+        )
+        return [row._asdict() for row in rows]
+
+    async def spending(self, tx_hash: bytes, prefix: str) -> list:
+        """What this transaction's inputs spent."""
+        rows = await self._select(
+            f"SELECT * FROM {self.raw}.transaction_spending "
+            f"WHERE spending_tx_prefix = %s AND spending_tx_hash = %s",
+            (prefix, tx_hash),
+        )
+        return [row._asdict() for row in rows]
+
     async def transactions(
         self,
         address: bytes,
@@ -990,6 +1037,28 @@ class AccountDal(Dal):
     listing carries ``currency`` and ``tx_reference``, and the primary key is
     ``(tx_id, tx_reference, currency)`` rather than ``tx_id`` alone.
     """
+
+    # -- the UTXO-only reads, answered without a query --------------------
+    #
+    # EMPTY, not `NotAvailable`. An account transaction genuinely has no
+    # inputs, outputs or spending edges -- that is a fact about the family,
+    # not a feature v3 has yet to build -- and the three tables these would
+    # read do not exist in an account keyspace. Raising would make every
+    # `get_tx` on eth an error; querying made it a CQL failure naming a table.
+
+    async def transaction_io(
+        self, tx_id: int, *, is_output: Optional[bool] = None
+    ) -> list:
+        return []
+
+    async def transaction_io_many(self, tx_ids: Sequence[int]) -> dict:
+        return {}
+
+    async def spent_in(self, tx_hash: bytes, prefix: str) -> list:
+        return []
+
+    async def spending(self, tx_hash: bytes, prefix: str) -> list:
+        return []
 
     async def transactions(
         self,

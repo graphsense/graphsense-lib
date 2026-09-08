@@ -705,3 +705,54 @@ def test_a_height_bound_stays_exclusive_and_is_not_a_cursor() -> None:
     cql, _ = next(c for c in session.seen if "address_transactions" in c[0])
     assert "tx_id < %s" in cql and "tx_id <=" not in cql
     assert "LIMIT 4" in cql
+
+
+def _account(rows=None):
+    session = FakeSession(rows)
+    return dal_for(session, "eth_raw_v3", "eth_derived_v3", dict(CONFIG)), session
+
+
+def test_an_account_transaction_has_no_inputs_and_asks_for_none() -> None:
+    """`transaction_io`, `transaction_spent_in` and `transaction_spending` do
+    not exist in an account keyspace, and these four lived on the shared base
+    querying them unconditionally -- so `get_tx` and `list_block_txs` on eth
+    died with `table transaction_io does not exist`, a CQL error naming a table
+    rather than the family mismatch.
+
+    Empty, not an error: an account transaction genuinely has no inputs, which
+    is a fact about the family and not a feature v3 has yet to build. And NO
+    QUERY is issued -- a read that cannot succeed should not be attempted."""
+    dal, session = _account()
+    assert run(dal.transaction_io(1)) == []
+    assert run(dal.transaction_io_many([1, 2])) == {}
+    assert run(dal.spent_in(b"\xaa" * 32, "abcde")) == []
+    assert run(dal.spending(b"\xaa" * 32, "abcde")) == []
+    assert session.seen == [], "an account keyspace was queried for UTXO tables"
+
+
+def test_the_utxo_reader_still_queries_the_io_tables() -> None:
+    """The account skip must not quietly disable the UTXO path."""
+    dal, session = make()
+    run(dal.transaction_io(1))
+    run(dal.spent_in(b"\xaa" * 32, "abcde"))
+    run(dal.spending(b"\xaa" * 32, "abcde"))
+    asked = " ".join(cql for cql, _ in session.seen)
+    assert "transaction_io" in asked
+    assert "transaction_spent_in" in asked
+    assert "transaction_spending" in asked
+
+
+def test_the_base_refuses_rather_than_guessing_a_family() -> None:
+    """A base that guessed is what served every account token transfer as the
+    native coin. Same contract as `transactions` and `link_transactions`."""
+    from graphsense_v3.db.core import Dal
+
+    bare = Dal(FakeSession(), RAW, DERIVED, dict(CONFIG))
+    for call in (
+        bare.transaction_io(1),
+        bare.transaction_io_many([1]),
+        bare.spent_in(b"\xaa", "abcde"),
+        bare.spending(b"\xaa", "abcde"),
+    ):
+        with pytest.raises(NotImplementedError, match="dal_for"):
+            run(call)
