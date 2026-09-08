@@ -398,7 +398,7 @@ def _relation_side(
     fiat = common.sum_fiat(priced, [near, far], config.fiat_currencies)
     return counts.join(fiat, on=[near, far], how="left").select(
         F.col(near),
-        bucket_expr(F.col(far), config.relation_buckets).alias("rel_bucket"),
+        common.relation_bucket(F.col(far), config).alias("rel_bucket"),
         F.col(far),
         F.lit(EPOCH_BASE).alias("epoch"),
         F.col("no_transactions"),
