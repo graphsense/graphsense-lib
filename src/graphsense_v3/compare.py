@@ -177,6 +177,40 @@ def diff(
     return _walk(left, right, path or "$")
 
 
+#: What names an item of a list, most specific first. A length mismatch is
+#: reported by IDENTITY where the items have one: "68 items" against "72 items"
+#: says a page is short without saying which rows are missing, and that is the
+#: one question such a difference always raises.
+IDENTITY_FIELDS = ("identifier", "tx_hash", "address", "block_id", "height")
+
+#: How many identities a length mismatch prints per side. A windowed backend
+#: differs by hundreds of rows and the identities are then noise; a handful is
+#: enough to see WHICH rows, and the count still says how many.
+IDENTITY_SAMPLE = 6
+
+
+def _identity(item: Any) -> Optional[str]:
+    """What to call one item of a list, or None if it has no name."""
+    if not isinstance(item, dict):
+        return None
+    for field_name in IDENTITY_FIELDS:
+        value = item.get(field_name)
+        if value not in (None, "", [], {}):
+            return f"{field_name}={value}"
+    return None
+
+
+def _population(items: list, count: int) -> str:
+    """``"N items"``, plus the first few identities when they exist."""
+    named = [name for name in (_identity(item) for item in items) if name]
+    if not named:
+        return f"{count} items"
+    shown = ", ".join(named[:IDENTITY_SAMPLE])
+    if len(named) > IDENTITY_SAMPLE:
+        shown += f", +{len(named) - IDENTITY_SAMPLE} more"
+    return f"{count} items [{shown}]"
+
+
 def _walk(left: Any, right: Any, path: str) -> list:
     if isinstance(left, dict) and isinstance(right, dict):
         out = []
@@ -186,7 +220,11 @@ def _walk(left: Any, right: Any, path: str) -> list:
     if isinstance(left, list) and isinstance(right, list):
         if len(left) != len(right):
             return [
-                Difference(f"{path}[]", f"{len(left)} items", f"{len(right)} items")
+                Difference(
+                    f"{path}[]",
+                    _population(left, len(left)),
+                    _population(right, len(right)),
+                )
             ]
         out = []
         for index, (a, b) in enumerate(zip(left, right)):

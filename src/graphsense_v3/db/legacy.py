@@ -53,6 +53,18 @@ class _Value(NamedTuple):
     fiat_values: list
 
 
+class _TxSummary(NamedTuple):
+    """What `address_from_row` reads off ``first_tx``/``last_tx``.
+
+    Attributes, not keys, and `.tx_hash.hex()` is called on it -- so the hash
+    stays bytes here rather than being formatted early.
+    """
+
+    height: Optional[int]
+    timestamp: Optional[int]
+    tx_hash: Optional[bytes]
+
+
 class _Rows(list):
     """A list that also answers ``.current_rows``.
 
@@ -750,6 +762,11 @@ class LegacyAdapter:
             "address_id_group": dal.entity_bucket(raw),
             "first_tx_id": stats.first_tx_id,
             "last_tx_id": stats.last_tx_id,
+            # v2 reports "dirty" while its delta updater holds the address in
+            # its in-flight set and "clean" otherwise (`cassandra.py:4086`).
+            # v3 has no incremental writer yet, so nothing is ever in flight
+            # and every address it can answer for is settled.
+            "status": "clean",
             # The NATIVE balance, by ticker rather than by whichever asset the
             # driver happened to return first: an account address holds several,
             # and `address_from_row` converts this one with the native rate.
@@ -773,6 +790,9 @@ class LegacyAdapter:
                 if tokens
                 else None
             )
+        row["first_tx"], row["last_tx"] = await self._tx_summaries(
+            currency, stats.first_tx_id, stats.last_tx_id
+        )
         # Every asset but the native one, which `balance` already carries.
         # `.get`, not a subscript, so None and {} are both fine -- but a UTXO
         # keyspace holds one asset and must not report an empty token map as
@@ -782,6 +802,42 @@ class LegacyAdapter:
         }
         row["token_balances"] = others or None
         return row
+
+    async def _tx_summaries(
+        self, currency: str, first_tx_id: Optional[int], last_tx_id: Optional[int]
+    ) -> tuple:
+        """``(first_tx, last_tx)`` as the summaries the service reads.
+
+        v3's `address_stats` keeps the two tx_ids; v2 keeps them too and
+        resolves them to a height, timestamp and hash in `finish_address`
+        (`cassandra.py:4077`). Reporting the ids alone left every address with
+        ``first_tx: null`` in the REST body.
+
+        No index hop: a v3 tx_id IS ``(block_id << 32) + index``, so each id
+        names its own partition and this is two point reads -- issued together
+        with the other id's by `transactions_by_ids`.
+
+        A missing transaction yields None rather than raising. The id came from
+        this keyspace's own stats row, so its absence means a torn keyspace --
+        but this runs once per neighbour of a listing, and one bad edge should
+        not take the page down with it.
+        """
+        ids = [i for i in (first_tx_id, last_tx_id) if i is not None]
+        if not ids:
+            return None, None
+        found = await self._dal(currency).transactions_by_ids(ids)
+
+        def summary(tx_id: Optional[int]) -> Optional[_TxSummary]:
+            detail = found.get(tx_id) if tx_id is not None else None
+            if detail is None:
+                return None
+            return _TxSummary(
+                height=detail.get("block_id"),
+                timestamp=detail.get("block_timestamp"),
+                tx_hash=detail.get("tx_hash"),
+            )
+
+        return summary(first_tx_id), summary(last_tx_id)
 
     async def list_address_txs(
         self,

@@ -1776,3 +1776,57 @@ def test_a_neighbour_with_no_stats_row_is_left_for_the_service_to_fetch() -> Non
     shim, _ = _many_neighbours(3, stats=False)
     rows, _ = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
     assert all("dst_address_row" not in row for row in rows)
+
+
+def _address_with_txs(first=7, last=9, transactions=True):
+    tx_ids = {first: b"\xf1" * 32, last: b"\xf9" * 32}
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, first_tx_id=first, last_tx_id=last)]
+        if ".transaction" in cql and transactions:
+            tx_id = params[1]
+            return [
+                Row(
+                    tx_id=tx_id,
+                    tx_hash=tx_ids[tx_id],
+                    block_id=12,
+                    block_timestamp=1700,
+                )
+            ]
+        return []
+
+    shim = LegacyAdapter(
+        {"ltc": dal_for(FakeSession(rows), RAW, DERIVED, dict(CONFIG))}
+    )
+    return run(shim.get_address("ltc", ADDRESS))
+
+
+def test_an_address_resolves_its_first_and_last_transaction() -> None:
+    """v3's `address_stats` keeps the two tx_ids and v2 keeps them too -- but
+    v2 resolves them to a height, timestamp and hash in `finish_address`
+    (`cassandra.py:4077`). Reporting the ids alone left every address with
+    `first_tx: null` in the REST body."""
+    row = _address_with_txs()
+    # Attributes, not keys: `address_from_row` reads .height/.timestamp and
+    # calls .hex() on the hash.
+    assert row["first_tx"].tx_hash == b"\xf1" * 32
+    assert row["last_tx"].tx_hash == b"\xf9" * 32
+    assert row["first_tx"].height == 12 and row["first_tx"].timestamp == 1700
+
+
+def test_a_missing_transaction_leaves_the_summary_none_rather_than_raising() -> None:
+    """The id came from this keyspace's own stats row, so its absence is a
+    torn keyspace -- but this runs once per neighbour of a listing, and one
+    bad edge should not take the page down with it."""
+    row = _address_with_txs(transactions=False)
+    assert row["first_tx"] is None and row["last_tx"] is None
+    # The ids are still reported, so the inconsistency is visible.
+    assert row["first_tx_id"] == 7 and row["last_tx_id"] == 9
+
+
+def test_an_address_v3_can_answer_for_is_reported_clean() -> None:
+    """v2 says "dirty" while its delta updater holds the address in flight and
+    "clean" otherwise. v3 has no incremental writer, so nothing is ever in
+    flight -- and None read as a missing field rather than as a settled one."""
+    assert _address_with_txs()["status"] == "clean"

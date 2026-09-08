@@ -216,3 +216,35 @@ def test_the_reason_for_a_call_scoped_exclusion_says_which_call():
         ]
     )
     assert "on get_currency_statistics only" in text
+
+
+def test_a_length_mismatch_names_the_rows_not_just_the_count():
+    """ "68 items" against "72 items" says a page is short without saying which
+    rows are missing, and that is the one question such a difference always
+    raises -- it is what an over-count on a block listing turns into."""
+    left = [{"identifier": "a"}, {"identifier": "b"}]
+    right = [{"identifier": "a"}, {"identifier": "b"}, {"identifier": "c"}]
+    found = compare.diff({"txs": left}, {"txs": right}, "eth")
+    assert len(found) == 1
+    assert "identifier=c" in str(found[0].right)
+    assert "identifier=c" not in str(found[0].left)
+    assert "2 items" in str(found[0].left) and "3 items" in str(found[0].right)
+
+
+def test_a_long_length_mismatch_is_sampled_not_dumped():
+    """A windowed backend differs by hundreds of rows; the identities are then
+    noise. A handful shows WHICH rows, and the count still says how many."""
+    left: list = []
+    right = [{"tx_hash": f"{i:02x}"} for i in range(50)]
+    found = compare.diff({"txs": left}, {"txs": right}, "eth")
+    rendered = str(found[0].right)
+    assert "50 items" in rendered
+    assert f"+{50 - compare.IDENTITY_SAMPLE} more" in rendered
+
+
+def test_a_list_of_unnameable_items_still_reports_its_length():
+    left = [1, 2]
+    right = [1, 2, 3]
+    found = compare.diff({"xs": left}, {"xs": right}, "eth")
+    assert str(found[0].left) == "2 items"
+    assert str(found[0].right) == "3 items"
