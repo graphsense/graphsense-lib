@@ -103,6 +103,44 @@ def test_every_raw_table_has_an_access_pattern() -> None:
     assert missing == set(), f"raw tables with no probe: {sorted(missing)}"
 
 
+def test_an_account_probe_skips_the_utxo_only_tables() -> None:
+    """`transaction_io`, `transaction_spent_in` and `transaction_spending` are
+    UTXO-only, and `address_link_transactions` is keyed per EDGE on account
+    rather than by (src, dst_bucket). Probing the UTXO shapes against a real
+    eth keyspace reported three "table does not exist" failures -- noise that
+    hides a real one, and there WAS a real one in the same report."""
+    session = FakeSession()
+    runner = prober.Prober(session, "eth_raw_v3", "eth_derived_v3", CONFIG)
+    runner.run(_full_fixtures(), network="eth")
+    seen = " ".join(session.seen)
+
+    utxo_only = {"transaction_io", "transaction_spent_in", "transaction_spending"}
+    # ... and they really are absent from the account schema, so this is not
+    # the probe being shy about a table that exists.
+    assert not utxo_only & set(schema_for("eth", Kind.RAW).table_names())
+    for table in utxo_only:
+        assert f"eth_raw_v3.{table}" not in seen, f"account probe touched {table}"
+
+    links = [cql for cql in session.seen if "address_link_transactions" in cql]
+    assert links, "the account link probe was skipped entirely"
+    assert all("dst_bucket" not in cql for cql in links)
+
+
+def test_a_utxo_probe_still_covers_the_io_tables() -> None:
+    """The account skip must not quietly shorten the UTXO catalogue."""
+    session = FakeSession()
+    runner = prober.Prober(session, RAW, DERIVED, CONFIG)
+    runner.run(_full_fixtures(), network="btc")
+    seen = " ".join(session.seen)
+    for table in ("transaction_io", "transaction_spent_in", "transaction_spending"):
+        assert f"{RAW}.{table}" in seen
+    assert any(
+        "dst_bucket" in cql
+        for cql in session.seen
+        if "address_link_transactions" in cql
+    )
+
+
 def test_exemptions_name_real_tables() -> None:
     """An exemption for a table that no longer exists hides a real gap."""
     declared = set(schema_for("btc", Kind.RAW).table_names()) | set(

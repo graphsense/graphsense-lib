@@ -97,6 +97,10 @@ class Prober:
         self.derived = derived
         self.config = config
         self.results: list[Result] = []
+        #: Set from the network in `run`. UTXO by default so a caller driving
+        #: the Prober directly gets the fuller catalogue rather than a silently
+        #: shortened one.
+        self.is_utxo: bool = True
 
     # -- plumbing ---------------------------------------------------------
 
@@ -212,6 +216,14 @@ class Prober:
     # -- the catalogue ----------------------------------------------------
 
     def run(self, found: Fixtures, network: str = "") -> list[Result]:
+        # Which tables even EXIST depends on the family: `transaction_io`,
+        # `transaction_spent_in` and `transaction_spending` are UTXO-only, and
+        # `address_link_transactions` is keyed differently on each side. Probing
+        # the wrong set reports "table does not exist" as a v3 failure, which is
+        # noise that hides a real one -- an account probe reported three.
+        from graphsense_v3.schema import NETWORKS, Family
+
+        self.is_utxo = NETWORKS.get(network) is not Family.ACCOUNT
         self._meta()
         if network:
             self._address_format(network)
@@ -482,15 +494,29 @@ class Prober:
                 (found.link_src, dst_bucket, found.link_dst),
                 note="a POINT read: the bucket is computed from the counterparty",
             )
-            self.probe(
-                "link transactions (edge tx list)",
-                "/{network}/addresses/{address}/links",
-                f"SELECT tx_id, input_value, output_value FROM "
-                f"{self.derived}.address_link_transactions "
-                f"WHERE src_address = %s AND dst_bucket = %s AND dst_address = %s",
-                (found.link_src, dst_bucket, found.link_dst),
-                note="the /links fix: one partition per (source, bucket)",
-            )
+            # The two layouts of `_link_txs_table`. UTXO partitions by
+            # (src, dst_bucket) and restricts dst as a clustering PREFIX;
+            # account partitions per EDGE and has no dst_bucket column at all.
+            if self.is_utxo:
+                self.probe(
+                    "link transactions (edge tx list)",
+                    "/{network}/addresses/{address}/links",
+                    f"SELECT tx_id, input_value, output_value FROM "
+                    f"{self.derived}.address_link_transactions "
+                    f"WHERE src_address = %s AND dst_bucket = %s AND dst_address = %s",
+                    (found.link_src, dst_bucket, found.link_dst),
+                    note="the /links fix: one partition per (source, bucket)",
+                )
+            else:
+                self.probe(
+                    "link transactions (edge tx list)",
+                    "/{network}/addresses/{address}/links",
+                    f"SELECT tx_id, currency, value FROM "
+                    f"{self.derived}.address_link_transactions "
+                    f"WHERE src_address = %s AND dst_address = %s AND tx_page = 0",
+                    (found.link_src, found.link_dst),
+                    note="partition per EDGE, newest page first via link_page_max",
+                )
 
     def _transaction(self, found: Fixtures) -> None:
         if found.tx_hash is None or found.tx_id is None:
@@ -518,6 +544,10 @@ class Prober:
                 "arithmetic, so no second index and no read to find the partition"
             ),
         )
+        if not self.is_utxo:
+            # An account transaction has no inputs, outputs or spending edges;
+            # the three tables below do not exist in an account keyspace.
+            return
         self.probe(
             "transaction inputs and outputs",
             "/{network}/txs/{tx_hash}?include_io",
