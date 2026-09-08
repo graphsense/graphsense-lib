@@ -513,7 +513,10 @@ def run(
     loader = raw_utxo if family is Family.UTXO else raw_account
 
     # Before ANY read: one moment for every table, not one moment per table.
-    pinned = lake.pin(loader.LAKE_TABLES)
+    # Not `loader.LAKE_TABLES`: that is the union over the family, and eth has
+    # no `fee` table to pin.
+    lake_tables = loader.lake_tables_for(network)
+    pinned = lake.pin(lake_tables)
     logger.info(
         "lake pinned: %s",
         ", ".join(f"{table}@{version}" for table, version in sorted(pinned.items())),
@@ -522,7 +525,7 @@ def run(
     # Pinned at one moment, but not necessarily to one HEIGHT -- see
     # `bounded_end_block`. Every table's tip is reported; only the dense ones
     # cut the run.
-    maxima = snapshot_maxima(lake, loader.LAKE_TABLES)
+    maxima = snapshot_maxima(lake, lake_tables)
     logger.info(
         "lake tips: %s",
         ", ".join(f"{table}<={height}" for table, height in sorted(maxima.items())),

@@ -81,6 +81,12 @@ SPINE = "@spine"
 LAKE_TABLES = ("block", "transaction")
 
 
+def lake_tables_for(network: str) -> tuple:
+    """The lake tables to PIN for ``network``. Every UTXO network has both;
+    this exists so the job can ask either loader the same question."""
+    return LAKE_TABLES
+
+
 #: The pinned tables whose tips BOUND a run. Every block has a header and at
 #: least one transaction, so these two must reach the same height -- where they
 #: do not, the snapshot caught ingest mid-cycle.

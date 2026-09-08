@@ -998,3 +998,7 @@ def test_the_pinned_tables_are_the_ones_the_loader_reads() -> None:
         assert read <= set(listed), (
             f"{module.__name__} reads unpinned {read - set(listed)}"
         )
+        # ... and the per-network pin list must cover what that network reads.
+        # LAKE_TABLES is the union; `lake_tables_for` is what is actually
+        # pinned, so a table dropped from the latter by mistake is a late pin.
+        assert set(module.lake_tables_for("trx")) == set(listed)

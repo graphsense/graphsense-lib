@@ -417,10 +417,28 @@ def build(
     return out
 
 
-#: Every lake table this loader reads. `DeltaLake.pin` resolves all of
-#: them at one moment, so two tables cannot be pinned minutes apart and
-#: disagree about where the chain ends.
+#: Every lake table this loader may read, over all account networks. This is
+#: the drift guard -- a table read but absent here would be pinned late, at its
+#: first read -- and NOT the set to pin: see :func:`lake_tables_for`.
 LAKE_TABLES = ("block", "transaction", "trace", "log", "fee", "trc10")
+
+#: Lake tables only TRON has. `fee` is a TRON concept (bandwidth/energy priced
+#: separately); on eth a fee is gas_used * gas_price off the receipt and there
+#: is no such table. `trc10` is TRON's native asset registry.
+TRX_LAKE_TABLES = ("fee", "trc10")
+
+
+def lake_tables_for(network: str) -> tuple:
+    """The lake tables to PIN for ``network``.
+
+    Pinning is not free of consequence: `DeltaLake.pin` resolves a version for
+    every name it is given, so a name the network's lake does not have fails
+    the run before a single row is read -- which is what an eth run did,
+    with `PATH_NOT_FOUND: s3a://raw-data/eth/fee`. `build` already branches on
+    `network == "trx"` for these two; the pin list has to make the same
+    distinction rather than assuming the union.
+    """
+    return tuple(t for t in LAKE_TABLES if network == "trx" or t not in TRX_LAKE_TABLES)
 
 
 #: The pinned tables whose tips BOUND a run. Every block has a header and at

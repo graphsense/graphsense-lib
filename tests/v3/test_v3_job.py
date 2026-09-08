@@ -468,6 +468,21 @@ def test_the_loaders_bound_on_tables_they_actually_read() -> None:
         assert loader.BOUND_TABLES
 
 
+def test_only_tron_pins_the_tron_only_lake_tables() -> None:
+    """`fee` and `trc10` do not exist in an eth lake, and `pin` resolves a
+    version for every name it is handed -- so pinning the family union fails
+    the run with PATH_NOT_FOUND before a row is read."""
+    from graphsense_v3.spark import raw_account, raw_utxo
+
+    assert set(raw_account.lake_tables_for("trx")) == set(raw_account.LAKE_TABLES)
+    eth = set(raw_account.lake_tables_for("eth"))
+    assert eth == set(raw_account.LAKE_TABLES) - set(raw_account.TRX_LAKE_TABLES)
+    assert not eth & {"fee", "trc10"}
+    # Whatever is pinned must still cover what the run bounds on.
+    for loader, network in ((raw_account, "eth"), (raw_utxo, "btc")):
+        assert set(loader.BOUND_TABLES) <= set(loader.lake_tables_for(network))
+
+
 # --------------------------------------------------------------------------- #
 # An empty block is complete at zero transactions                              #
 # --------------------------------------------------------------------------- #
