@@ -31,6 +31,11 @@ TOKEN_SCHEMA = (
     "currency_ticker STRING, token_address BINARY, standard STRING, decimals INT, "
     "decimal_divisor BIGINT, peg_currency STRING"
 )
+#: The keyspace's fiat ordering. `fiat_values` is a positional list, so a test
+#: that reads it has to say which position it means -- and the source of that
+#: ordering is the configuration row, never a literal here.
+FIAT = config_for("eth").fiat_currencies
+
 RATES_SCHEMA = "asset STRING, block_id INT, fiat_values MAP<STRING,DOUBLE>"
 BLOCK_SCHEMA = (
     "block_id INT, timestamp BIGINT, miner BINARY, gas_used BIGINT, "
@@ -341,6 +346,59 @@ def test_a_total_containing_an_unrepresentable_value_is_null_not_short(
     assert int(totals[("a", "ETH")]) == 7
 
 
+def test_account_fiat_totals_are_really_summed(
+    traces, logs, token_config, blocks, rates, transactions
+) -> None:
+    """The regression only the bulk writer caught. `sum_fiat` indexes
+    `fiat_values` POSITIONALLY, and `priced` used to emit a map; getItem(0) on
+    a map<text,double> does not fail -- Spark casts the key to "0" and returns
+    NULL -- so every priced account total came out NULL, silently, until
+    "Collection elements cannot be null" surfaced inside the UDT codec.
+
+    Asserted on a total that actually MOVED something: an address with nothing
+    incoming is zero-filled to [0.0, 0.0] by `zero_currency`, which is non-NULL
+    under the bug too and makes a laxer assertion pass on nothing.
+    """
+    frames = _build(traces, logs, token_config, blocks, rates, transactions)
+    moved = [
+        row["total_received"]
+        for row in frames["address_stats"].collect()
+        if row["total_received"]["value"] > 0
+    ]
+    assert moved, "no address received anything, so nothing was priced"
+    for total in moved:
+        assert total["fiat_values"] is not None
+        assert len(total["fiat_values"]) == len(FIAT)
+        assert all(v is not None for v in total["fiat_values"])
+        assert any(v > 0 for v in total["fiat_values"])
+
+
+def test_a_group_with_nothing_priced_is_null_not_a_list_of_nulls(spark) -> None:
+    """`F.array` over all-NULL sums yields a list CONTAINING nulls, which
+    Cassandra forbids in a collection. NULL is also the honest answer: no leg
+    had a rate, so the total is unknown rather than zero."""
+    from graphsense_v3.spark import derived_common as common
+
+    rows = spark.createDataFrame(
+        [("a", None), ("a", None), ("b", [1.5, 2.0])],
+        "k STRING, fiat_values ARRAY<DOUBLE>",
+    )
+    out = {r["k"]: r["_fiat"] for r in common.sum_fiat(rows, ["k"], FIAT).collect()}
+    assert out["a"] is None
+    assert out["b"] == [1.5, 2.0]
+
+
+def test_a_partly_rated_group_still_totals_what_it_knows(spark) -> None:
+    """One unrated leg must not void the whole total -- `sum` skipping it is
+    the documented behaviour, and only an entirely unrated group is unknown."""
+    from graphsense_v3.spark import derived_common as common
+
+    rows = spark.createDataFrame(
+        [("a", [1.5, 2.0]), ("a", None)], "k STRING, fiat_values ARRAY<DOUBLE>"
+    )
+    assert common.sum_fiat(rows, ["k"], FIAT).collect()[0]["_fiat"] == [1.5, 2.0]
+
+
 def test_unrepresentable_values_are_counted_per_asset(spark) -> None:
     """A run has to say what it could not store, or the missing rows are only
     discoverable by noticing a balance is wrong."""
@@ -369,11 +427,12 @@ def test_a_pegged_token_is_worth_its_face_value(
         rates,
         token_config,
         "eth",
+        FIAT,
     )
     token = next(r for r in moves.collect() if r["currency"] == "USDT")
-    assert token["fiat_values"]["USD"] == pytest.approx(2.0)
+    assert token["fiat_values"][FIAT.index("USD")] == pytest.approx(2.0)
     # EUR per USD = 2000/2500, so 2 USD is 1.60 EUR
-    assert token["fiat_values"]["EUR"] == pytest.approx(1.6)
+    assert token["fiat_values"][FIAT.index("EUR")] == pytest.approx(1.6)
 
 
 def test_the_native_coin_is_priced_from_the_block_rate(
@@ -384,11 +443,12 @@ def test_the_native_coin_is_priced_from_the_block_rate(
         rates,
         token_config,
         "eth",
+        FIAT,
     )
     native = next(
         r for r in moves.collect() if r["currency"] == "ETH" and int(r["value"]) > 0
     )
-    assert native["fiat_values"]["USD"] == pytest.approx(2500.0)
+    assert native["fiat_values"][FIAT.index("USD")] == pytest.approx(2500.0)
 
 
 def test_an_unpegged_token_without_a_rate_gets_no_fiat(
@@ -409,7 +469,7 @@ def test_an_unpegged_token_without_a_rate_gets_no_fiat(
         schema=TOKEN_SCHEMA,
     )
     moves = tf.priced(
-        tf.transfers(traces, logs, unpegged, "eth"), rates, unpegged, "eth"
+        tf.transfers(traces, logs, unpegged, "eth"), rates, unpegged, "eth", FIAT
     )
     token = next(r for r in moves.collect() if r["currency"] == "USDT")
     assert token["fiat_values"] is None
@@ -426,6 +486,7 @@ def test_a_transfer_names_both_ends_so_a_leg_is_not_netted(
         rates,
         token_config,
         "eth",
+        FIAT,
     )
     rows = tf.legs(moves).collect()
     alice = [r for r in rows if bytes(r["address"]) == ALICE]

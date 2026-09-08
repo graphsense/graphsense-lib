@@ -19,6 +19,21 @@ if TYPE_CHECKING:
     from pyspark.sql import Column, DataFrame
 
 
+def all_present(parts: "Sequence[Column]") -> "Column":
+    """True when every one of ``parts`` is non-NULL.
+
+    The condition behind every fiat list in this package. A Cassandra
+    collection cannot hold a null ELEMENT, so a positional list is either
+    complete or NULL -- there is no representation for "position 1 unknown",
+    and the bulk writer rejects the row rather than storing one.
+    """
+    from functools import reduce
+
+    from pyspark.sql import functions as F
+
+    return reduce(lambda a, b: a & b, [~F.isnull(one) for one in parts])
+
+
 def fiat_values(
     value: "Column", rates: "Column", divisor: "Column", currencies: Sequence[str]
 ) -> "Column":
@@ -37,14 +52,23 @@ def fiat_values(
 
     ``rates`` stays a map: ``exchange_rates`` is 3 MB, and it is the one table
     read directly rather than through a reader that knows the ordering.
+
+    ALL of the currencies or none: the list is NULL unless every configured
+    currency has a rate. A Cassandra collection cannot hold a null ELEMENT, so
+    "EUR known, USD unknown" has no representation here -- the bulk writer
+    rejects the row outright with "Collection elements cannot be null". Between
+    the two storable answers, NULL says the total is unknown and 0.0 would say
+    it was worth nothing, so NULL is the one that states nothing false. A
+    healthy `exchange_rates` row carries every configured currency, so this
+    fires on a missing rate ROW, not on a partial one.
     """
     from pyspark.sql import functions as F
 
-    return F.array(
-        *[
-            F.round(value * F.element_at(rates, code) / divisor, 2)
-            for code in currencies
-        ]
+    amounts = [
+        F.round(value * F.element_at(rates, code) / divisor, 2) for code in currencies
+    ]
+    return F.when(all_present(amounts), F.array(*amounts)).otherwise(
+        F.lit(None).cast("array<double>")
     )
 
 
@@ -65,13 +89,22 @@ def sum_fiat(
     needed. ``sum`` ignores NULLs, so a leg in a block with no known rate still
     contributes nothing rather than zeroing the total, which is the property the
     map version got from ``explode`` dropping a NULL.
+
+    ``column`` must be the positional LIST, never the rates map: ``getItem`` on
+    a map does not fail on an integer key, it returns NULL for every row.
     """
     from pyspark.sql import functions as F
 
+    sums = [F.sum(F.col(column).getItem(index)) for index in range(len(currencies))]
+    # A group where NOTHING was priced sums to NULL in every position, and
+    # `F.array` of NULLs is a LIST CONTAINING NULLS -- which Cassandra forbids
+    # in a collection, and which the bulk writer rejects with "Collection
+    # elements cannot be null" from inside the UDT codec. NULL is also the
+    # honest answer: no leg had a rate, so the total is unknown, not zero.
     return rows.groupBy(*keys).agg(
-        F.array(
-            *[F.sum(F.col(column).getItem(index)) for index in range(len(currencies))]
-        ).alias("_fiat")
+        F.when(all_present(sums), F.array(*sums))
+        .otherwise(F.lit(None).cast("array<double>"))
+        .alias("_fiat")
     )
 
 

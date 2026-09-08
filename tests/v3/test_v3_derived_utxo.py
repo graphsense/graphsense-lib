@@ -243,19 +243,46 @@ def test_a_block_without_a_rate_contributes_no_fiat(
     """A missing rate must not zero the address's total: `sum` ignores NULLs, so
     those legs simply do not contribute."""
     only_block_two = spark.createDataFrame(
-        [{"block_id": 2, "fiat_values": {"EUR": 300.0}}], schema=RATES_SCHEMA
+        [{"block_id": 2, "fiat_values": {"EUR": 300.0, "USD": 400.0}}],
+        schema=RATES_SCHEMA,
     )
     stats = derived_utxo.build(many_io, many_txs, blocks, only_block_two, "btc")[
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
     fiat = alice["total_received"]["fiat_values"]
-    # Positional, per `configuration.fiat_currencies` = ("EUR", "USD").
+    # Positional, per `configuration.fiat_currencies` = ("EUR", "USD"). Block 1
+    # has no rate row, so its legs contribute nothing; only block 2's do.
     assert fiat[0] == pytest.approx(2 * round(10 * 300.0 / 10**8, 2))
-    # USD has no rate at all here, and stays NULL rather than becoming 0.0 --
-    # "we do not know" is a different answer from "it was worth nothing".
-    assert fiat[1] is None
+    assert fiat[1] == pytest.approx(2 * round(10 * 400.0 / 10**8, 2))
     # the base-unit total is unaffected by what we know about prices
+    assert int(alice["total_received"]["value"]) == 50
+
+
+def test_a_rate_row_missing_a_currency_prices_nothing(
+    spark, many_io, many_txs, blocks
+) -> None:
+    """A list is complete or NULL -- there is no third answer.
+
+    This test used to assert the third one: EUR summed, USD left NULL *inside*
+    the list, on the reasoning that "unknown" must not become "worthless". The
+    reasoning is right and the representation does not exist. Cassandra forbids
+    a null element in a collection, so that row is precisely what the bulk
+    writer rejects ("Collection elements cannot be null") -- it could be built
+    and never stored. Of the two storable answers, NULL states nothing false.
+
+    A healthy `exchange_rates` row carries every configured currency, so this
+    is a broken rate row, not a routine gap.
+    """
+    partial = spark.createDataFrame(
+        [{"block_id": 2, "fiat_values": {"EUR": 300.0}}], schema=RATES_SCHEMA
+    )
+    stats = derived_utxo.build(many_io, many_txs, blocks, partial, "btc")[
+        "address_stats"
+    ]
+    alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
+    assert alice["total_received"]["fiat_values"] is None
+    # ... and the base-unit total is still exact: this says nothing about value.
     assert int(alice["total_received"]["value"]) == 50
 
 

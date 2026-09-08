@@ -20,7 +20,7 @@ model rather than from us:
 # UDFs through graphsense_v3.spark.columns.
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import Sequence, TYPE_CHECKING, Optional
 
 from graphsense_v3.config import NetworkConfig, config_for
 from graphsense_v3.schema import Kind, schema_for
@@ -305,8 +305,20 @@ def priced(
     rates: "DataFrame",
     token_config: "DataFrame",
     network: str,
+    currencies: "Sequence[str]",
 ) -> "DataFrame":
-    """Attach a fiat map to every transfer.
+    """Attach the fiat amounts to every transfer, ORDERED by ``currencies``.
+
+    A positional list, like `derived_common.fiat_values` builds for UTXO, and
+    for the same reason: the ``currency`` UDT declares
+    ``frozen<list<double>>`` and the keyspace's own configuration row carries
+    the ordering. This used to emit a MAP -- `transform_values` over the rates
+    map -- which is the shape the RATES table has, not the shape the UDT takes.
+    Nothing caught it, because `Column.getItem(0)` on a map<text,double> does
+    not fail: Spark casts the key to "0", finds nothing, and returns NULL. So
+    every account fiat total summed to [NULL, NULL], and the first write of one
+    failed inside the bulk writer with "Collection elements cannot be null"
+    rather than anywhere near the cause.
 
     Two cases, where graphsense-spark has three
     (`eth/Transformation.scala:374-410`):
@@ -345,25 +357,37 @@ def priced(
         .join(native_rates, on="block_id", how="left")
     )
     units = F.col("value") / F.coalesce(F.col("decimal_divisor"), F.lit(divisor))
-    direct = F.transform_values(
-        F.col("_rates"), lambda _, rate: F.round(units * rate, 2)
-    )
+    peg = F.col("peg_currency")
+    direct = [
+        F.round(units * F.element_at(F.col("_rates"), code), 2) for code in currencies
+    ]
     # The peg fixes its own currency; every other one is the cross rate against
     # it, which is why this needs the native rates and not just the peg.
-    pegged = F.transform_values(
-        F.col("_native_rates"),
-        lambda code, rate: F.round(
-            F.when(code == F.col("peg_currency"), units).otherwise(
+    pegged = [
+        F.round(
+            F.when(F.lit(code) == peg, units).otherwise(
                 units
-                * rate
-                / F.element_at(F.col("_native_rates"), F.col("peg_currency"))
+                * F.element_at(F.col("_native_rates"), code)
+                / F.element_at(F.col("_native_rates"), peg)
             ),
             2,
-        ),
+        )
+        for code in currencies
+    ]
+    # All of the currencies or none, exactly as `derived_common.fiat_values`
+    # does it: a Cassandra collection cannot hold a null ELEMENT, so a list
+    # that knows EUR but not USD has no representation and the bulk writer
+    # refuses the row. NULL states the total is unknown; 0.0 would state it was
+    # worthless.
+    is_pegged = ~F.isnull(peg)
+    known = F.when(is_pegged, common.all_present(pegged)).otherwise(
+        common.all_present(direct)
     )
     return joined.withColumn(
         "fiat_values",
-        F.when(~F.isnull(F.col("peg_currency")), pegged).otherwise(direct),
+        F.when(
+            known, F.when(is_pegged, F.array(*pegged)).otherwise(F.array(*direct))
+        ).otherwise(F.lit(None).cast("array<double>")),
     ).drop("_rates", "_native_rates", "peg_currency", "decimal_divisor")
 
 
@@ -777,6 +801,7 @@ def build(
         rates,
         token_config,
         network,
+        cfg.fiat_currencies,
     ).cache()
     # `moves` is cached, so this is a scan of a materialised frame rather than
     # a second pass over the logs -- and it runs before anything is written, so
