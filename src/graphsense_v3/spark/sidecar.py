@@ -13,6 +13,34 @@ CQL write path entirely.
 
 **Not yet exercised against a real cluster from PySpark.** Prove it on a small
 block range before committing a long run to it.
+
+EVERY NULL WRITTEN THROUGH THIS PATH IS A TOMBSTONE, and there is no option to
+change that. `spark.cassandra.output.ignoreNulls` -- which `profile.REQUIRED`
+sets, and which exists for exactly this -- is a CONNECTOR setting, and the bulk
+path never touches the connector. cassandra-analytics builds one INSERT per
+table and binds every column, so a null is a deletion; its `WriterOptions` has
+43 constants and not one concerns nulls, unset values or tombstones (checked on
+trunk, so 0.3.0 and 0.4.0 alike). The capability exists underneath --
+CASSANDRA-11911 gave CQLSSTableWriter unset fields in 3.8, and this pins 4.0.0
+-- but analytics does not use it.
+
+Measured on `eth_derived_v3_t1.address_incoming_relations` a few hours after a
+backfill, with no deletes: 1.0 tombstones per slice against 1.0 live cells.
+
+The decision, and it has two halves:
+
+* **A BACKFILL ACCEPTS THIS.** The keyspace is written once, so one LCS
+  compaction past gc_grace absorbs the tombstones. Writing a sentinel to dodge
+  them would mean storing a wrong value in place of "unknown", which is the
+  trade `derived_common.fiat_values` and `sum_or_null` exist to refuse -- v3
+  rows are DELIBERATELY sparse, and a null there is an answer.
+* **THE INCREMENTAL PATH MUST NOT USE THIS WRITER.** Epoch rows accumulate
+  between compaction runs, so a per-row tombstone grows there rather than being
+  absorbed by a single pass. Use the connector, which honours `ignoreNulls`.
+  That is also the faster choice for the small batches an incremental update
+  writes: the bulk path pays fixed per-write overhead and LOSES on them
+  (measured on LTC: address_tx_pages 1.0s -> 4.1s, address_by_prefix 3.0s ->
+  7.6s). The write path that avoids the tombstones is the one to pick anyway.
 """
 
 from __future__ import annotations
