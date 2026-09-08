@@ -106,6 +106,48 @@ def encode_page_token(found: list, before_row: Optional[tuple]) -> str:
     return f"{last}:{delivered}"
 
 
+def block_of_tx_id(tx_id: int) -> int:
+    """The block a tx_id names. Arithmetic, per `codec.tx_id_expr`."""
+    from graphsense_v3.codec import block_of_tx_id as decode
+
+    return decode(tx_id)
+
+
+def _fee_of(detail: dict) -> Optional[int]:
+    """gas used * the price actually paid, which is what v2 reports.
+
+    `receipt_effective_gas_price` is the post-1559 price and `gas_price` the
+    pre-1559 one; a transaction carries whichever its era used.
+    """
+    used = detail.get("receipt_gas_used")
+    price = detail.get("receipt_effective_gas_price") or detail.get("gas_price")
+    if used is None or price is None:
+        return None
+    return int(used) * int(price)
+
+
+def _topic_address(log: dict, index: int) -> Optional[bytes]:
+    """The address in an indexed topic: 32 bytes, left-padded, address last."""
+    topics = log.get("topics") or []
+    if len(topics) <= index or topics[index] is None:
+        return None
+    return bytes(topics[index])[-20:]
+
+
+def _value_of(total: Optional[dict]) -> _Value:
+    """A merged ``currency`` total as the service reads it.
+
+    `services.common.to_values` takes ``.value`` and ``.fiat_values`` as
+    ATTRIBUTES -- v2 hands back a driver UDT object -- so a plain dict raises
+    AttributeError inside the service rather than at the boundary. Absent
+    means ZERO, not missing: an address that never received has received
+    nothing, and `address_from_row` subscripts the key either way.
+    """
+    if not total:
+        return _Value(0, [])
+    return _Value(int(total.get("value") or 0), list(total.get("fiat_values") or []))
+
+
 def synthetic_id(address: bytes) -> int:
     """A stable stand-in for v2's ``address_id``.
 
@@ -464,17 +506,41 @@ class LegacyAdapter:
             return None
         balances = await dal.balance(raw)
         native = next(iter(balances), None)
+        symbol = currency.upper()
         row = {
             "address": address,
             "address_id": synthetic_id(raw),
             "address_id_group": dal.entity_bucket(raw),
             "first_tx_id": stats.first_tx_id,
             "last_tx_id": stats.last_tx_id,
-            "balance": balances.get(native, 0) if native else 0,
+            # The NATIVE balance, by ticker rather than by whichever asset the
+            # driver happened to return first: an account address holds several,
+            # and `address_from_row` converts this one with the native rate.
+            "balance": balances.get(symbol, balances.get(native, 0) if native else 0),
             "balances": balances,
         }
         row.update(stats.summed)
         row.update(stats.epoch_zero)
+        # `address_from_row` SUBSCRIPTS both of these, so an address with no
+        # rows for one of them still needs the key -- zero, which is what an
+        # address that received nothing received.
+        for name in ("total_received", "total_spent"):
+            row[name] = _value_of(stats.totals.get(name))
+        for name in ("total_tokens_received", "total_tokens_spent"):
+            tokens = stats.token_totals.get(name)
+            row[name] = (
+                {ticker: _value_of(amount) for ticker, amount in tokens.items()}
+                if tokens
+                else None
+            )
+        # Every asset but the native one, which `balance` already carries.
+        # `.get`, not a subscript, so None and {} are both fine -- but a UTXO
+        # keyspace holds one asset and must not report an empty token map as
+        # though it were a finding.
+        others = {
+            ticker: amount for ticker, amount in balances.items() if ticker != symbol
+        }
+        row["token_balances"] = others or None
         return row
 
     async def list_address_txs(
@@ -555,6 +621,96 @@ class LegacyAdapter:
         return await self._as_v2_txs(currency, found), token
 
     async def _as_v2_txs(self, currency: str, found: list) -> list:
+        from graphsenselib.utils.rest_utils import is_eth_like
+
+        if is_eth_like(currency.lower()):
+            return await self._as_v2_account_txs(currency, found)
+        return await self._as_v2_utxo_txs(currency, found)
+
+    async def _as_v2_account_txs(self, currency: str, found: list) -> list:
+        """v3's account listing rows as the dicts `txs_from_rows` reads.
+
+        The listing carries `tx_reference` -- a trace_index or a log_index --
+        and NOT the transfer's two ends, so this fetches the trace or the log
+        that names them, exactly as v2 does (`cassandra.py:5045-5060`). The
+        outer transaction's from/to would be the wrong counterparty on every
+        internal call and every token transfer, which is the failure mode this
+        exists to avoid. `/links` needs none of it: the caller named both ends.
+
+        Three concurrent rounds, not three per row: the transactions, then the
+        traces and logs the references point at.
+        """
+        dal = self._dal(currency)
+        native = currency.upper()
+        by_id = await dal.transactions_by_ids([tx.tx_id for tx in found])
+
+        traces, logs = [], []
+        for tx in found:
+            reference = getattr(tx, "tx_reference", None)
+            block = block_of_tx_id(tx.tx_id)
+            log_index = getattr(reference, "log_index", None)
+            trace_index = getattr(reference, "trace_index", None)
+            if log_index is not None:
+                logs.append((block, log_index))
+            elif trace_index is not None:
+                traces.append((block, trace_index))
+        by_trace = await dal.traces_by_ref(traces)
+        by_log = await dal.logs_by_ref(logs)
+
+        rows = []
+        for tx in found:
+            detail = by_id.get(tx.tx_id)
+            if detail is None:
+                raise NotAvailable(
+                    f"address_transactions references tx_id {tx.tx_id}, which "
+                    f"{dal.raw}.transaction does not have"
+                )
+            reference = getattr(tx, "tx_reference", None)
+            trace_index = getattr(reference, "trace_index", None)
+            log_index = getattr(reference, "log_index", None)
+            asset = (getattr(tx, "currency", None) or native).upper()
+            block = block_of_tx_id(tx.tx_id)
+
+            row = {
+                "tx_hash": detail.get("tx_hash"),
+                "height": detail.get("block_id"),
+                "timestamp": detail.get("block_timestamp"),
+                "value": tx.value,
+                "currency": asset,
+                "fee": _fee_of(detail),
+                # `raw.trace` keeps no trace_type and no trace input, so an
+                # internal call cannot report either. Stated as None rather
+                # than omitted: `_tx_account_from_row` reads them with `.get`,
+                # and a wrong value would be worse than a missing one.
+                "contract_creation": None,
+                "input_parsed": None,
+            }
+            if asset != native:
+                event = by_log.get((block, log_index)) or {}
+                row["type"] = "erc20"
+                row["token_tx_id"] = log_index
+                row["from_address"] = _topic_address(event, 1)
+                row["to_address"] = _topic_address(event, 2)
+                row["input"] = None
+            else:
+                event = by_trace.get((block, trace_index)) or {}
+                first = detail.get("first_trace_index")
+                is_root = trace_index is None or first is None or trace_index == first
+                row["type"] = "external" if is_root else "internal"
+                if trace_index is not None:
+                    row["trace_index"] = trace_index
+                # The trace's ends when there is one; the transaction's for a
+                # row with no trace reference at all, which is the plain
+                # external transfer.
+                row["from_address"] = event.get("from_address") or detail.get(
+                    "from_address"
+                )
+                row["to_address"] = event.get("to_address") or detail.get("to_address")
+                row["input"] = detail.get("input") if is_root else None
+            rows.append(row)
+        return rows
+
+    async def _as_v2_utxo_txs(self, currency: str, found: list) -> list:
         """v3's `AddressTx` rows as the dicts `txs_from_rows` reads.
 
         v3's address_transactions row is deliberately narrow -- ``tx_id`` and

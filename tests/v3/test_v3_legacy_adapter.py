@@ -1132,3 +1132,202 @@ def test_a_memoryview_is_accepted_too() -> None:
     raw = encode_address("eth", "0xc765353a888d0e5ffa105bf768c843c1d4824174")
     assert shim._bytes("eth", memoryview(raw)) == raw
     assert shim._bytes("eth", bytearray(raw)) == raw
+
+
+def _stats_rows(*rows):
+    def answer(cql, params):
+        if "address_stats" in cql:
+            return list(rows)
+        return []
+
+    return answer
+
+
+def test_the_totals_the_service_subscripts_are_present() -> None:
+    """`address_from_row` reads row["total_received"] and row["total_spent"] by
+    SUBSCRIPT, and `address_stats` has carried both since the schema was
+    written -- the READER dropped them, because neither SUMMABLE_STATS nor
+    EPOCH_ZERO_ONLY listed them. Every get_address and every neighbour listing
+    died on a KeyError raised inside the service."""
+    session = FakeSession(
+        _stats_rows(
+            Row(
+                epoch=0,
+                total_received={"value": 7, "fiat_values": [1.0, 2.0]},
+                total_spent={"value": 3, "fiat_values": [0.5, 1.0]},
+            )
+        )
+    )
+    shim = LegacyAdapter(
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    row = run(shim.get_address("eth", "0xaa"))
+    # Attributes, not keys: `to_values` reads .value/.fiat_values off a UDT.
+    assert row["total_received"].value == 7
+    assert row["total_received"].fiat_values == [1.0, 2.0]
+    assert row["total_spent"].value == 3
+
+
+def test_the_totals_sum_over_the_epoch_slice() -> None:
+    """Epoch 0 is the compacted base and later epochs are deltas -- the same
+    argument the counts already follow. Reading one row understates an address
+    the incremental path has touched, and the fiat list adds POSITIONALLY."""
+    session = FakeSession(
+        _stats_rows(
+            Row(
+                epoch=0,
+                total_received={"value": 7, "fiat_values": [1.0, 2.0]},
+                total_spent={"value": 0, "fiat_values": []},
+            ),
+            Row(
+                epoch=3,
+                total_received={"value": 5, "fiat_values": [0.5, 1.5]},
+                total_spent={"value": 0, "fiat_values": []},
+            ),
+        )
+    )
+    shim = LegacyAdapter(
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    row = run(shim.get_address("eth", "0xaa"))
+    assert row["total_received"].value == 12
+    assert row["total_received"].fiat_values == [1.5, 3.5]
+
+
+def test_an_address_that_received_nothing_reports_zero_not_a_missing_key() -> None:
+    """Absent means zero. The service subscripts the key either way, so a
+    missing one is a KeyError several layers from its cause."""
+    session = FakeSession(_stats_rows(Row(epoch=0)))
+    shim = LegacyAdapter(
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    row = run(shim.get_address("eth", "0xaa"))
+    assert row["total_received"].value == 0
+    assert row["total_received"].fiat_values == []
+    assert row["total_tokens_received"] is None
+
+
+TX_HASH = b"\xab" * 32
+FROM_TX, TO_TX = b"\x01" * 20, b"\x02" * 20
+FROM_TRACE, TO_TRACE = b"\x03" * 20, b"\x04" * 20
+FROM_LOG, TO_LOG = b"\x05" * 20, b"\x06" * 20
+
+
+def _account_listing(currency="ETH", trace_index=7, log_index=None):
+    """One listing row, plus the transaction, trace and log behind it."""
+    ref = SimpleNamespace(trace_index=trace_index, log_index=log_index)
+    tx_id = (12 << 32) + 1
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            return [
+                Row(
+                    tx_id=tx_id,
+                    value=5,
+                    balance=None,
+                    is_outgoing=True,
+                    currency=currency,
+                    tx_reference=ref,
+                )
+            ]
+        if ".transaction" in cql:
+            return [
+                Row(
+                    tx_id=tx_id,
+                    tx_hash=TX_HASH,
+                    block_id=12,
+                    block_timestamp=1700,
+                    first_trace_index=7,
+                    from_address=FROM_TX,
+                    to_address=TO_TX,
+                    input=b"\xde\xad",
+                    receipt_gas_used=21000,
+                    receipt_effective_gas_price=1000,
+                )
+            ]
+        if ".trace" in cql:
+            return [
+                Row(
+                    block_id=12,
+                    trace_index=trace_index,
+                    from_address=FROM_TRACE,
+                    to_address=TO_TRACE,
+                )
+            ]
+        if ".log" in cql:
+            return [
+                Row(
+                    block_id=12,
+                    log_index=log_index,
+                    topics=[
+                        b"\x00" * 32,
+                        b"\x00" * 12 + FROM_LOG,
+                        b"\x00" * 12 + TO_LOG,
+                    ],
+                )
+            ]
+        return []
+
+    return FakeSession(rows)
+
+
+def _listing(session):
+    shim = LegacyAdapter(
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    rows, _ = run(shim.list_address_txs("eth", "0xaa"))
+    return rows
+
+
+def test_an_account_listing_row_carries_the_type_the_service_subscripts() -> None:
+    """`_tx_account_from_row` reads row["type"] by SUBSCRIPT, and `_as_v2_txs`
+    built UTXO rows for both families -- so every account listing died on a
+    KeyError inside the service."""
+    row = _listing(_account_listing())[0]
+    assert row["type"] == "external"
+    assert row["tx_hash"] == TX_HASH
+    assert row["height"] == 12 and row["timestamp"] == 1700
+    assert "coinbase" not in row, "a UTXO field on an account row"
+
+
+def test_an_internal_call_reports_the_TRACE_ends_not_the_transaction_s() -> None:
+    """The outer transaction's from/to are the wrong counterparty for an
+    internal call. v2 fetches the trace for exactly this."""
+    row = _listing(_account_listing(trace_index=9))[0]
+    assert row["type"] == "internal"
+    assert row["from_address"] == FROM_TRACE
+    assert row["to_address"] == TO_TRACE
+    assert row["trace_index"] == 9
+
+
+def test_the_root_trace_reports_the_transaction_and_its_input() -> None:
+    """trace_index == first_trace_index is the root, so this IS the external
+    transfer -- and only there does the transaction's input describe it."""
+    row = _listing(_account_listing(trace_index=7))[0]
+    assert row["type"] == "external"
+    assert row["input"] == b"\xde\xad"
+
+
+def test_a_token_transfer_reports_the_LOG_ends() -> None:
+    """A token transfer's two ends are indexed topics 1 and 2, and they are
+    not the transaction's from/to either."""
+    session = _account_listing(currency="USDT", trace_index=None, log_index=4)
+    row = _listing(session)[0]
+    assert row["type"] == "erc20"
+    assert row["token_tx_id"] == 4
+    assert row["currency"] == "USDT"
+    assert row["from_address"] == FROM_LOG
+    assert row["to_address"] == TO_LOG
+
+
+def test_the_fee_is_gas_used_times_the_price_actually_paid() -> None:
+    """What v2 reports. v3 has the receipt fields, so unlike contract_creation
+    this needs no schema change."""
+    assert _listing(_account_listing())[0]["fee"] == 21000 * 1000
+
+
+def test_fields_v3_cannot_produce_stay_none_in_a_listing_too() -> None:
+    row = _listing(_account_listing(trace_index=9))[0]
+    assert row["contract_creation"] is None and row["input_parsed"] is None

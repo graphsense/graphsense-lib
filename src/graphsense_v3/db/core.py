@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 from graphsense_v3.codec import bucket, tx_id_range
@@ -52,6 +52,23 @@ SUMMABLE_STATS = (
     "no_incoming_txs_zero_value",
     "no_outgoing_txs_zero_value",
 )
+
+#: Summable too, but as ``currency`` UDTs rather than integers -- an amount
+#: plus a POSITIONAL fiat list -- so they merge with `add_currency` instead of
+#: `+`. `address_stats` has carried them since the schema was written; the
+#: reader simply dropped them, and `address_from_row` subscripts
+#: ``row["total_received"]`` and ``row["total_spent"]``, so every get_address
+#: and every neighbour listing died on a KeyError raised inside the service.
+CURRENCY_STATS = ("total_received", "total_spent")
+
+#: The account-only pair, ``map<text, currency>``: union by asset, then
+#: `add_currency` per asset -- see `add_token_values` for why it cannot be a
+#: positional merge. Absent on a UTXO keyspace, which holds one asset.
+TOKEN_STATS = ("total_tokens_received", "total_tokens_spent")
+
+#: Carried from the epoch-0 row untouched. `is_contract` is account-only and a
+#: PROPERTY, not a delta: an address that became a contract did so once.
+EPOCH_ZERO_CARRIED = ("is_contract",)
 
 #: Columns that exist only on the epoch-0 row and are NOT summable: degrees are
 #: distinct counts, and the paging cursors are positions rather than amounts.
@@ -194,6 +211,10 @@ class Stats:
     epoch_zero: dict
     first_tx_id: Optional[int] = None
     last_tx_id: Optional[int] = None
+    #: ``total_received``/``total_spent``, merged as `currency` UDTs.
+    totals: dict = field(default_factory=dict)
+    #: ``total_tokens_received``/``total_tokens_spent``, merged per asset.
+    token_totals: dict = field(default_factory=dict)
 
     @property
     def no_transactions(self) -> int:
@@ -379,6 +400,8 @@ class Dal:
         if not rows:
             return None
         summed = {name: 0 for name in SUMMABLE_STATS}
+        totals: dict = {}
+        token_totals: dict = {}
         epoch_zero: dict = {}
         first_tx: Optional[int] = None
         last_tx: Optional[int] = None
@@ -386,14 +409,31 @@ class Dal:
             data = row._asdict()
             for name in SUMMABLE_STATS:
                 summed[name] += int(data.get(name) or 0)
+            # Summed over the SAME epoch slice as the counts, and by the same
+            # argument: epoch 0 is the compacted base and later epochs are
+            # deltas, so reading one row would understate an address the
+            # incremental path has touched since.
+            for name in CURRENCY_STATS:
+                if name in data:
+                    totals[name] = add_currency(totals.get(name), data.get(name))
+            for name in TOKEN_STATS:
+                if data.get(name):
+                    token_totals[name] = add_token_values(
+                        token_totals.get(name), data.get(name)
+                    )
             if data.get("epoch") == 0:
                 epoch_zero = {name: data.get(name) for name in EPOCH_ZERO_ONLY}
+                epoch_zero.update(
+                    {name: data[name] for name in EPOCH_ZERO_CARRIED if name in data}
+                )
             # min-merge and max-merge, as the writer defines them.
             if data.get("first_tx_id") is not None:
                 first_tx = min(first_tx or data["first_tx_id"], data["first_tx_id"])
             if data.get("last_tx_id") is not None:
                 last_tx = max(last_tx or data["last_tx_id"], data["last_tx_id"])
-        return Stats(address, summed, epoch_zero, first_tx, last_tx)
+        return Stats(
+            address, summed, epoch_zero, first_tx, last_tx, totals, token_totals
+        )
 
     async def balance(self, address: bytes) -> dict:
         """``{currency: amount}``, summed over epochs like the stats."""
@@ -566,6 +606,20 @@ class Dal:
 
     async def spending(self, tx_hash: bytes, prefix: str) -> list:
         """What this transaction's inputs spent. See the subclasses."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
+    async def traces_by_ref(self, refs: "Sequence[tuple]") -> dict:
+        """The traces named by ``(block_id, trace_index)``. See AccountDal."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
+    async def logs_by_ref(self, refs: "Sequence[tuple]") -> dict:
+        """The logs named by ``(block_id, log_index)``. See AccountDal."""
         raise NotImplementedError(
             f"{type(self).__name__} does not know which family it is reading; "
             "build the reader with `dal_for`"
@@ -1037,6 +1091,48 @@ class AccountDal(Dal):
     listing carries ``currency`` and ``tx_reference``, and the primary key is
     ``(tx_id, tx_reference, currency)`` rather than ``tx_id`` alone.
     """
+
+    # -- the transfer behind a listing row --------------------------------
+    #
+    # An account listing row carries `tx_reference` -- a trace_index or a
+    # log_index -- and NOT the two ends of the transfer. v2 fetches the trace
+    # or the log for exactly this (`cassandra.py:5045-5060`), because the outer
+    # transaction's from/to are the wrong counterparty for an internal call or
+    # a token transfer. `/links` escapes this: the caller named both ends.
+    #
+    # Both tables are keyed (block_id_group) / block_id, index, so a reference
+    # names its own partition arithmetically and these are point reads.
+
+    def _block_group(self, block_id: int) -> int:
+        return block_id // self.config["block_bucket_size"]
+
+    async def traces_by_ref(self, refs: "Sequence[tuple]") -> dict:
+        """``{(block_id, trace_index): row}`` for several references at once."""
+        return await self._events_by_ref("trace", "trace_index", refs)
+
+    async def logs_by_ref(self, refs: "Sequence[tuple]") -> dict:
+        """``{(block_id, log_index): row}`` for several references at once."""
+        return await self._events_by_ref("log", "log_index", refs)
+
+    async def _events_by_ref(self, table: str, column: str, refs) -> dict:
+        wanted = {
+            (int(block), int(index)) for block, index in refs if index is not None
+        }
+        if not wanted:
+            return {}
+        queries = [
+            (
+                f"SELECT * FROM {self.raw}.{table} "
+                f"WHERE block_id_group = %s AND block_id = %s AND {column} = %s",
+                (self._block_group(block), block, index),
+            )
+            for block, index in sorted(wanted)
+        ]
+        found = {}
+        for row in await self._gather(queries):
+            data = row._asdict()
+            found[(data["block_id"], data[column])] = data
+        return found
 
     # -- the UTXO-only reads, answered without a query --------------------
     #
