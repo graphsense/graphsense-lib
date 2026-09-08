@@ -30,6 +30,11 @@ from __future__ import annotations
 import zlib
 from typing import NamedTuple, Optional
 
+from graphsenselib.utils.function_call_parser import (
+    function_signatures as function_call_signatures,
+)
+from graphsenselib.utils.function_call_parser import parse_function_call
+
 from graphsense_v3.codec import encode_address, search_prefix
 from graphsense_v3.db.core import Dal, NotAvailable
 
@@ -126,26 +131,23 @@ def _fee_of(detail: dict) -> Optional[int]:
     return int(used) * int(price)
 
 
+def _is_root_trace(trace: dict) -> bool:
+    """Whether a trace is the transaction's own call rather than an internal one.
+
+    v2's test, and the one that lives ON the row: ``trace_address`` is the
+    path down the call tree, so the root's is empty (`cassandra.py:5053`).
+    An absent trace means the listing row references none at all -- the plain
+    external transfer -- which is a root by the same reading.
+    """
+    return not (trace.get("trace_address") or "").strip()
+
+
 def _topic_address(log: dict, index: int) -> Optional[bytes]:
     """The address in an indexed topic: 32 bytes, left-padded, address last."""
     topics = log.get("topics") or []
     if len(topics) <= index or topics[index] is None:
         return None
     return bytes(topics[index])[-20:]
-
-
-def _value_of(total: Optional[dict]) -> _Value:
-    """A merged ``currency`` total as the service reads it.
-
-    `services.common.to_values` takes ``.value`` and ``.fiat_values`` as
-    ATTRIBUTES -- v2 hands back a driver UDT object -- so a plain dict raises
-    AttributeError inside the service rather than at the boundary. Absent
-    means ZERO, not missing: an address that never received has received
-    nothing, and `address_from_row` subscripts the key either way.
-    """
-    if not total:
-        return _Value(0, [])
-    return _Value(int(total.get("value") or 0), list(total.get("fiat_values") or []))
 
 
 def synthetic_id(address: bytes) -> int:
@@ -324,6 +326,27 @@ class LegacyAdapter:
             if index < len(amounts)
         ]
 
+    def _value_of(self, currency: str, total: Optional[dict]) -> _Value:
+        """A merged ``currency`` total as the service reads it.
+
+        `services.common.to_values` takes ``.value`` and ``.fiat_values`` as
+        ATTRIBUTES -- v2 hands back a driver UDT object -- so a plain dict
+        raises AttributeError inside the service rather than at the boundary.
+        And its fiat list must be LABELLED: `to_values` does ``r["code"]`` on
+        every element, so handing over the UDT's positional list of doubles
+        fails with "'float' object is not subscriptable" from inside the
+        service, on every address and every neighbour.
+
+        Absent means ZERO, not missing: an address that never received has
+        received nothing, and `address_from_row` subscripts the key either way.
+        """
+        if not total:
+            return _Value(0, [])
+        return _Value(
+            int(total.get("value") or 0),
+            self._fiat_list(currency, total.get("fiat_values")),
+        )
+
     # -- blocks ------------------------------------------------------------
 
     async def get_block(self, currency: str, height: int) -> Optional[dict]:
@@ -362,10 +385,57 @@ class LegacyAdapter:
         return {"block_id": height, "timestamp": block.get("timestamp")}
 
     async def list_block_txs(self, currency: str, height: int) -> list:
+        """A block's transactions, in the shape `std_tx_from_row` reads.
+
+        Routed by family, because the two answer different questions: a UTXO
+        transaction needs its legs attached, an account transaction needs the
+        ``type`` that tells the service which of the two row shapes it is
+        holding. Without the branch the account side died on
+        ``KeyError: 'type'`` inside the service.
+        """
+        from graphsenselib.utils.rest_utils import is_eth_like
+
         dal = self._dal(currency)
         found = await dal.block_transactions(height)
+        if is_eth_like(currency.lower()):
+            return [self._as_v2_block_tx(currency, tx) for tx in found]
         legs = await dal.transaction_io_many([tx["tx_id"] for tx in found])
         return [self._with_io(currency, tx, legs.get(tx["tx_id"], [])) for tx in found]
+
+    def _as_v2_block_tx(self, currency: str, detail: dict) -> dict:
+        """One account transaction of a block listing.
+
+        The EXTERNAL row only. v2 also interleaves an ``erc20`` row per token
+        transfer in the block (``include_token_txs=True``), which means
+        decoding every Transfer log against the token configuration -- a
+        SECOND implementation of the decode `derived_account.token_transfers`
+        already does on the write side, which is the drift class CLAUDE.md
+        flags for delta-vs-Spark. Left out deliberately, so the difference
+        shows up as a row count rather than as a wrong row.
+        """
+        to_address = detail.get("to_address")
+        created = to_address is None
+        row = {
+            "tx_hash": detail.get("tx_hash"),
+            "height": detail.get("block_id"),
+            "timestamp": detail.get("block_timestamp"),
+            "value": detail.get("value"),
+            "currency": currency.upper(),
+            "type": "external",
+            "from_address": detail.get("from_address"),
+            # A deployment names no recipient; v2 reports the contract it
+            # created instead (`cassandra.py:5249-5252`).
+            "to_address": (
+                detail.get("receipt_contract_address") if created else to_address
+            ),
+            "contract_creation": True if created else None,
+            "input": detail.get("input"),
+            "input_parsed": parse_function_call(
+                detail.get("input"), function_call_signatures
+            ),
+            "fee": _fee_of(detail),
+        }
+        return row
 
     def _with_io(self, currency: str, detail: dict, legs: list) -> dict:
         """A v3 transaction row plus the ``inputs``/``outputs`` v2 carries.
@@ -525,11 +595,14 @@ class LegacyAdapter:
         # rows for one of them still needs the key -- zero, which is what an
         # address that received nothing received.
         for name in ("total_received", "total_spent"):
-            row[name] = _value_of(stats.totals.get(name))
+            row[name] = self._value_of(currency, stats.totals.get(name))
         for name in ("total_tokens_received", "total_tokens_spent"):
             tokens = stats.token_totals.get(name)
             row[name] = (
-                {ticker: _value_of(amount) for ticker, amount in tokens.items()}
+                {
+                    ticker: self._value_of(currency, amount)
+                    for ticker, amount in tokens.items()
+                }
                 if tokens
                 else None
             )
@@ -675,15 +748,11 @@ class LegacyAdapter:
                 "tx_hash": detail.get("tx_hash"),
                 "height": detail.get("block_id"),
                 "timestamp": detail.get("block_timestamp"),
-                "value": tx.value,
+                # v2 signs by direction on this listing -- money leaving is
+                # negative (`cassandra.py:4949`). v3 stores the magnitude and
+                # the direction separately, as the UTXO branch already knew.
+                "value": -tx.value if tx.is_outgoing else tx.value,
                 "currency": asset,
-                "fee": _fee_of(detail),
-                # `raw.trace` keeps no trace_type and no trace input, so an
-                # internal call cannot report either. Stated as None rather
-                # than omitted: `_tx_account_from_row` reads them with `.get`,
-                # and a wrong value would be worse than a missing one.
-                "contract_creation": None,
-                "input_parsed": None,
             }
             if asset != native:
                 event = by_log.get((block, log_index)) or {}
@@ -691,22 +760,40 @@ class LegacyAdapter:
                 row["token_tx_id"] = log_index
                 row["from_address"] = _topic_address(event, 1)
                 row["to_address"] = _topic_address(event, 2)
+                # A token transfer is not a deployment, and it carries no call
+                # data of its own.
+                row["contract_creation"] = False
                 row["input"] = None
+                row["input_parsed"] = None
             else:
                 event = by_trace.get((block, trace_index)) or {}
-                first = detail.get("first_trace_index")
-                is_root = trace_index is None or first is None or trace_index == first
-                row["type"] = "external" if is_root else "internal"
+                # EVERY column below is the TRACE's, not the transaction's:
+                # v2 reads them off the trace (`cassandra.py:5049-5068`) and
+                # the two disagree for an internal call, which is most of the
+                # rows on this listing. `raw.trace` carries all of them for
+                # eth (`definitions._TRACE_EXTRA`), so none of this is a gap.
+                row["type"] = "external" if _is_root_trace(event) else "internal"
                 if trace_index is not None:
                     row["trace_index"] = trace_index
                 # The trace's ends when there is one; the transaction's for a
-                # row with no trace reference at all, which is the plain
-                # external transfer.
+                # row with no trace reference at all.
                 row["from_address"] = event.get("from_address") or detail.get(
                     "from_address"
                 )
                 row["to_address"] = event.get("to_address") or detail.get("to_address")
-                row["input"] = detail.get("input") if is_root else None
+                row["contract_creation"] = (
+                    event.get("trace_type") == "create" if event else None
+                )
+                row["input"] = event.get("input") if event else detail.get("input")
+                row["input_parsed"] = parse_function_call(
+                    row["input"], function_call_signatures
+                )
+            # THE FEE BELONGS TO THE TRANSACTION, NOT TO THE TRANSFER. v2
+            # reports it only on the external row (`cassandra.py:5090`), so
+            # putting it on every internal and token row would bill the same
+            # gas once per transfer.
+            if row["type"] == "external":
+                row["fee"] = _fee_of(detail)
             rows.append(row)
         return rows
 

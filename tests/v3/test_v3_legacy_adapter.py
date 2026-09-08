@@ -1164,7 +1164,13 @@ def test_the_totals_the_service_subscripts_are_present() -> None:
     row = run(shim.get_address("eth", "0xaa"))
     # Attributes, not keys: `to_values` reads .value/.fiat_values off a UDT.
     assert row["total_received"].value == 7
-    assert row["total_received"].fiat_values == [1.0, 2.0]
+    # And LABELLED, not positional: `to_values` does r["code"] on every
+    # element, so the UDT's bare list of doubles fails inside the service with
+    # "'float' object is not subscriptable" -- on every address and neighbour.
+    assert row["total_received"].fiat_values == [
+        {"code": "eur", "value": 1.0},
+        {"code": "usd", "value": 2.0},
+    ]
     assert row["total_spent"].value == 3
 
 
@@ -1191,7 +1197,10 @@ def test_the_totals_sum_over_the_epoch_slice() -> None:
     )
     row = run(shim.get_address("eth", "0xaa"))
     assert row["total_received"].value == 12
-    assert row["total_received"].fiat_values == [1.5, 3.5]
+    assert row["total_received"].fiat_values == [
+        {"code": "eur", "value": 1.5},
+        {"code": "usd", "value": 3.5},
+    ]
 
 
 def test_an_address_that_received_nothing_reports_zero_not_a_missing_key() -> None:
@@ -1210,10 +1219,17 @@ def test_an_address_that_received_nothing_reports_zero_not_a_missing_key() -> No
 TX_HASH = b"\xab" * 32
 FROM_TX, TO_TX = b"\x01" * 20, b"\x02" * 20
 FROM_TRACE, TO_TRACE = b"\x03" * 20, b"\x04" * 20
+TRACE_INPUT = b"\xbe\xef"
 FROM_LOG, TO_LOG = b"\x05" * 20, b"\x06" * 20
 
 
-def _account_listing(currency="ETH", trace_index=7, log_index=None):
+def _account_listing(
+    currency="ETH",
+    trace_index=7,
+    log_index=None,
+    trace_address="",
+    trace_type="call",
+):
     """One listing row, plus the transaction, trace and log behind it."""
     ref = SimpleNamespace(trace_index=trace_index, log_index=log_index)
     tx_id = (12 << 32) + 1
@@ -1254,6 +1270,9 @@ def _account_listing(currency="ETH", trace_index=7, log_index=None):
                     trace_index=trace_index,
                     from_address=FROM_TRACE,
                     to_address=TO_TRACE,
+                    trace_address=trace_address,
+                    trace_type=trace_type,
+                    input=TRACE_INPUT,
                 )
             ]
         if ".log" in cql:
@@ -1295,19 +1314,28 @@ def test_an_account_listing_row_carries_the_type_the_service_subscripts() -> Non
 def test_an_internal_call_reports_the_TRACE_ends_not_the_transaction_s() -> None:
     """The outer transaction's from/to are the wrong counterparty for an
     internal call. v2 fetches the trace for exactly this."""
-    row = _listing(_account_listing(trace_index=9))[0]
+    row = _listing(_account_listing(trace_index=9, trace_address="0"))[0]
     assert row["type"] == "internal"
     assert row["from_address"] == FROM_TRACE
     assert row["to_address"] == TO_TRACE
     assert row["trace_index"] == 9
 
 
-def test_the_root_trace_reports_the_transaction_and_its_input() -> None:
-    """trace_index == first_trace_index is the root, so this IS the external
-    transfer -- and only there does the transaction's input describe it."""
-    row = _listing(_account_listing(trace_index=7))[0]
+def test_the_root_is_the_trace_with_an_empty_trace_address() -> None:
+    """v2's test, and the one that lives ON the row (`cassandra.py:5053`):
+    trace_address is the path down the call tree, so the root's is empty.
+    trace_index == first_trace_index says the same thing, but by comparing two
+    rows rather than reading one."""
+    row = _listing(_account_listing(trace_index=9, trace_address=""))[0]
     assert row["type"] == "external"
-    assert row["input"] == b"\xde\xad"
+
+
+def test_the_input_reported_is_the_TRACE_s_not_the_transaction_s() -> None:
+    """They differ for every internal call, which is most of this listing.
+    `raw.trace` carries `input` for eth, so reading the transaction's was a
+    wrong value where a right one was available."""
+    row = _listing(_account_listing(trace_index=9, trace_address="0"))[0]
+    assert row["input"] == TRACE_INPUT != b"\xde\xad"
 
 
 def test_a_token_transfer_reports_the_LOG_ends() -> None:
@@ -1328,6 +1356,80 @@ def test_the_fee_is_gas_used_times_the_price_actually_paid() -> None:
     assert _listing(_account_listing())[0]["fee"] == 21000 * 1000
 
 
-def test_fields_v3_cannot_produce_stay_none_in_a_listing_too() -> None:
-    row = _listing(_account_listing(trace_index=9))[0]
-    assert row["contract_creation"] is None and row["input_parsed"] is None
+def test_contract_creation_comes_from_the_trace_type() -> None:
+    """NOT a schema gap: `definitions._TRACE_EXTRA` gives eth's trace
+    `trace_type`, and the raw loader writes it. The reader was hardcoding
+    None."""
+    assert _listing(_account_listing())[0]["contract_creation"] is False
+    created = _account_listing(trace_type="create")
+    assert _listing(created)[0]["contract_creation"] is True
+
+
+def test_the_fee_is_reported_only_on_the_external_row() -> None:
+    """The fee belongs to the TRANSACTION. v2 sets it only where the type is
+    external (`cassandra.py:5090`); on every internal and token row it would
+    bill the same gas once per transfer."""
+    internal = _listing(_account_listing(trace_index=9, trace_address="0"))[0]
+    assert "fee" not in internal
+    token = _account_listing(currency="USDT", trace_index=None, log_index=4)
+    assert "fee" not in _listing(token)[0]
+
+
+def test_an_outgoing_account_row_is_signed_negative() -> None:
+    """v2 signs by direction on this listing (`cassandra.py:4949`), as the
+    UTXO branch already did. v3 stores the magnitude and the direction apart,
+    so the account branch reported an outgoing transfer as a credit.
+
+    An unbound listing reads both directions, and the direction is in the
+    PARTITION KEY rather than on the row -- so the one stored magnitude comes
+    back once signed each way."""
+    assert sorted(row["value"] for row in _listing(_account_listing())) == [-5, 5]
+
+
+def _block_listing(**extra):
+    """One account transaction in a block."""
+
+    def rows(cql, params):
+        if ".transaction" in cql:
+            fields = {
+                "tx_id": (12 << 32) + 1,
+                "tx_hash": TX_HASH,
+                "block_id": 12,
+                "block_timestamp": 1700,
+                "value": 9,
+                "from_address": FROM_TX,
+                "to_address": TO_TX,
+                "input": b"\xde\xad",
+                "receipt_gas_used": 21000,
+                "receipt_effective_gas_price": 1000,
+                "receipt_contract_address": None,
+            }
+            return [Row(**{**fields, **extra})]
+        return []
+
+    shim = LegacyAdapter(
+        {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
+    )
+    return run(shim.list_block_txs("eth", 12))
+
+
+def test_a_block_listing_on_an_account_chain_carries_the_type() -> None:
+    """`std_tx_from_row` reads row["type"] by SUBSCRIPT and `list_block_txs`
+    built UTXO rows for both families, so every account block listing died on
+    a KeyError inside the service -- the same family blindness `_as_v2_txs`
+    had."""
+    row = _block_listing()[0]
+    assert row["type"] == "external"
+    assert row["tx_hash"] == TX_HASH
+    assert row["from_address"] == FROM_TX and row["to_address"] == TO_TX
+    assert row["fee"] == 21000 * 1000
+    assert "inputs" not in row, "a UTXO field on an account row"
+
+
+def test_a_deployment_names_the_contract_it_created() -> None:
+    """A deployment has no recipient; v2 reports the created contract as the
+    recipient and marks the row (`cassandra.py:5249-5252`)."""
+    created = b"\x07" * 20
+    row = _block_listing(to_address=None, receipt_contract_address=created)[0]
+    assert row["to_address"] == created
+    assert row["contract_creation"] is True
