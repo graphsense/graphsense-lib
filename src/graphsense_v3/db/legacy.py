@@ -570,22 +570,8 @@ class LegacyAdapter:
         from graphsenselib.utils.rest_utils import is_eth_like
 
         if is_eth_like(currency.lower()):
-            # The account link table is a different shape -- keyed
-            # (src, dst, tx_page) with a tx_reference/currency clustering and
-            # no dst_bucket -- and `links_response` routes an account link
-            # through `txs_from_rows` rather than reporting two amounts. The
-            # UTXO read below would fail on `dst_bucket` with a CQL error that
-            # names a column rather than the missing feature.
-            # `AccountDal.link_transactions` can now READ the account table.
-            # What is missing is the response: `links_response` routes an
-            # account link through `txs_from_rows` and reports one row per
-            # transfer, not the two amounts a UTXO link reports -- so the rows
-            # this method returns for UTXO are the wrong shape entirely.
-            raise NotAvailable(
-                "list_address_links is implemented for the UTXO response shape "
-                "only. The account link table is readable (AccountDal), but an "
-                "account link is reported per transfer rather than as an "
-                "input/output pair, and that assembly is not written yet"
+            return await self._account_links(
+                currency, address, neighbor, pagesize=pagesize
             )
         dal = self._dal(currency)
         limit = int(pagesize or 100)
@@ -629,6 +615,88 @@ class LegacyAdapter:
                     "output_value": row["output_value"],
                 }
             )
+        token = str(found[-1]["tx_id"]) if found and len(found) == limit else None
+        return rows, token
+
+    async def _account_links(
+        self, currency: str, address: str, neighbor: str, *, pagesize=None
+    ) -> tuple:
+        """One account edge, as the rows `txs_from_rows` reads.
+
+        `links_response` splits on the family: a UTXO link is one row with two
+        amounts, an account link is ONE ROW PER TRANSFER routed through
+        `txs_from_rows` -> `_tx_account_from_row`. So this returns transaction
+        rows, not link rows, and the two branches share nothing but a name.
+
+        The edge is what makes this cheaper than the address listing: v2 has to
+        fetch the trace or the log just to learn a transfer's two ends
+        (`cassandra.py:5045-5060`), and here they ARE the query -- the caller
+        named both.
+        """
+        dal = self._dal(currency)
+        limit = int(pagesize or 100)
+        src = self._bytes(currency, address)
+        dst = self._bytes(currency, neighbor)
+        found = await dal.link_transactions(src, dst, limit=limit)
+        detail = await dal.transactions_by_ids([row["tx_id"] for row in found])
+        native = currency.upper()
+
+        rows = []
+        for row in found:
+            tx = detail.get(row["tx_id"])
+            if tx is None:
+                raise NotAvailable(
+                    f"address_link_transactions references tx_id {row['tx_id']}, "
+                    f"which {dal.raw}.transaction does not have"
+                )
+            reference = row.get("tx_reference")
+            trace_index = getattr(reference, "trace_index", None)
+            log_index = getattr(reference, "log_index", None)
+            asset = (row.get("currency") or native).upper()
+            built = {
+                "tx_hash": tx.get("tx_hash"),
+                "block_id": tx.get("block_id"),
+                "timestamp": tx.get("block_timestamp"),
+                # The edge's own ends, not the transaction's. For a token
+                # transfer or an internal call those differ from the outer
+                # transaction's from/to, and taking the transaction's would
+                # report the wrong counterparty on exactly the rows that are
+                # not plain external transfers.
+                "from_address": src,
+                "to_address": dst,
+                "value": row.get("value"),
+                "currency": asset,
+                # v3 does not keep `trace_type` or a trace's `input`
+                # (`raw.trace` is block_id/trace_index/tx/from/to/value/status),
+                # so these two fields of v2's answer cannot be produced. Stated
+                # as None rather than omitted: `_tx_account_from_row` reads
+                # them with `.get`, and a wrong value would be worse than a
+                # missing one.
+                "contract_creation": None,
+                "input": None,
+                "input_parsed": None,
+            }
+            if asset != native:
+                # A log-derived transfer. `token_tx_id` is the log index, which
+                # is what v2 puts there (`cassandra.py:5001`) and what
+                # `get_tx_identifier` renders into the identifier.
+                built["type"] = "erc20"
+                built["token_tx_id"] = log_index
+            else:
+                # v2 asks whether the trace is the ROOT -- `trace_address`
+                # empty (`cassandra.py:5056`). v3 does not store that, but it
+                # does not need to: traces are emitted depth-first, so a
+                # transaction's FIRST trace is its root, and `first_trace_index`
+                # is already on the transaction row as one half of the range
+                # pointer. Same answer, no extra read.
+                first = tx.get("first_trace_index")
+                is_root = trace_index is None or first is None or trace_index == first
+                built["type"] = "external" if is_root else "internal"
+                if trace_index is not None:
+                    built["trace_index"] = trace_index
+            rows.append(built)
+        # One partition per edge and the walk starts at the newest page, so a
+        # full page may have more behind it; a short one cannot.
         token = str(found[-1]["tx_id"]) if found and len(found) == limit else None
         return rows, token
 

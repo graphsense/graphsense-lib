@@ -812,17 +812,121 @@ def test_a_utxo_neighbour_is_still_a_decoded_string() -> None:
     assert rows[0]["dst_address"] == NEIGHBOR
 
 
-def test_account_links_refuse_rather_than_failing_on_a_column_name() -> None:
-    """The account link table is keyed (src, dst, tx_page) with no dst_bucket,
-    and `links_response` routes it through `txs_from_rows` instead of reporting
-    two amounts. The UTXO read would die on `Undefined column name dst_bucket`
-    -- a CQL error naming a column rather than the missing feature."""
-    session = FakeSession()
+def _account_link_session(currency: str = "ETH", trace_index=7, log_index=None):
+    """One edge with one transfer, plus the transaction it belongs to."""
+    ref = SimpleNamespace(trace_index=trace_index, log_index=log_index)
+
+    def rows(cql, params):
+        if "link_page_max" in cql:
+            return [Row(link_page_max=0)]
+        if "address_link_transactions" in cql:
+            return [Row(tx_id=99, tx_reference=ref, currency=currency, value=5)]
+        if ".transaction" in cql:
+            return [
+                Row(
+                    tx_id=99,
+                    tx_hash=b"\xab" * 32,
+                    block_id=12,
+                    block_timestamp=1700,
+                    first_trace_index=7,
+                    first_log_index=3,
+                )
+            ]
+        return []
+
+    return FakeSession(rows)
+
+
+def _account_links(session, **kwargs):
     shim = LegacyAdapter(
         {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
     )
-    with pytest.raises(NotAvailable, match="UTXO response shape"):
-        run(shim.list_address_links("eth", "0xaa", "0xbb"))
+    return run(shim.list_address_links("eth", "0xaa", "0xbb", **kwargs))
+
+
+def test_an_account_link_is_one_row_per_transfer_not_two_amounts() -> None:
+    """`links_response` splits on the family: a UTXO link reports input_value
+    and output_value, an account link goes through `txs_from_rows` and reports
+    a transaction. The two share nothing but a method name."""
+    rows, _ = _account_links(_account_link_session())
+    assert len(rows) == 1
+    row = rows[0]
+    assert "input_value" not in row and "output_value" not in row
+    assert row["tx_hash"] == b"\xab" * 32
+    assert row["block_id"] == 12 and row["timestamp"] == 1700
+    assert row["value"] == 5
+
+
+def test_an_account_link_names_the_edge_as_the_two_ends() -> None:
+    """v2 fetches the trace or the log purely to learn a transfer's ends. For
+    an edge the caller already named both, and taking the TRANSACTION's from/to
+    would report the outer transaction's counterparty on every internal call
+    and every token transfer."""
+    rows, _ = _account_links(_account_link_session())
+    assert rows[0]["from_address"] == encode_address("eth", "0xaa")
+    assert rows[0]["to_address"] == encode_address("eth", "0xbb")
+
+
+def test_the_first_trace_of_a_transaction_is_its_root() -> None:
+    """v2 decides external-vs-internal by testing `trace_address` empty. v3
+    does not store that, but traces are emitted depth-first, so a transaction's
+    FIRST trace is its root -- and `first_trace_index` is already on the row as
+    half of the range pointer. Same answer, no extra read."""
+    rows, _ = _account_links(_account_link_session(trace_index=7))
+    assert rows[0]["type"] == "external"
+
+    rows, _ = _account_links(_account_link_session(trace_index=9))
+    assert rows[0]["type"] == "internal"
+    assert rows[0]["trace_index"] == 9
+
+
+def test_a_token_transfer_is_erc20_and_carries_the_log_index() -> None:
+    """`get_tx_identifier` renders `token_tx_id` into the identifier, and v2
+    puts the log index there."""
+    session = _account_link_session(currency="USDT", trace_index=None, log_index=4)
+    rows, _ = _account_links(session)
+    assert rows[0]["type"] == "erc20"
+    assert rows[0]["token_tx_id"] == 4
+    assert rows[0]["currency"] == "USDT"
+
+
+def test_fields_v3_cannot_produce_are_none_rather_than_guessed() -> None:
+    """`raw.trace` keeps no `trace_type` and no `input`, so contract_creation
+    and an internal row's input are not derivable. `_tx_account_from_row` reads
+    them with `.get`, and a plausible wrong value is worse than a missing one."""
+    rows, _ = _account_links(_account_link_session(trace_index=9))
+    assert rows[0]["contract_creation"] is None
+    assert rows[0]["input"] is None and rows[0]["input_parsed"] is None
+
+
+def test_a_link_to_a_transaction_the_raw_keyspace_lacks_is_an_error() -> None:
+    """A torn keyspace, not a row to quietly drop."""
+
+    def rows(cql, params):
+        if "link_page_max" in cql:
+            return [Row(link_page_max=0)]
+        if "address_link_transactions" in cql:
+            return [
+                Row(
+                    tx_id=99,
+                    tx_reference=SimpleNamespace(trace_index=1, log_index=None),
+                    currency="ETH",
+                    value=5,
+                )
+            ]
+        return []
+
+    with pytest.raises(NotAvailable, match="does not have"):
+        _account_links(FakeSession(rows))
+
+
+def test_an_account_link_pages_only_when_the_page_was_full() -> None:
+    """A short page cannot have more behind it; returning a token anyway makes
+    a caller ask for a page that does not exist."""
+    rows, token = _account_links(_account_link_session(), pagesize=100)
+    assert len(rows) == 1 and token is None
+    rows, token = _account_links(_account_link_session(), pagesize=1)
+    assert token == "99"
 
 
 def _relation_rows(**extra):
