@@ -107,6 +107,14 @@ class RunSettings:
     #: not in the lake and the gslib exchange-rates path owns that table.
     rates_keyspace: str
     cassandra_nodes: list[str]
+    #: The *existing* keyspace holding ``token_configuration``, for account
+    #: networks. Read-only, and NOT the same keyspace as the rates: v2 puts
+    #: `exchange_rates` and `token_exchange_rates` in the RAW keyspace but
+    #: `token_configuration` only in the TRANSFORMED one
+    #: (`transformed_account_schema.sql:165`; it appears in neither raw account
+    #: schema). Pointing both at the rates keyspace resolved fine for UTXO,
+    #: which never reads it, and failed on the first account run.
+    tokens_keyspace: str = ""
     username: Optional[str] = None
     password: Optional[str] = None
     s3_credentials: Optional[dict] = None
@@ -171,6 +179,11 @@ class RunSettings:
                 f"raw keyspace       {self.raw_keyspace}      (created, written)",
                 f"derived keyspace   {self.derived_keyspace}      (created, written)",
                 f"rates keyspace     {self.rates_keyspace}      (READ ONLY)",
+                *(
+                    [f"tokens keyspace    {self.tokens_keyspace}      (READ ONLY)"]
+                    if self.tokens_keyspace
+                    else []
+                ),
                 f"cassandra          {', '.join(self.cassandra_nodes) or '(none)'}",
                 f"spark profile      {self.spark_profile or '(baseline)'}",
                 f"cassandra writes   {'sidecar bulk writer' if self.sidecar else 'connector CQL path'}",
@@ -230,6 +243,7 @@ def from_config(
         raw_keyspace=v3_keyspace(network, Kind.RAW, label),
         derived_keyspace=v3_keyspace(network, Kind.DERIVED, label),
         rates_keyspace=keyspaces.raw_keyspace_name,
+        tokens_keyspace=keyspaces.transformed_keyspace_name,
         cassandra_nodes=list(environment.cassandra_nodes),
         username=environment.username,
         password=environment.password,
@@ -257,8 +271,11 @@ def assert_no_conflict(settings: RunSettings, config: Any) -> None:
                 "--label to move the v3 run out of its way; nothing here will "
                 "write to a configured keyspace."
             )
-    if settings.rates_keyspace in (
-        settings.raw_keyspace,
-        settings.derived_keyspace,
+    for name, what in (
+        (settings.rates_keyspace, "rates"),
+        (settings.tokens_keyspace, "tokens"),
     ):
-        raise UnsafeKeyspace("the read-only rates keyspace cannot be a write target")
+        if name and name in (settings.raw_keyspace, settings.derived_keyspace):
+            raise UnsafeKeyspace(
+                f"the read-only {what} keyspace cannot be a write target"
+            )

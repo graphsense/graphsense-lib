@@ -23,6 +23,7 @@ def _settings(network: str) -> RunSettings:
         raw_keyspace=f"{network}_raw_v3",
         derived_keyspace=f"{network}_derived_v3",
         rates_keyspace=f"{network}_raw_20260101",
+        tokens_keyspace=f"{network}_transformed_20260101",
         cassandra_nodes=["node"],
     )
 
@@ -34,6 +35,27 @@ def test_every_network_can_run_both_stages(spark, network: str) -> None:
     with pytest.raises(Exception) as caught:
         job.run(spark, _settings(network), dry_run=True)
     assert "UTXO-only" not in str(caught.value)
+
+
+@pytest.mark.parametrize("network", ["eth", "trx"])
+def test_account_run_refuses_without_a_tokens_keyspace(spark, network: str) -> None:
+    """`token_configuration` is in the v2 TRANSFORMED keyspace, never the raw
+    one, so an account run that has only the rates keyspace cannot read it --
+    and must say so at submit time rather than after writing the raw stage."""
+    from dataclasses import replace
+
+    with pytest.raises(SystemExit) as caught:
+        job.run(spark, replace(_settings(network), tokens_keyspace=""), dry_run=True)
+    assert "token_configuration" in str(caught.value)
+
+
+def test_utxo_run_needs_no_tokens_keyspace(spark) -> None:
+    """The same omission is harmless for UTXO, which never reads the table."""
+    from dataclasses import replace
+
+    with pytest.raises(Exception) as caught:
+        job.run(spark, replace(_settings("btc"), tokens_keyspace=""), dry_run=True)
+    assert "token_configuration" not in str(caught.value)
 
 
 V2_RAW = "date STRING, fiat_values MAP<STRING,DOUBLE>"

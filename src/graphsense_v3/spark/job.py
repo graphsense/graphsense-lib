@@ -499,6 +499,15 @@ def run(
     # when the settings were built, and are checked again on every write.
     assert_v3_keyspace(settings.raw_keyspace)
     assert_v3_keyspace(settings.derived_keyspace)
+    if family is Family.ACCOUNT and not settings.tokens_keyspace:
+        # Decidable now, and only account runs read it. Left to the read it
+        # would surface as an unresolvable table name at the START of the
+        # derived stage -- after the entire raw stage had been written.
+        raise SystemExit(
+            "an account backfill needs `token_configuration`, which lives in "
+            "the v2 TRANSFORMED keyspace, but no transformed keyspace is "
+            f"configured for {network!r} in environment {settings.env!r}"
+        )
 
     lake = DeltaLake(spark, settings.lake_root, network)
     loader = raw_utxo if family is Family.UTXO else raw_account
@@ -616,6 +625,7 @@ def run(
         raw_frames,
         settings.derived_keyspace,
         settings.rates_keyspace,
+        settings.tokens_keyspace,
         config=config,
         dry_run=dry_run,
         sidecar=settings.sidecar,
@@ -630,6 +640,7 @@ def _run_derived(
     raw_frames: dict,
     derived_keyspace: str,
     rates_keyspace: str,
+    tokens_keyspace: str,
     *,
     config,
     dry_run: bool,
@@ -681,11 +692,13 @@ def _run_derived(
         else:
             # token_configuration and token_exchange_rates are curated, not
             # derived, so they are read from the keyspace that already holds
-            # them rather than rebuilt here.
+            # them rather than rebuilt here -- and that is NOT one keyspace:
+            # v2 has the rates in the raw keyspace and the configuration only
+            # in the transformed one.
             frames = derived_account.build(
                 raw_frames["trace"],
                 raw_frames["log"],
-                read_cassandra(spark, rates_keyspace, "token_configuration"),
+                read_cassandra(spark, tokens_keyspace, "token_configuration"),
                 raw_frames["block"],
                 rates,
                 network,
@@ -736,7 +749,7 @@ def _run_derived(
             # Curated, not derived -- but a reader needs the decimals and the
             # peg to interpret a token value at all, so it belongs here too.
             writer.write(
-                read_cassandra(spark, rates_keyspace, "token_configuration"),
+                read_cassandra(spark, tokens_keyspace, "token_configuration"),
                 schema.table("token_configuration"),
                 derived_keyspace,
             )
