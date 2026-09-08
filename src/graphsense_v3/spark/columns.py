@@ -119,13 +119,29 @@ def as_varint(column: "Column") -> "Column":
     return column.cast(DecimalType(VARINT_PRECISION, 0))
 
 
-def bytes_to_varint_udf():
+def bytes_to_varint_udf(column: str = "?", *, null_when_too_wide: bool = False):
     """Big-endian bytes -> the decimal a Cassandra ``varint`` column takes.
 
     The lake stores wide integers (``value``, ``difficulty``, ``gas_price``) as
     big-endian bytes; ``from_bytes_df`` does the same conversion on the ingest
     side. Raises on a value too wide for Spark's decimal, because a backfill that
     silently wrapped a balance would be discovered by a customer, not by us.
+
+    ``column`` names the column in that error. Which one it is decides whether
+    the value is a data bug or a fact about the chain: a native-currency amount
+    over 38 digits cannot happen (ETH's whole supply is ~1.2e26 wei), while an
+    ERC-20 transfer value is a full uint256 and a scam token minting 2^255 units
+    is ordinary. Cassandra's ``varint`` is arbitrary precision and holds either;
+    the 38-digit ceiling is Arrow's decimal128, imposed by this UDF's return
+    type, and nothing downstream of it.
+
+    ``null_when_too_wide`` is therefore set ONLY for the token transfer value,
+    where too wide is a fact rather than a fault: the value becomes NULL, which
+    says "not representable" instead of a wrapped number, and
+    :func:`graphsense_v3.spark.derived_account.unrepresentable_values` counts
+    them so a run reports what it could not store. Everywhere else the default
+    stands and the run stops, because a native amount that wide means the bytes
+    were misread.
     """
     import decimal
 
@@ -140,9 +156,13 @@ def bytes_to_varint_udf():
             return None
         value = int.from_bytes(raw, byteorder="big")
         if value >= limit:
+            if null_when_too_wide:
+                return None
             raise ValueError(
-                f"integer of {len(raw)} bytes exceeds {VARINT_PRECISION} decimal "
-                f"digits and cannot be stored as a Cassandra varint: {value}"
+                f"{column}: integer of {len(raw)} bytes exceeds "
+                f"{VARINT_PRECISION} decimal digits, which is the widest Arrow "
+                f"decimal a pandas UDF can return (Cassandra's varint itself "
+                f"has no such limit): {value}"
             )
         return decimal.Decimal(value)
 

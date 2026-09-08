@@ -19,6 +19,7 @@ model rather than from us:
 # NOTE: no `from __future__ import annotations` -- this module builds pandas
 # UDFs through graphsense_v3.spark.columns.
 
+import logging
 from typing import TYPE_CHECKING, Optional
 
 from graphsense_v3.config import NetworkConfig, config_for
@@ -56,6 +57,9 @@ TABLES = (
     "address_link_transactions",
     "balance",
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _topic_address(topics: "DataFrame", index: int):
@@ -131,7 +135,9 @@ def token_transfers(logs: "DataFrame", token_config: "DataFrame") -> "DataFrame"
     """
     from pyspark.sql import functions as F
 
-    varint = bytes_to_varint_udf()
+    varint = bytes_to_varint_udf(
+        "token transfer value (ERC-20 log data)", null_when_too_wide=True
+    )
     decoded = (
         logs.where(F.col("topic0") == F.lit(TRANSFER_TOPIC0))
         # from and to are indexed, so they are topics 1 and 2; the value is the
@@ -494,9 +500,7 @@ def _relation_side(
     counts = moves.groupBy(*keys).agg(as_varint(F.count("*")).alias("no_transactions"))
 
     def totals(rows: "DataFrame", extra_keys: list):
-        amounts = rows.groupBy(*keys, *extra_keys).agg(
-            F.sum("value").cast("decimal(38,0)").alias("_value")
-        )
+        amounts = rows.groupBy(*keys, *extra_keys).agg(common.sum_or_null())
         fiat = common.sum_fiat(rows, keys + extra_keys, config.fiat_currencies)
         return amounts.join(fiat, on=keys + extra_keys, how="left")
 
@@ -612,9 +616,7 @@ def address_stats(
             .alias(f"no_{prefix}_txs_zero_value"),
         )
         native = rows.where(F.col("currency") == symbol)
-        amounts = native.groupBy("address").agg(
-            F.sum("value").cast("decimal(38,0)").alias("_value")
-        )
+        amounts = native.groupBy("address").agg(common.sum_or_null())
         totals = amounts.join(
             common.sum_fiat(native, ["address"], config.fiat_currencies),
             on="address",
@@ -627,7 +629,7 @@ def address_stats(
         )
         token_rows = rows.where(F.col("currency") != symbol)
         token_amounts = token_rows.groupBy("address", "currency").agg(
-            F.sum("value").cast("decimal(38,0)").alias("_value")
+            common.sum_or_null()
         )
         tokens = (
             token_amounts.join(
@@ -722,6 +724,28 @@ def balance_events(
     )
 
 
+def unrepresentable_values(moves: "DataFrame") -> list:
+    """``(currency, rows)`` for transfers this backfill could not store.
+
+    A NULL ``value`` reaches here from exactly one place: a token transfer
+    whose uint256 exceeded the 38-digit Arrow decimal ceiling
+    (`columns.bytes_to_varint_udf`). Reported rather than raised -- a scam
+    token minting 2^255 units is ordinary, and refusing the run over it would
+    make the whole chain unbackfillable -- but never silent, because the rows
+    ARE missing from that asset's totals.
+    """
+    from pyspark.sql import functions as F
+
+    return [
+        (row["currency"], row["rows"])
+        for row in moves.where(F.isnull(F.col("value")))
+        .groupBy("currency")
+        .agg(F.count("*").alias("rows"))
+        .orderBy(F.desc("rows"))
+        .collect()
+    ]
+
+
 def build(
     traces: "DataFrame",
     logs: "DataFrame",
@@ -749,6 +773,18 @@ def build(
         token_config,
         network,
     ).cache()
+    # `moves` is cached, so this is a scan of a materialised frame rather than
+    # a second pass over the logs -- and it runs before anything is written, so
+    # the count is in the log above the writes it explains.
+    too_wide = unrepresentable_values(moves)
+    if too_wide:
+        logger.warning(
+            "%d transfer(s) carry a value wider than 38 digits and were stored "
+            "NULL; that asset's totals for the addresses involved are NULL too, "
+            "not understated. By asset: %s",
+            sum(rows for _, rows in too_wide),
+            ", ".join(f"{currency}={rows}" for currency, rows in too_wide),
+        )
     all_legs = legs(moves).cache()
     events = balance_events(all_legs, transactions, blocks, fees, network).cache()
     paged = common.with_ordinals(

@@ -86,6 +86,25 @@ def count_column(name: str) -> "Column":
     return as_varint(F.coalesce(F.col(name), F.lit(0))).alias(name)
 
 
+def sum_or_null(column: str = "value", alias: str = "_value") -> "Column":
+    """SUM, but NULL as soon as one addend is NULL.
+
+    `F.sum` SKIPS nulls. A token transfer whose uint256 value exceeded the
+    varint ceiling is stored NULL (see `columns.bytes_to_varint_udf`), so a
+    plain sum would silently UNDERSTATE that asset's total rather than say it
+    is unknown -- and an understated balance is the failure mode that gets
+    found by a customer. Every caller groups by currency as well as entity, so
+    this nulls one asset's total, never the native one.
+    """
+    from pyspark.sql import functions as F
+
+    return (
+        F.when(F.max(F.isnull(F.col(column))), F.lit(None).cast("decimal(38,0)"))
+        .otherwise(F.sum(F.col(column)).cast("decimal(38,0)"))
+        .alias(alias)
+    )
+
+
 def currency_struct(value: "Column", fiat: "Column") -> "Column":
     """The ``currency`` UDT: a base-unit amount and its fiat equivalents."""
     from pyspark.sql import functions as F

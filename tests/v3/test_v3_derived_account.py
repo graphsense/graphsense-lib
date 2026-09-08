@@ -240,6 +240,69 @@ def test_token_transfer_is_decoded_from_the_log(logs, token_config) -> None:
     assert row["trace_index"] is None and row["log_index"] == 0
 
 
+def test_a_uint256_too_wide_for_a_decimal_is_stored_null(
+    spark, logs, token_config
+) -> None:
+    """A scam token minting 2^255 units is ordinary, so the run must not stop
+    on it -- but NULL, never a wrapped or clamped number: Cassandra's varint
+    would hold it and Arrow's decimal128 is what cannot."""
+    from pyspark.sql import functions as F
+
+    huge = logs.where(F.col("address") == USDT).withColumn("data", F.lit(_word(2**255)))
+    rows = tf.token_transfers(huge, token_config).collect()
+    assert len(rows) == 1
+    assert rows[0]["value"] is None
+    assert rows[0]["currency"] == "USDT"
+
+
+def test_a_native_value_that_wide_still_stops_the_run(traces) -> None:
+    """The same width in a native amount is a misread, not a chain fact: ETH's
+    entire supply is ~1.2e26 wei. That one must fail loudly."""
+    from pyspark.sql import functions as F
+
+    from graphsense_v3.spark.columns import bytes_to_varint_udf
+
+    varint = bytes_to_varint_udf("trace.value")
+    with pytest.raises(Exception) as caught:
+        traces.select(varint(F.lit(_word(2**255))).alias("v")).collect()
+    assert "38" in str(caught.value)
+
+
+def test_a_total_containing_an_unrepresentable_value_is_null_not_short(
+    spark,
+) -> None:
+    """`F.sum` skips nulls, so the affected asset's total would silently
+    UNDERSTATE. NULL says unknown; an understated balance says a wrong number
+    with confidence."""
+    from graphsense_v3.spark import derived_common as common
+
+    rows = spark.createDataFrame(
+        [
+            ("a", "USDT", Decimal(5)),
+            ("a", "USDT", None),
+            ("a", "ETH", Decimal(7)),
+        ],
+        "address STRING, currency STRING, value DECIMAL(38,0)",
+    )
+    totals = {
+        (r["address"], r["currency"]): r["_value"]
+        for r in rows.groupBy("address", "currency").agg(common.sum_or_null()).collect()
+    }
+    assert totals[("a", "USDT")] is None
+    # The native total is untouched: only the asset with the null is unknown.
+    assert int(totals[("a", "ETH")]) == 7
+
+
+def test_unrepresentable_values_are_counted_per_asset(spark) -> None:
+    """A run has to say what it could not store, or the missing rows are only
+    discoverable by noticing a balance is wrong."""
+    moves = spark.createDataFrame(
+        [("USDT", None), ("USDT", None), ("ETH", Decimal(3)), ("MOON", None)],
+        "currency STRING, value DECIMAL(38,0)",
+    )
+    assert tf.unrepresentable_values(moves) == [("USDT", 2), ("MOON", 1)]
+
+
 def test_an_unconfigured_contract_is_not_a_token(logs, token_config) -> None:
     """Any contract can emit a Transfer with the same signature. Only a
     configured asset has a ticker, decimals and a peg to price it with."""

@@ -96,7 +96,7 @@ def _range_pointers(
 def _block(blocks: "DataFrame", config: NetworkConfig) -> "DataFrame":
     from pyspark.sql import functions as F
 
-    varint = bytes_to_varint_udf()
+    varint = bytes_to_varint_udf("block.difficulty/total_difficulty")
     return blocks.select(
         id_group(F.col("block_id"), config.block_bucket_size).alias("block_id_group"),
         F.col("block_id").cast("int").alias("block_id"),
@@ -127,7 +127,7 @@ def _transaction(
 ) -> "DataFrame":
     from pyspark.sql import functions as F
 
-    varint = bytes_to_varint_udf()
+    varint = bytes_to_varint_udf("transaction.value/gas_price")
     joined = txs.join(pointers, on="tx_hash", how="left")
     return joined.select(
         id_group(F.col("block_id"), config.tx_block_bucket_size).alias(
@@ -192,7 +192,7 @@ def _trace(
     """
     from pyspark.sql import functions as F
 
-    varint = bytes_to_varint_udf()
+    varint = bytes_to_varint_udf("trace.value")
     if network == "trx":
         if ids is None:
             raise ValueError("a trx trace needs tx_ids_by_hash to resolve tx_id")
