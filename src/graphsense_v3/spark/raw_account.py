@@ -504,7 +504,11 @@ def contiguity_problems(
        the runs TILE: disjoint contiguous runs covering 0..n-1 cannot overlap.
     4. **One block per transaction hash.** :func:`_pointers` groups by
        ``tx_hash`` alone, so a hash occurring in two blocks would take a min
-       across both and point into the wrong one.
+       across both and point into the wrong one. Rows with no ``tx_hash`` are
+       excluded here and only here: they are ONE group spanning the whole
+       range, so including them fails every healthy account chain, and they are
+       dropped before any pointer is written because an equi-join on tx_hash
+       never matches NULL.
 
     Rows with no ``tx_hash`` -- ETH block-REWARD traces belong to the block,
     not to a transaction -- are one group of their own under check 1. They are
@@ -560,16 +564,38 @@ def contiguity_problems(
             f"so the transactions' runs do not tile the block's {table}s"
         )
 
-    split = (
-        events.groupBy("tx_hash")
+    # NOT NULL: the rows with no tx_hash are one group under this grouping, so
+    # they span every block in the range and check 4 fires with a count of 1 on
+    # a perfectly healthy chain -- which is what an eth dry run reported. They
+    # cannot reach a pointer either way: `_pointers` groups by tx_hash and
+    # `_transaction` joins that back on tx_hash, and an equi-join never matches
+    # NULL, so the NULL group is dropped before a pointer column is written.
+    # Check 1 still sees these rows -- per (block_id, tx_hash), where NULL is a
+    # group WITHIN one block -- so an interleaved reward trace is still caught.
+    split_rows = (
+        # `F.isnotnull`, not `Column.isNotNull`: same thing at runtime, but ty
+        # cannot resolve the method off pyspark's operator factory.
+        events.where(F.isnotnull(F.col("tx_hash")))
+        .groupBy("tx_hash")
         .agg(F.countDistinct("block_id").alias("blocks"))
         .where(F.col("blocks") > 1)
-        .count()
     )
+    split = split_rows.count()
     if split:
+        # Named, not just counted. A bare count cannot be acted on, and the two
+        # causes need opposite responses: a real duplicate hash is a chain fact
+        # to work around, while a sentinel (all-zero, say) standing in for
+        # "no transaction" is this check needing to exclude that value too.
+        sample = ", ".join(
+            "0x" + row["hex"].lower()
+            for row in split_rows.select(F.hex("tx_hash").alias("hex"))
+            .limit(3)
+            .collect()
+        )
         problems.append(
             f"{split} transaction hashes carry {table}s in more than one block; "
-            f"the pointer would take a min across both and address the wrong one"
+            f"the pointer would take a min across both and address the wrong "
+            f"one (e.g. {sample})"
         )
     return problems
 

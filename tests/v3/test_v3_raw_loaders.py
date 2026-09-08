@@ -709,6 +709,43 @@ def test_eth_preflight_catches_a_hash_that_spans_two_blocks(spark, eth_lake) -> 
     assert any("more than one block" in problem for problem in problems)
 
 
+def test_eth_preflight_ignores_reward_traces_when_checking_for_split_hashes(
+    spark, eth_lake
+) -> None:
+    """A block-REWARD trace belongs to the block, not to a transaction, so its
+    tx_hash is NULL -- and NULL is ONE group, spanning every block in the run.
+    Counting it as a hash in more than one block fails every healthy account
+    chain, which is what an eth dry run reported over 100k blocks."""
+    from pyspark.sql import functions as F
+
+    traces = eth_lake.tables["trace"]
+    reward = traces.withColumn("tx_hash", F.lit(None).cast("binary"))
+    # One reward trace per block, APPENDED after the block's transaction
+    # traces, which is the shape the checks must accept.
+    spread = reward.withColumn("trace_index", F.lit(1).cast("int")).union(
+        reward.withColumn("block_id", F.lit(1).cast("int")).withColumn(
+            "trace_index", F.lit(0).cast("int")
+        )
+    )
+    lake = FakeLake(spark, {**eth_lake.tables, "trace": traces.union(spread)})
+    assert raw_account.preflight(lake, "eth") == []
+
+
+def test_eth_preflight_still_faults_a_real_hash_in_two_blocks(spark, eth_lake) -> None:
+    """Excluding NULL must not excuse an actual duplicate, and the message has
+    to NAME it: a bare count cannot distinguish a chain fact from a sentinel
+    value the check should also have excluded."""
+    from pyspark.sql import functions as F
+
+    rows = eth_lake.tables["trace"]
+    elsewhere = rows.withColumn("block_id", F.lit(1).cast("int"))
+    lake = FakeLake(spark, {**eth_lake.tables, "trace": rows.union(elsewhere)})
+    problems = raw_account.preflight(lake, "eth")
+    split = [p for p in problems if "more than one block" in p]
+    assert len(split) == 1
+    assert "0x" + "a0" * 32 in split[0]
+
+
 def test_eth_preflight_does_not_fault_a_block_that_emitted_nothing(
     spark, eth_lake
 ) -> None:
