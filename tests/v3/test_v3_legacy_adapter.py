@@ -1065,3 +1065,70 @@ def test_a_bare_tx_id_token_still_resumes() -> None:
     from graphsense_v3.db.legacy import decode_page_token
 
     assert decode_page_token("8270462039621668") == (8270462039621668, 0)
+
+
+def test_a_block_answers_to_both_count_names() -> None:
+    """`_block_from_row` subscripts `transaction_count` for an eth-like
+    currency and `no_transactions` for UTXO. v3 renamed the account column to
+    `no_transactions` for consistency across the raw tables, so the eth branch
+    raised KeyError inside the service -- the same trap `no_blocks` already has
+    a mapping for."""
+    session = FakeSession(
+        lambda cql, params: [Row(block_id=7, no_transactions=3, timestamp=99)]
+    )
+    shim = LegacyAdapter(
+        {"eth": dal_for(session, "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG))}
+    )
+    row = run(shim.get_block("eth", 7))
+    assert row["transaction_count"] == 3
+    # ... and the UTXO name survives, because the other branch reads it.
+    assert row["no_transactions"] == 3
+
+
+def test_a_missing_block_is_still_none() -> None:
+    shim = LegacyAdapter(
+        {
+            "eth": dal_for(
+                FakeSession(), "eth_raw_v3_t", "eth_derived_v3_t", dict(CONFIG)
+            )
+        }
+    )
+    assert run(shim.get_block("eth", 7)) is None
+
+
+def test_an_account_address_arrives_already_canonical() -> None:
+    """`cannonicalize_address` runs before EVERY DAL call, and its canonical
+    form is per family:
+
+        elif currency == "eth":
+            return hex_str_to_bytes(strip_0x(address))
+
+    so the adapter is handed bytes for an account network and a string for a
+    UTXO one. Assuming a string sent every account call into `strip_0x`, where
+    `bytes.startswith("0x")` raises TypeError from inside gslib -- naming
+    neither the family nor the adapter, and taking out get_address,
+    list_address_txs, the neighbour listings and /links at once."""
+    from graphsenselib.utils.address import cannonicalize_address
+
+    shim = LegacyAdapter({})
+    text = "0xc765353a888d0e5ffa105bf768c843c1d4824174"
+    canonical = cannonicalize_address("eth", text)
+    assert isinstance(canonical, bytes), "gslib no longer canonicalises to bytes"
+    # The bytes route through unchanged, and agree with encoding the string.
+    assert shim._bytes("eth", canonical) == canonical
+    assert shim._bytes("eth", text) == canonical
+
+
+def test_a_utxo_address_is_still_encoded_from_its_string() -> None:
+    """UTXO canonicalisation returns a string, so the encode path must stay."""
+    shim = LegacyAdapter({})
+    assert shim._bytes("ltc", ADDRESS) == encode_address("ltc", ADDRESS)
+
+
+def test_a_memoryview_is_accepted_too() -> None:
+    """The driver hands blobs back in several buffer shapes; a row read out of
+    one listing and fed into the next call must not depend on which."""
+    shim = LegacyAdapter({})
+    raw = encode_address("eth", "0xc765353a888d0e5ffa105bf768c843c1d4824174")
+    assert shim._bytes("eth", memoryview(raw)) == raw
+    assert shim._bytes("eth", bytearray(raw)) == raw

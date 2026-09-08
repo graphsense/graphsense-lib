@@ -151,8 +151,28 @@ class LegacyAdapter:
                 f"{', '.join(sorted(self.dals)) or '(none)'}"
             ) from None
 
-    def _bytes(self, currency: str, address: str) -> bytes:
-        """v2 passes addresses as strings; v3 keys on the packed bytes."""
+    def _bytes(self, currency: str, address) -> bytes:
+        """The address as v3 keys it, from whatever the service hands over.
+
+        NOT always a string. The service canonicalises before every DAL call --
+        `addresses_service.list_address_txs`, `common.get_address` and the rest
+        all run `cannonicalize_address` first -- and that function's canonical
+        form is PER FAMILY:
+
+            elif currency == "eth":
+                return hex_str_to_bytes(strip_0x(address))
+
+        because v2's account DAL keys on bytes. UTXO stays a string. So this
+        receives bytes for an account network and a string for a UTXO one, and
+        assuming a string sent every account call into `strip_0x`, where
+        `bytes.startswith("0x")` raises TypeError -- reported from inside
+        gslib, naming neither the family nor the adapter.
+
+        Already-bytes passes straight through: it is the same value
+        `encode_address` would produce, and re-encoding it is what fails.
+        """
+        if isinstance(address, (bytes, bytearray, memoryview)):
+            return bytes(address)
         return encode_address(currency.lower(), address)
 
     # -- statistics and meta ----------------------------------------------
@@ -265,7 +285,26 @@ class LegacyAdapter:
     # -- blocks ------------------------------------------------------------
 
     async def get_block(self, currency: str, height: int) -> Optional[dict]:
-        return await self._dal(currency).block(height)
+        """v3's block row, under the names `blocks_service` subscripts.
+
+        v3 renamed the account column: `definitions.py` carries
+        ``no_transactions`` with the note "was smallint, and was
+        transaction_count", so every raw table spells a count the same way.
+        `_block_from_row` reads ``row["transaction_count"]`` by SUBSCRIPT for
+        an eth-like currency, so the rename surfaces as a KeyError inside the
+        service rather than as a missing field at the boundary -- the same
+        shape of trap `get_currency_statistics` already maps around for
+        ``no_blocks``.
+
+        Added rather than renamed: the UTXO branch of `_block_from_row` reads
+        ``no_transactions``, so both names have to answer.
+        """
+        row = await self._dal(currency).block(height)
+        if row is None:
+            return None
+        if "transaction_count" not in row and "no_transactions" in row:
+            row = {**row, "transaction_count": row["no_transactions"]}
+        return row
 
     async def get_block_timestamp(self, currency: str, height: int) -> Optional[dict]:
         """A ROW, not the timestamp.
