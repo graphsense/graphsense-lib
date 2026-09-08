@@ -255,6 +255,54 @@ def test_a_uint256_too_wide_for_a_decimal_is_stored_null(
     assert rows[0]["currency"] == "USDT"
 
 
+def test_an_unconfigured_token_cannot_decide_the_run(spark, logs, token_config) -> None:
+    """The value decode happens AFTER the token_configuration join, so a
+    contract this keyspace does not store cannot reach the decoder at all. It
+    could before, and an unconfigured token minting 2^255 units failed the
+    first eth backfill on a row that was about to be discarded anyway."""
+    from pyspark.sql import functions as F
+
+    unconfigured = logs.where(F.col("address") != USDT).withColumn(
+        "data", F.lit(_word(2**255))
+    )
+    assert unconfigured.count() == 1
+    assert tf.token_transfers(unconfigured, token_config).collect() == []
+
+
+def test_the_decode_never_runs_on_a_row_the_join_discards(
+    monkeypatch, logs, token_config
+) -> None:
+    """The ORDERING, not just its outcome. A decoder that raises on everything
+    must still yield an empty result for unconfigured logs -- it is never
+    reached. With the decode before the join it would raise instead, which is
+    precisely how an eth backfill failed on a row it was about to discard."""
+    import pandas as pd
+    from pyspark.sql import functions as F
+    from pyspark.sql.functions import pandas_udf
+    from pyspark.sql.types import DecimalType
+
+    @pandas_udf(DecimalType(38, 0))  # ty: ignore[no-matching-overload]
+    def _never(values: pd.Series) -> pd.Series:
+        raise AssertionError("the decoder ran on a row the join discards")
+
+    monkeypatch.setattr(tf, "bytes_to_varint_udf", lambda *a, **k: _never)
+    unconfigured = logs.where(F.col("address") != USDT)
+    assert unconfigured.count() == 1
+    assert tf.token_transfers(unconfigured, token_config).collect() == []
+
+
+def test_only_configured_assets_are_counted_as_unrepresentable(
+    spark, logs, token_config
+) -> None:
+    """The counter has to mean 'we could not store this', not 'we decoded
+    something we were going to throw away'."""
+    from pyspark.sql import functions as F
+
+    wide = logs.withColumn("data", F.lit(_word(2**255)))
+    transfers = tf.token_transfers(wide, token_config)
+    assert tf.unrepresentable_values(transfers) == [("USDT", 1)]
+
+
 def test_a_native_value_that_wide_still_stops_the_run(traces) -> None:
     """The same width in a native amount is a misread, not a chain fact: ETH's
     entire supply is ~1.2e26 wei. That one must fail loudly."""

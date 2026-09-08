@@ -62,7 +62,7 @@ TABLES = (
 logger = logging.getLogger(__name__)
 
 
-def _topic_address(topics: "DataFrame", index: int):
+def _topic_address(index: int):
     """The address in an indexed topic: 32 bytes, left-padded, address last."""
     from pyspark.sql import functions as F
 
@@ -132,40 +132,45 @@ def token_transfers(logs: "DataFrame", token_config: "DataFrame") -> "DataFrame"
     Joined against ``token_configuration`` rather than decoding every log: an
     arbitrary contract can emit a `Transfer` with the same signature, and only
     configured assets have a ticker, decimals and a peg to price them with.
+
+    The join comes BEFORE the value decode, and the order is the point. Most
+    `Transfer` logs on eth are emitted by contracts this keyspace does not
+    store, so decoding first spends the varint UDF -- a Python worker round
+    trip, on one of the hottest columns in the job -- on rows the join is about
+    to discard. It also let a discarded row decide the run: an unconfigured
+    token minting 2^255 units raised out of the decoder before anything could
+    drop it, which is how an eth backfill first failed here.
+
+    So `null_when_too_wide` now describes only CONFIGURED assets, and
+    :func:`unrepresentable_values` counts only values that would really have
+    been stored.
     """
     from pyspark.sql import functions as F
 
     varint = bytes_to_varint_udf(
         "token transfer value (ERC-20 log data)", null_when_too_wide=True
     )
-    decoded = (
+    return (
         logs.where(F.col("topic0") == F.lit(TRANSFER_TOPIC0))
         # from and to are indexed, so they are topics 1 and 2; the value is the
         # single non-indexed parameter and occupies the first word of `data`.
         .where(F.size(F.col("topics")) >= 3)
+        .withColumnRenamed("address", "token_address")
+        .join(
+            token_config.select("token_address", "currency_ticker"),
+            on="token_address",
+            how="inner",
+        )
         .select(
             F.col("tx_id"),
             F.col("block_id"),
-            F.col("address").alias("token_address"),
-            _topic_address(logs, 1).alias("src_address"),
-            _topic_address(logs, 2).alias("dst_address"),
+            _topic_address(1).alias("src_address"),
+            _topic_address(2).alias("dst_address"),
             varint(F.expr("substring(data, 1, 32)")).alias("value"),
+            F.col("currency_ticker").alias("currency"),
+            F.lit(None).cast("int").alias("trace_index"),
             F.col("log_index").cast("int").alias("log_index"),
         )
-    )
-    return decoded.join(
-        token_config.select("token_address", "currency_ticker"),
-        on="token_address",
-        how="inner",
-    ).select(
-        F.col("tx_id"),
-        F.col("block_id"),
-        F.col("src_address"),
-        F.col("dst_address"),
-        F.col("value"),
-        F.col("currency_ticker").alias("currency"),
-        F.lit(None).cast("int").alias("trace_index"),
-        F.col("log_index"),
     )
 
 
