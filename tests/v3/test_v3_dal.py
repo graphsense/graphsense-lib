@@ -768,3 +768,43 @@ def test_the_base_refuses_rather_than_guessing_a_family() -> None:
     ):
         with pytest.raises(NotImplementedError, match="dal_for"):
             run(call)
+
+
+# --------------------------------------------------------------------------- #
+# exchange_rates: the native coin is dense, a token is not                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_token_rate_is_read_at_or_before_the_block() -> None:
+    """The merged table inherited v2's density: the native coin has a row per
+    block, a token only where a price was fetched. An exact match finds
+    nothing on most blocks and prices the transfer at nothing."""
+    dal, session = make(lambda cql, params: [Row(fiat_values={"eur": 1.5})])
+    assert run(dal.rate_at_or_before("USDT", 500)) == {"eur": 1.5}
+    cql, params = session.seen[0]
+    assert "block_id <= %s" in cql and "LIMIT 1" in cql
+    assert params[0] == "USDT" and params[2] == 500
+
+
+def test_a_token_rate_walks_back_through_groups() -> None:
+    """A token can go a whole bucket without a price. The bound stops helping
+    once the group changes -- every earlier group ends below the block -- so
+    it moves to that group's last block."""
+    seen: list = []
+
+    def rows(cql, params):
+        seen.append(params[1:])
+        return [Row(fiat_values={"eur": 2.0})] if len(seen) == 3 else []
+
+    dal, _ = make(rows)
+    assert run(dal.rate_at_or_before("USDT", 250)) == {"eur": 2.0}
+    groups = [group for group, _block in seen]
+    assert groups == [2, 1, 0]
+    # Not still 250: the second read asks for the last block of group 1.
+    assert seen[1][1] < 250
+
+
+def test_a_token_with_no_rate_anywhere_is_none_not_an_endless_walk() -> None:
+    dal, session = make(lambda cql, params: [])
+    assert run(dal.rate_at_or_before("USDT", 10_000)) is None
+    assert len(session.seen) == core.BLOCK_BELOW_MAX_GROUPS

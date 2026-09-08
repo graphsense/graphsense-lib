@@ -1557,3 +1557,131 @@ def test_block_by_date_asks_for_the_block_strictly_after() -> None:
     run(shim.get_block_by_date_allow_filtering("ltc", 1788442000))
     cql, _params = session.seen[0]
     assert "timestamp > %s" in cql and "timestamp >= %s" not in cql
+
+
+def _unpegged_listing(peg=None, rate_rows=None):
+    """One listing row for an unpegged token, plus that token's own rate."""
+    ref = SimpleNamespace(trace_index=None, log_index=4)
+    tx_id = (12 << 32) + 1
+    seen: list = []
+
+    def rows(cql, params):
+        if "token_configuration" in cql:
+            return [
+                Row(
+                    currency_ticker="SHIB",
+                    token_address=b"\x5c" * 20,
+                    decimal_divisor=10**18,
+                    peg_currency=peg,
+                )
+            ]
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            return [
+                Row(
+                    tx_id=tx_id,
+                    value=5,
+                    balance=None,
+                    is_outgoing=True,
+                    currency="SHIB",
+                    tx_reference=ref,
+                )
+            ]
+        if ".transaction" in cql:
+            return [
+                Row(tx_id=tx_id, tx_hash=TX_HASH, block_id=12, block_timestamp=1700)
+            ]
+        if ".log" in cql:
+            return [Row(block_id=12, log_index=4, topics=[b"\x00" * 32] * 3)]
+        if "exchange_rates" in cql:
+            seen.append(params)
+            return (
+                rate_rows if rate_rows is not None else [Row(fiat_values={"usd": 0.5})]
+            )
+        return []
+
+    shim = LegacyAdapter(
+        {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
+    )
+    run(shim.preload_token_configuration())
+    listed, _ = run(shim.list_address_txs("eth", "0xaa"))
+    return listed, seen
+
+
+def test_an_unpegged_token_row_carries_its_own_rate() -> None:
+    """Without it `map_rates_for_peged_tokens` has nothing to convert with and
+    returns EMPTY fiat -- not a wrong number, but no number, on every row of
+    that token. v2 attaches the rate in `_attach_token_tx_rates`."""
+    rows, reads = _unpegged_listing()
+    assert rows[0]["type"] == "erc20"
+    assert rows[0]["token_rate"] == [
+        {"code": "eur", "value": 0.0},
+        {"code": "usd", "value": 0.5},
+    ]
+    # One lookup for the distinct (asset, block), keyed by the TICKER.
+    assert len(reads) == 1 and reads[0][0] == "SHIB"
+
+
+def test_a_pegged_token_row_is_not_looked_up() -> None:
+    """Its branch in `map_rates_for_peged_tokens` returns before `token_rate`
+    is read, so the lookup would be a read per page for nothing. v2 still sets
+    the key on every erc20 row, so this does too."""
+    rows, reads = _unpegged_listing(peg="USD")
+    assert reads == []
+    # Absent, not None: with nothing to look up v2 returns before it sets the
+    # key either (`cassandra.py:5166`).
+    assert "token_rate" not in rows[0]
+
+
+def test_a_link_row_carries_the_token_rate_too() -> None:
+    """`/links` is the same builder as the listing (`cassandra.py:2591-2616`),
+    so an unpegged token loses its fiat there in exactly the same way. The
+    height is spelled `block_id` on this row shape, not `height`."""
+    seen: list = []
+
+    def rows(cql, params):
+        if "token_configuration" in cql:
+            return [
+                Row(
+                    currency_ticker="SHIB",
+                    token_address=b"\x5c" * 20,
+                    decimal_divisor=10**18,
+                    peg_currency=None,
+                )
+            ]
+        if "link_page_max" in cql:
+            return [Row(link_page_max=0)]
+        if "address_link_transactions" in cql:
+            return [
+                Row(
+                    tx_id=(12 << 32) + 1,
+                    tx_reference=SimpleNamespace(trace_index=None, log_index=4),
+                    currency="SHIB",
+                    value=5,
+                )
+            ]
+        if ".transaction" in cql:
+            return [
+                Row(
+                    tx_id=(12 << 32) + 1,
+                    tx_hash=b"\xab" * 32,
+                    block_id=12,
+                    block_timestamp=1700,
+                )
+            ]
+        if "exchange_rates" in cql:
+            seen.append(params)
+            return [Row(fiat_values={"usd": 0.5})]
+        return []
+
+    shim = LegacyAdapter(
+        {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
+    )
+    run(shim.preload_token_configuration())
+    links, _ = run(shim.list_address_links("eth", "0xaa", "0xbb"))
+    assert links[0]["token_rate"] == [
+        {"code": "eur", "value": 0.0},
+        {"code": "usd", "value": 0.5},
+    ]
+    assert len(seen) == 1

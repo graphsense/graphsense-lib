@@ -916,7 +916,57 @@ class LegacyAdapter:
                 )
                 row["to_address"] = event.get("to_address") or detail.get("to_address")
             rows.append(row)
+        await self._attach_token_rates(currency, rows)
         return rows
+
+    async def _attach_token_rates(self, currency: str, rows: list) -> None:
+        """Price the UNPEGGED token rows from the token's own rate.
+
+        Without it `map_rates_for_peged_tokens` has nothing to convert with and
+        returns EMPTY fiat for an unpegged token -- not a wrong number, but no
+        number, on every row of that token. A pegged token needs none of this:
+        its branch returns before `token_rate` is even looked at, and v2 still
+        sets the key on every erc20 row, so this does too.
+
+        One lookup per DISTINCT (asset, block), not per row: a page of one
+        token in one block is one read.
+        """
+        import asyncio
+
+        config = self._token_config.get(currency.lower()) or {}
+
+        def unpegged(ticker: Optional[str]) -> bool:
+            token = config.get(ticker) or config.get((ticker or "").upper())
+            if token is None:
+                return False
+            peg = token.get("peg_currency")
+            return peg is None or (isinstance(peg, str) and not peg.strip())
+
+        # The listing spells the height "height" and a link row "block_id" --
+        # `_tx_account_from_row` accepts either (`common.py:528`), so this has
+        # to as well or `/links` raises a KeyError where the listing does not.
+        def height_of(row: dict) -> Optional[int]:
+            return row.get("height", row.get("block_id"))
+
+        # A row with no height cannot be priced at a block; it should not
+        # exist, and dropping it here beats looking a rate up at None.
+        wanted = {
+            (str(row["currency"]), height)
+            for row in rows
+            if row.get("type") == "erc20" and unpegged(row.get("currency"))
+            for height in [height_of(row)]
+            if height is not None
+        }
+        if not wanted:
+            return
+        pairs = sorted(wanted)
+        rates = await asyncio.gather(
+            *(self.get_token_rate(currency, asset, block) for asset, block in pairs)
+        )
+        found = dict(zip(pairs, rates))
+        for row in rows:
+            if row.get("type") == "erc20":
+                row["token_rate"] = found.get((row["currency"], height_of(row)))
 
     async def _as_v2_utxo_txs(self, currency: str, found: list) -> list:
         """v3's `AddressTx` rows as the dicts `txs_from_rows` reads.
@@ -1097,6 +1147,7 @@ class LegacyAdapter:
                 if trace_index is not None:
                     built["trace_index"] = trace_index
             rows.append(built)
+        await self._attach_token_rates(currency, rows)
         # One partition per edge and the walk starts at the newest page, so a
         # full page may have more behind it; a short one cannot.
         token = str(found[-1]["tx_id"]) if found and len(found) == limit else None
@@ -1294,11 +1345,18 @@ class LegacyAdapter:
     async def list_token_txs(self, *_, **__):
         raise NotAvailable("token transactions are not wired through the adapter yet")
 
-    async def get_token_rate(self, *_, **__):
-        raise NotAvailable(
-            "per-token rates live in the merged exchange_rates table; use "
-            "Dal.rate(asset, block_id) directly until this is wired up"
-        )
+    async def get_token_rate(self, currency: str, token: str, block_id: int):
+        """A token's own fiat-per-token rate at or before ``block_id``.
+
+        v2 keeps these in a second table, `token_exchange_rates`; v3 merged
+        them into `exchange_rates` under the asset's ticker, so this is the
+        same read as the native coin's with a different key.
+
+        AT OR BEFORE, not at: a token has a row only where a price was
+        fetched. See `Dal.rate_at_or_before`.
+        """
+        fiat = await self._dal(currency).rate_at_or_before(token.upper(), block_id)
+        return None if fiat is None else self._fiat_list(currency, fiat)
 
     async def list_matching_txs(self, *_, **__):
         raise NotAvailable(

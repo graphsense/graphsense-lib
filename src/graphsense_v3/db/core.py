@@ -909,6 +909,41 @@ class Dal:
         )
         return dict(rows[0].fiat_values) if rows and rows[0].fiat_values else None
 
+    async def rate_at_or_before(
+        self, asset: str, block_id: int, *, max_groups: int = BLOCK_BELOW_MAX_GROUPS
+    ) -> Optional[dict]:
+        """The most recent rate for ``asset`` AT OR BEFORE ``block_id``.
+
+        Not :meth:`rate`, and the difference matters for tokens. The merged
+        table inherited v2's density: the native coin has a row per block, a
+        token has one only where a price was fetched -- which is why v2's own
+        token lookup is ``block_id <= %s LIMIT 1`` (`cassandra.py:1382`). An
+        exact match finds nothing on most blocks and prices the transfer at
+        nothing.
+
+        ``block_id`` clusters DESC inside ``(asset, block_id_group)``, so the
+        usual case is ONE partition read. The walk back through groups is
+        bounded for the same reason `block_below`'s is: past that the asset has
+        no price this side of a scan, and None says so.
+        """
+        group = self.block_group(block_id)
+        for _ in range(max_groups):
+            if group < 0:
+                break
+            rows = await self._select(
+                f"SELECT fiat_values FROM {self.derived}.exchange_rates "
+                f"WHERE asset = %s AND block_id_group = %s AND block_id <= %s "
+                f"LIMIT 1",
+                (asset, group, block_id),
+            )
+            if rows and rows[0].fiat_values:
+                return dict(rows[0].fiat_values)
+            # Every earlier group ends below this block, so the bound stops
+            # narrowing the search and only the group does.
+            group -= 1
+            block_id = (group + 1) * self.config["block_bucket_size"] - 1
+        return None
+
     async def statistics(self) -> Optional[dict]:
         rows = await self._select(
             f"SELECT * FROM {self.derived}.summary_statistics WHERE id = 0"
