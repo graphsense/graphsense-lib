@@ -569,7 +569,7 @@ def _relation_side(
         .join(cursors, on=edge, how="left")
         .select(
             F.col(near),
-            common.entity_bucket(F.col(far), config).alias("rel_bucket"),
+            common.relation_bucket(F.col(far), config).alias("rel_bucket"),
             F.col(far),
             F.lit(EPOCH_BASE).alias("epoch"),
             F.col("no_transactions"),

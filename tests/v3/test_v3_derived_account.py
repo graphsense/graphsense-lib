@@ -346,6 +346,37 @@ def test_a_total_containing_an_unrepresentable_value_is_null_not_short(
     assert int(totals[("a", "ETH")]) == 7
 
 
+def test_rel_bucket_is_the_bucket_a_reader_will_scatter_over(
+    traces, logs, token_config, blocks, rates, transactions
+) -> None:
+    """`rel_bucket` uses relation_buckets (16), NOT entity_buckets (100 000).
+
+    A /neighbors read scatters over 0..relation_buckets-1, so the entity
+    modulus puts nearly every edge in a partition no reader ever looks at and
+    /neighbors returns nothing. The account writer had this wrong -- it called
+    `entity_bucket`, because a counterparty IS an entity and the name reads as
+    correct -- and it was invisible until a probe against a real keyspace
+    reported 16 partition reads and 0 rows.
+
+    Asserted against `codec.bucket`, which is what the DAL computes, so this
+    pins reader/writer AGREEMENT rather than the writer against itself.
+    """
+    from graphsense_v3.codec import bucket
+
+    cfg = config_for("eth")
+    assert cfg.relation_buckets != cfg.entity_buckets, "the test cannot tell them apart"
+    frames = _build(traces, logs, token_config, blocks, rates, transactions)
+    for name, far in (
+        ("address_outgoing_relations", "dst_address"),
+        ("address_incoming_relations", "src_address"),
+    ):
+        rows = frames[name].collect()
+        assert rows, f"{name} is empty, so nothing was checked"
+        for row in rows:
+            assert row["rel_bucket"] == bucket(bytes(row[far]), cfg.relation_buckets)
+            assert 0 <= row["rel_bucket"] < cfg.relation_buckets
+
+
 def test_account_fiat_totals_are_really_summed(
     traces, logs, token_config, blocks, rates, transactions
 ) -> None:

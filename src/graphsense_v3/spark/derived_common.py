@@ -390,4 +390,21 @@ def with_running_balance(
 
 
 def entity_bucket(address: "Column", config: NetworkConfig) -> "Column":
+    """``address_bucket``: the partition an ENTITY's own rows live in."""
     return bucket_expr(address, config.entity_buckets)
+
+
+def relation_bucket(address: "Column", config: NetworkConfig) -> "Column":
+    """``rel_bucket``: the partition an edge to this COUNTERPARTY lives in.
+
+    A different modulus from :func:`entity_bucket`, and the distinction is not
+    cosmetic. `relation_buckets` is 16 and `entity_buckets` is 100 000, and a
+    reader scatters a /neighbors query over 0..relation_buckets-1 -- so writing
+    the entity modulus here puts every edge in a partition no reader ever
+    looks at, and /neighbors returns nothing at all.
+
+    That is not hypothetical: the account writer called `entity_bucket` for
+    this, because a relation's counterparty IS an entity and the name reads as
+    correct. Both families now go through this function so they cannot drift.
+    """
+    return bucket_expr(address, config.relation_buckets)
