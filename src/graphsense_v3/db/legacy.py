@@ -30,6 +30,8 @@ from __future__ import annotations
 import zlib
 from typing import NamedTuple, Optional
 
+from graphsenselib.datatypes.abi import decode_logs_db
+from graphsenselib.utils import strip_0x
 from graphsenselib.utils.function_call_parser import (
     function_signatures as function_call_signatures,
 )
@@ -129,6 +131,70 @@ def _fee_of(detail: dict) -> Optional[int]:
     if used is None or price is None:
         return None
     return int(used) * int(price)
+
+
+#: ``Transfer(address,address,uint256)``. The one log signature a token
+#: transfer is, and the topic v2 restricts on (`cassandra.py:3613`).
+TRANSFER_TOPIC = bytes.fromhex(
+    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+)
+
+
+def _address_bytes(address: Optional[str]) -> Optional[bytes]:
+    """A decoded log parameter's ``0x...`` address as the bytes v3 keys on."""
+    if not isinstance(address, str):
+        return None
+    stripped = strip_0x(address)
+    return bytes.fromhex(stripped) if stripped else None
+
+
+def _native_transfer_row(row: dict, detail: dict, trace: dict) -> None:
+    """The columns a native account transfer takes off the TRACE it points at.
+
+    EVERY one of them is the trace's, not the transaction's: v2 reads them off
+    the trace (`cassandra.py:5049-5068`) and the two disagree for an internal
+    call, which is most of the rows on an account listing. eth's `raw.trace`
+    carries all three (`definitions._TRACE_EXTRA`), so none of this is a gap
+    in v3 -- it was a reader that never asked.
+
+    Shared by the address listing and by `/links` so the two cannot drift;
+    only the transfer's two ends differ between them, and the caller sets
+    those.
+    """
+    row["type"] = "external" if _is_root_trace(trace) else "internal"
+    row["contract_creation"] = trace.get("trace_type") == "create" if trace else None
+    # No trace at all means the listing references none -- the plain external
+    # transfer, whose call data IS the transaction's.
+    row["input"] = trace.get("input") if trace else detail.get("input")
+    row["input_parsed"] = parse_function_call(row["input"], function_call_signatures)
+    _charge_the_fee(row, detail)
+
+
+def _token_transfer_row(row: dict, detail: dict, log_index: Optional[int]) -> None:
+    """The same, for a transfer that came out of a log.
+
+    ``token_tx_id`` is the log index, which is what v2 puts there
+    (`cassandra.py:5001`) and what `get_tx_identifier` renders into the
+    identifier. A token transfer is not a deployment and carries no call data
+    of its own.
+    """
+    row["type"] = "erc20"
+    row["token_tx_id"] = log_index
+    row["contract_creation"] = False
+    row["input"] = None
+    row["input_parsed"] = None
+    _charge_the_fee(row, detail)
+
+
+def _charge_the_fee(row: dict, detail: dict) -> None:
+    """THE FEE BELONGS TO THE TRANSACTION, NOT TO THE TRANSFER.
+
+    v2 reports it only where the type is external (`cassandra.py:5090`).
+    Putting it on every internal and token row would bill the same gas once
+    per transfer, which on a busy transaction multiplies it by a dozen.
+    """
+    if row["type"] == "external":
+        row["fee"] = _fee_of(detail)
 
 
 def _is_root_trace(trace: dict) -> bool:
@@ -398,20 +464,78 @@ class LegacyAdapter:
         dal = self._dal(currency)
         found = await dal.block_transactions(height)
         if is_eth_like(currency.lower()):
-            return [self._as_v2_block_tx(currency, tx) for tx in found]
+            tokens = await self._block_token_transfers(currency, height, found)
+            rows = []
+            for tx in found:
+                rows.append(self._as_v2_block_tx(currency, tx))
+                # Interleaved right behind their transaction, as v2 builds
+                # them (`cassandra.py:5271-5275`): the listing is ordered by
+                # transaction, and a token transfer belongs to one.
+                rows.extend(tokens.get(tx["tx_id"], []))
+            return rows
         legs = await dal.transaction_io_many([tx["tx_id"] for tx in found])
         return [self._with_io(currency, tx, legs.get(tx["tx_id"], [])) for tx in found]
 
-    def _as_v2_block_tx(self, currency: str, detail: dict) -> dict:
-        """One account transaction of a block listing.
+    async def _block_token_transfers(
+        self, currency: str, height: int, found: list
+    ) -> dict:
+        """``{tx_id: [erc20 row]}`` for one block, decoded from its logs.
 
-        The EXTERNAL row only. v2 also interleaves an ``erc20`` row per token
-        transfer in the block (``include_token_txs=True``), which means
-        decoding every Transfer log against the token configuration -- a
-        SECOND implementation of the decode `derived_account.token_transfers`
-        already does on the write side, which is the drift class CLAUDE.md
-        flags for delta-vs-Spark. Left out deliberately, so the difference
-        shows up as a row count rather than as a wrong row.
+        v2 lists a block's transactions with ``include_token_txs=True``, so a
+        token transfer is a row of its own next to the transaction that made
+        it. The transfers are not stored anywhere as rows -- they are Transfer
+        logs -- so this reads the block's logs ONCE and decodes them.
+
+        The decode is `datatypes.abi.decode_logs_db`, the same function v2
+        calls: an ABI decoder is not a v2 implementation detail, and writing a
+        second one here is how the two would come to disagree about a token.
+        Only CONFIGURED tokens count, which is also v2's rule -- an unknown
+        contract has no ticker and no decimals to report it with.
+        """
+        config = self._token_config.get(currency.lower()) or {}
+        by_address = {
+            bytes(token["token_address"]): ticker
+            for ticker, token in config.items()
+            if token.get("token_address")
+        }
+        if not by_address:
+            return {}
+
+        logs = await self._dal(currency).logs_in_block(height, topic0=TRANSFER_TOPIC)
+        known = [log for log in logs if bytes(log.get("address") or b"") in by_address]
+        by_tx = {tx["tx_id"]: tx for tx in found}
+
+        transfers: dict = {}
+        for decoded, log in decode_logs_db(known):
+            tx = by_tx.get(log.get("tx_id"))
+            if tx is None:
+                # A log whose transaction is not in the block listing means a
+                # torn block, not a row to invent a transaction for.
+                continue
+            parameters = decoded.get("parameters") or {}
+            transfers.setdefault(log["tx_id"], []).append(
+                {
+                    "tx_hash": tx.get("tx_hash"),
+                    "height": tx.get("block_id"),
+                    "timestamp": tx.get("block_timestamp"),
+                    "currency": by_address[bytes(log["address"])],
+                    "value": parameters.get("value"),
+                    "from_address": _address_bytes(parameters.get("from")),
+                    "to_address": _address_bytes(parameters.get("to")),
+                    "type": "erc20",
+                    "token_tx_id": log.get("log_index"),
+                    "contract_creation": False,
+                    "input": None,
+                    "input_parsed": None,
+                }
+            )
+        return transfers
+
+    def _as_v2_block_tx(self, currency: str, detail: dict) -> dict:
+        """The EXTERNAL row of one account transaction in a block listing.
+
+        Its token transfers are separate rows, built by
+        :meth:`_block_token_transfers` and interleaved by the caller.
         """
         to_address = detail.get("to_address")
         created = to_address is None
@@ -499,8 +623,29 @@ class LegacyAdapter:
         subscriptable" from inside the service -- dormant only because
         `block_by_date_use_linear_search` defaults to False, so nothing had ever
         called it.
+
+        STRICTLY after, despite the name. v2's own version of this method is
+        ``timestamp >= %s`` (`cassandra.py:1334`) and v3 matched it -- but
+        nothing runs that path: with the flag off, v2 answers /blocks/by_date
+        by BINARY SEARCH instead (`blocks_service.py:190-220`), and the two
+        disagree about an exact timestamp match. `find_insertion_point_async`
+        returns the matching height itself, which the service reports as
+        ``before_block``, with ``after_block`` the one above. The inclusive
+        read makes the match ``after_block`` and shifts BOTH answers down a
+        block.
+
+        The REST answer is the contract, not the query, so this reproduces
+        what v2 actually serves. Measured on eth block 15060334, whose
+        timestamp is exactly 2022-07-02 02:26:36: v2 says
+        before=15060334/after=15060335, and the inclusive bound said
+        15060333/15060334.
+
+        One case still differs and cannot be reconciled from here: several
+        blocks sharing a timestamp. This lands ``before_block`` on the LAST of
+        that run; a binary search returns whichever it bisected onto. eth's
+        ~12s spacing makes it rare rather than impossible.
         """
-        return await self._dal(currency).block_at_or_after(timestamp)
+        return await self._dal(currency).block_at_or_after(timestamp, inclusive=False)
 
     # -- rates -------------------------------------------------------------
 
@@ -756,23 +901,12 @@ class LegacyAdapter:
             }
             if asset != native:
                 event = by_log.get((block, log_index)) or {}
-                row["type"] = "erc20"
-                row["token_tx_id"] = log_index
+                _token_transfer_row(row, detail, log_index)
                 row["from_address"] = _topic_address(event, 1)
                 row["to_address"] = _topic_address(event, 2)
-                # A token transfer is not a deployment, and it carries no call
-                # data of its own.
-                row["contract_creation"] = False
-                row["input"] = None
-                row["input_parsed"] = None
             else:
                 event = by_trace.get((block, trace_index)) or {}
-                # EVERY column below is the TRACE's, not the transaction's:
-                # v2 reads them off the trace (`cassandra.py:5049-5068`) and
-                # the two disagree for an internal call, which is most of the
-                # rows on this listing. `raw.trace` carries all of them for
-                # eth (`definitions._TRACE_EXTRA`), so none of this is a gap.
-                row["type"] = "external" if _is_root_trace(event) else "internal"
+                _native_transfer_row(row, detail, event)
                 if trace_index is not None:
                     row["trace_index"] = trace_index
                 # The trace's ends when there is one; the transaction's for a
@@ -781,19 +915,6 @@ class LegacyAdapter:
                     "from_address"
                 )
                 row["to_address"] = event.get("to_address") or detail.get("to_address")
-                row["contract_creation"] = (
-                    event.get("trace_type") == "create" if event else None
-                )
-                row["input"] = event.get("input") if event else detail.get("input")
-                row["input_parsed"] = parse_function_call(
-                    row["input"], function_call_signatures
-                )
-            # THE FEE BELONGS TO THE TRANSACTION, NOT TO THE TRANSFER. v2
-            # reports it only on the external row (`cassandra.py:5090`), so
-            # putting it on every internal and token row would bill the same
-            # gas once per transfer.
-            if row["type"] == "external":
-                row["fee"] = _fee_of(detail)
             rows.append(row)
         return rows
 
@@ -910,10 +1031,19 @@ class LegacyAdapter:
         `txs_from_rows` -> `_tx_account_from_row`. So this returns transaction
         rows, not link rows, and the two branches share nothing but a name.
 
-        The edge is what makes this cheaper than the address listing: v2 has to
-        fetch the trace or the log just to learn a transfer's two ends
-        (`cassandra.py:5045-5060`), and here they ARE the query -- the caller
-        named both.
+        The edge saves ONE of the two extra reads, not both: v2 fetches the
+        trace or the log to learn a transfer's two ends AND to read the fields
+        that only live there (`cassandra.py:5045-5068`), and the caller has
+        named only the ends. So the traces are still fetched -- for
+        ``trace_type``, ``input`` and ``trace_address`` -- in one concurrent
+        round, the same as the address listing does.
+
+        `/links` is v2's address listing under another name: it routes through
+        `list_address_txs_ordered` -> `normalize_address_transactions`
+        (`cassandra.py:2591-2616`), which is why the row shape is shared here.
+        NOT the sign, though: that wrapper does not negate an outgoing value
+        the way `list_address_txs_ordered`'s caller does (`4949`), so a link
+        row reports the magnitude.
         """
         dal = self._dal(currency)
         limit = int(pagesize or 100)
@@ -922,6 +1052,16 @@ class LegacyAdapter:
         found = await dal.link_transactions(src, dst, limit=limit)
         detail = await dal.transactions_by_ids([row["tx_id"] for row in found])
         native = currency.upper()
+
+        traces = [
+            (
+                block_of_tx_id(row["tx_id"]),
+                getattr(row.get("tx_reference"), "trace_index", None),
+            )
+            for row in found
+            if (row.get("currency") or native).upper() == native
+        ]
+        by_trace = await dal.traces_by_ref(traces)
 
         rows = []
         for row in found:
@@ -948,32 +1088,12 @@ class LegacyAdapter:
                 "to_address": dst,
                 "value": row.get("value"),
                 "currency": asset,
-                # v3 does not keep `trace_type` or a trace's `input`
-                # (`raw.trace` is block_id/trace_index/tx/from/to/value/status),
-                # so these two fields of v2's answer cannot be produced. Stated
-                # as None rather than omitted: `_tx_account_from_row` reads
-                # them with `.get`, and a wrong value would be worse than a
-                # missing one.
-                "contract_creation": None,
-                "input": None,
-                "input_parsed": None,
             }
             if asset != native:
-                # A log-derived transfer. `token_tx_id` is the log index, which
-                # is what v2 puts there (`cassandra.py:5001`) and what
-                # `get_tx_identifier` renders into the identifier.
-                built["type"] = "erc20"
-                built["token_tx_id"] = log_index
+                _token_transfer_row(built, tx, log_index)
             else:
-                # v2 asks whether the trace is the ROOT -- `trace_address`
-                # empty (`cassandra.py:5056`). v3 does not store that, but it
-                # does not need to: traces are emitted depth-first, so a
-                # transaction's FIRST trace is its root, and `first_trace_index`
-                # is already on the transaction row as one half of the range
-                # pointer. Same answer, no extra read.
-                first = tx.get("first_trace_index")
-                is_root = trace_index is None or first is None or trace_index == first
-                built["type"] = "external" if is_root else "internal"
+                trace = by_trace.get((block_of_tx_id(row["tx_id"]), trace_index)) or {}
+                _native_transfer_row(built, tx, trace)
                 if trace_index is not None:
                     built["trace_index"] = trace_index
             rows.append(built)

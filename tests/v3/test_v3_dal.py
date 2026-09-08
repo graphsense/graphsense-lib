@@ -482,6 +482,18 @@ def test_the_timestamp_bound_is_pushed_into_the_query() -> None:
     assert params[1] == 500
 
 
+def test_the_bound_can_be_made_strict() -> None:
+    """/blocks/by_date needs the block STRICTLY after the timestamp: the
+    service reports it as `after_block` and the one below as `before_block`,
+    so an exact match has to fall on the before side to match what v2 serves.
+    Both bounds push into CQL; only the operator changes."""
+    dal, session = make(lambda cql, params: [Row(block_id=7, timestamp=501)])
+    run(dal.block_at_or_after(500, inclusive=False))
+    cql, params = session.seen[0]
+    assert "timestamp > %s" in cql and "timestamp >= %s" not in cql
+    assert params[1] == 500
+
+
 def test_a_day_with_no_later_block_walks_to_the_next() -> None:
     """A timestamp late in a day often has no block after it until the next
     one. Returning the day's LAST block instead -- which is BEFORE the

@@ -64,8 +64,19 @@ IGNORED_FIELDS: dict = {
     # `timestamp` is deliberately NOT here. It is range-dependent on the
     # statistics response, but it is also on every transaction and block, and a
     # transaction timestamp mismatch is what exposed the direction bug --
-    # ignoring it by NAME would blind this harness to its own best signal. The
-    # one statistics line it costs is worth that.
+    # ignoring it by NAME would blind this harness to its own best signal. See
+    # CALL_IGNORED_FIELDS for where the statistics line is excused instead.
+}
+
+#: The same, but scoped to ONE call. A field can be incomparable in one
+#: response and the harness's sharpest signal in another, and `IGNORED_FIELDS`
+#: cannot say that -- it matches by name, everywhere. Keyed by the call label,
+#: so a name excused here stays compared on every other call.
+CALL_IGNORED_FIELDS: dict = {
+    "get_currency_statistics": {
+        "timestamp": "range-dependent; it is the LAST BLOCK's timestamp, and "
+        "v2 is live where v3 is a snapshot -- the same reason as no_blocks",
+    },
 }
 
 
@@ -117,20 +128,21 @@ class Report:
         return self.skipped is None and not self.differences
 
 
-def normalise(value: Any, network: str) -> Any:
+def normalise(value: Any, network: str, ignored: Optional[dict] = None) -> Any:
     """A value with the known-incomparable differences flattened out."""
+    ignored = IGNORED_FIELDS if ignored is None else ignored
     if isinstance(value, dict):
         return {
             key: (
                 _presence(item)
                 if key in PRESENCE_ONLY_FIELDS
-                else normalise(item, network)
+                else normalise(item, network, ignored)
             )
             for key, item in value.items()
-            if key not in IGNORED_FIELDS
+            if key not in ignored
         }
     if isinstance(value, (list, tuple)):
-        return [normalise(item, network) for item in value]
+        return [normalise(item, network, ignored) for item in value]
     if isinstance(value, Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
     if isinstance(value, (bytes, bytearray)):
@@ -147,14 +159,21 @@ def _presence(value: Any) -> Optional[str]:
     return None if value in (None, "") else "<a token>"
 
 
-def diff(left: Any, right: Any, network: str, *, path: str = "") -> list:
+def diff(
+    left: Any,
+    right: Any,
+    network: str,
+    *,
+    path: str = "",
+    ignored: Optional[dict] = None,
+) -> list:
     """Every field where two normalised structures disagree.
 
     Lists are compared positionally: order is part of the answer for a
     transaction listing, and a harness that sorted them would hide a paging bug.
     """
-    left = normalise(left, network)
-    right = normalise(right, network)
+    left = normalise(left, network, ignored)
+    right = normalise(right, network, ignored)
     return _walk(left, right, path or "$")
 
 
@@ -180,8 +199,19 @@ def _walk(left: Any, right: Any, path: str) -> list:
 
 def compare(label: str, left: Any, right: Any, network: str) -> Report:
     """One call, compared. ``left`` is v2, ``right`` is v3."""
-    ignored = sorted(_ignored_in(left) | _ignored_in(right))
-    return Report(label, diff(left, right, network), ignored)
+    excused = call_ignored_fields(label)
+    found = sorted(_ignored_in(left, excused) | _ignored_in(right, excused))
+    return Report(label, diff(left, right, network, ignored=excused), found)
+
+
+def call_ignored_fields(label: str) -> dict:
+    """`IGNORED_FIELDS` plus whatever THIS call excuses.
+
+    The label carries its arguments (``get_address(0xaa)``), so the match is on
+    the method name in front of them.
+    """
+    name = label.split("(")[0]
+    return {**IGNORED_FIELDS, **CALL_IGNORED_FIELDS.get(name, {})}
 
 
 def skipped(label: str, reason: str) -> Report:
@@ -189,18 +219,30 @@ def skipped(label: str, reason: str) -> Report:
     return Report(label, skipped=reason)
 
 
-def _ignored_in(value: Any) -> set:
+def _ignored_in(value: Any, ignored: Optional[dict] = None) -> set:
+    ignored = IGNORED_FIELDS if ignored is None else ignored
     if isinstance(value, dict):
-        found = {key for key in value if key in IGNORED_FIELDS}
+        found = {key for key in value if key in ignored}
         for item in value.values():
-            found |= _ignored_in(item)
+            found |= _ignored_in(item, ignored)
         return found
     if isinstance(value, (list, tuple)):
         found: set = set()
         for item in value:
-            found |= _ignored_in(item)
+            found |= _ignored_in(item, ignored)
         return found
     return set()
+
+
+def _reason_for(name: str) -> str:
+    """Why a field was not compared -- globally, or on the one call that
+    excuses it."""
+    if name in IGNORED_FIELDS:
+        return IGNORED_FIELDS[name]
+    for call, fields in CALL_IGNORED_FIELDS.items():
+        if name in fields:
+            return f"{fields[name]} (on {call} only)"
+    return "no reason recorded, which is a bug in this harness"
 
 
 def report(reports: list, notes: Optional[list] = None) -> str:
@@ -235,7 +277,7 @@ def report(reports: list, notes: Optional[list] = None) -> str:
     if excluded:
         lines += ["", "-" * 78, "NOT COMPARED", "-" * 78, ""]
         for name in sorted(excluded):
-            lines.append(f"  {name}: {IGNORED_FIELDS[name]}")
+            lines.append(f"  {name}: {_reason_for(name)}")
     if passed_over:
         lines += ["", "-" * 78, "NOT RUN", "-" * 78, ""]
         for entry in passed_over:

@@ -625,6 +625,15 @@ class Dal:
             "build the reader with `dal_for`"
         )
 
+    async def logs_in_block(
+        self, block_id: int, *, topic0: Optional[bytes] = None
+    ) -> list:
+        """Every log of one block. See AccountDal."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not know which family it is reading; "
+            "build the reader with `dal_for`"
+        )
+
     async def page_for_tx(
         self, address: bytes, is_outgoing: bool, tx_id: int, *, zero_value: bool = False
     ) -> Optional[int]:
@@ -847,7 +856,11 @@ class Dal:
         return {row.tx_id: row._asdict() for row in await self._gather(queries)}
 
     async def block_at_or_after(
-        self, timestamp: int, *, max_days: int = BLOCK_BY_DATE_MAX_DAYS
+        self,
+        timestamp: int,
+        *,
+        inclusive: bool = True,
+        max_days: int = BLOCK_BY_DATE_MAX_DAYS,
     ) -> Optional[dict]:
         """The first block at or after ``timestamp``, as ``{block_id, timestamp}``.
 
@@ -860,15 +873,24 @@ class Dal:
         walk is bounded for the same reason `block_below`'s is -- past that the
         chain has a gap this table cannot answer around, and returning None says
         so rather than reading forever to prove it.
+
+        ``inclusive=False`` makes the bound STRICT, which is what
+        `/blocks/by_date` needs. The service turns this block into
+        ``after_block`` and the one below it into ``before_block``
+        (`blocks_service.py:169-180`), so an exact timestamp match has to fall
+        on the BEFORE side -- see the adapter's `get_block_by_date_allow_filtering`
+        for why that, and not this method's natural reading, is the answer the
+        endpoint has to give.
         """
         from datetime import datetime, timedelta, timezone
 
+        bound = ">=" if inclusive else ">"
         when = datetime.fromtimestamp(timestamp, tz=timezone.utc)
         for step in range(max_days):
             day = int((when + timedelta(days=step)).strftime("%Y%m%d"))
             rows = await self._select(
                 f"SELECT block_id, timestamp FROM {self.raw}.block_by_date "
-                f"WHERE day = %s AND timestamp >= %s LIMIT 1",
+                f"WHERE day = %s AND timestamp {bound} %s LIMIT 1",
                 (day, timestamp),
             )
             if rows:
@@ -1113,6 +1135,29 @@ class AccountDal(Dal):
     async def logs_by_ref(self, refs: "Sequence[tuple]") -> dict:
         """``{(block_id, log_index): row}`` for several references at once."""
         return await self._events_by_ref("log", "log_index", refs)
+
+    async def logs_in_block(
+        self, block_id: int, *, topic0: Optional[bytes] = None
+    ) -> list:
+        """Every log of one block, oldest first -- ONE partition slice.
+
+        The whole-block read, rather than `no_logs` range reads keyed off each
+        transaction: a block listing wants them all, and the pointers exist to
+        make a SINGLE transaction's logs cheap, not to make the block's
+        expensive.
+
+        ``topic0`` filters here rather than in CQL. It is a plain column since
+        the re-key (see the `log` table comment), so restricting on it would
+        need ALLOW FILTERING over the same partition this already reads.
+        """
+        rows = await self._select(
+            f"SELECT * FROM {self.raw}.log WHERE block_id_group = %s AND block_id = %s",
+            (self._block_group(block_id), block_id),
+        )
+        logs = [row._asdict() for row in rows]
+        if topic0 is None:
+            return logs
+        return [log for log in logs if log.get("topic0") == topic0]
 
     async def _events_by_ref(self, table: str, column: str, refs) -> dict:
         wanted = {

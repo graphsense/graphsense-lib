@@ -812,24 +812,44 @@ def test_a_utxo_neighbour_is_still_a_decoded_string() -> None:
     assert rows[0]["dst_address"] == NEIGHBOR
 
 
-def _account_link_session(currency: str = "ETH", trace_index=7, log_index=None):
-    """One edge with one transfer, plus the transaction it belongs to."""
+def _account_link_session(
+    currency: str = "ETH",
+    trace_index=7,
+    log_index=None,
+    trace_address="",
+    trace_type="call",
+):
+    """One edge with one transfer, plus the transaction and trace behind it."""
     ref = SimpleNamespace(trace_index=trace_index, log_index=log_index)
+    tx_id = (12 << 32) + 1
 
     def rows(cql, params):
         if "link_page_max" in cql:
             return [Row(link_page_max=0)]
         if "address_link_transactions" in cql:
-            return [Row(tx_id=99, tx_reference=ref, currency=currency, value=5)]
+            return [Row(tx_id=tx_id, tx_reference=ref, currency=currency, value=5)]
         if ".transaction" in cql:
             return [
                 Row(
-                    tx_id=99,
+                    tx_id=tx_id,
                     tx_hash=b"\xab" * 32,
                     block_id=12,
                     block_timestamp=1700,
                     first_trace_index=7,
                     first_log_index=3,
+                    input=b"\xde\xad",
+                    receipt_gas_used=21000,
+                    receipt_effective_gas_price=1000,
+                )
+            ]
+        if ".trace" in cql:
+            return [
+                Row(
+                    block_id=12,
+                    trace_index=trace_index,
+                    trace_address=trace_address,
+                    trace_type=trace_type,
+                    input=TRACE_INPUT,
                 )
             ]
         return []
@@ -867,15 +887,13 @@ def test_an_account_link_names_the_edge_as_the_two_ends() -> None:
     assert rows[0]["to_address"] == encode_address("eth", "0xbb")
 
 
-def test_the_first_trace_of_a_transaction_is_its_root() -> None:
-    """v2 decides external-vs-internal by testing `trace_address` empty. v3
-    does not store that, but traces are emitted depth-first, so a transaction's
-    FIRST trace is its root -- and `first_trace_index` is already on the row as
-    half of the range pointer. Same answer, no extra read."""
+def test_a_link_row_is_external_when_its_trace_address_is_empty() -> None:
+    """v2's test, on `/links` as on the listing: trace_address is the path
+    down the call tree, so the root's is empty (`cassandra.py:5053`)."""
     rows, _ = _account_links(_account_link_session(trace_index=7))
     assert rows[0]["type"] == "external"
 
-    rows, _ = _account_links(_account_link_session(trace_index=9))
+    rows, _ = _account_links(_account_link_session(trace_index=9, trace_address="0"))
     assert rows[0]["type"] == "internal"
     assert rows[0]["trace_index"] == 9
 
@@ -890,13 +908,30 @@ def test_a_token_transfer_is_erc20_and_carries_the_log_index() -> None:
     assert rows[0]["currency"] == "USDT"
 
 
-def test_fields_v3_cannot_produce_are_none_rather_than_guessed() -> None:
-    """`raw.trace` keeps no `trace_type` and no `input`, so contract_creation
-    and an internal row's input are not derivable. `_tx_account_from_row` reads
-    them with `.get`, and a plausible wrong value is worse than a missing one."""
-    rows, _ = _account_links(_account_link_session(trace_index=9))
-    assert rows[0]["contract_creation"] is None
-    assert rows[0]["input"] is None and rows[0]["input_parsed"] is None
+def test_a_link_row_reads_the_trace_it_points_at_too() -> None:
+    """The edge names the two ENDS, which is one of the two reasons v2 reads
+    the trace; `trace_type` and `input` are the other, and they live nowhere
+    else. Reported as None, `/links` lost contract_creation and the call data
+    on every row."""
+    rows, _ = _account_links(_account_link_session(trace_index=9, trace_address="0"))
+    assert rows[0]["contract_creation"] is False
+    assert rows[0]["input"] == TRACE_INPUT
+
+    created = _account_link_session(trace_type="create")
+    assert _account_links(created)[0][0]["contract_creation"] is True
+
+
+def test_a_link_row_is_charged_the_fee_only_when_it_is_external() -> None:
+    """The fee belongs to the transaction. v2 sets it under
+    `type == "external"` (`cassandra.py:5090`), and `/links` goes through the
+    same builder (`cassandra.py:2591-2616`)."""
+    external, _ = _account_links(_account_link_session(trace_index=7))
+    assert external[0]["fee"] == 21000 * 1000
+
+    internal, _ = _account_links(
+        _account_link_session(trace_index=9, trace_address="0")
+    )
+    assert "fee" not in internal[0]
 
 
 def test_a_link_to_a_transaction_the_raw_keyspace_lacks_is_an_error() -> None:
@@ -926,7 +961,7 @@ def test_an_account_link_pages_only_when_the_page_was_full() -> None:
     rows, token = _account_links(_account_link_session(), pagesize=100)
     assert len(rows) == 1 and token is None
     rows, token = _account_links(_account_link_session(), pagesize=1)
-    assert token == "99"
+    assert token == str((12 << 32) + 1)
 
 
 def _relation_rows(**extra):
@@ -1433,3 +1468,92 @@ def test_a_deployment_names_the_contract_it_created() -> None:
     row = _block_listing(to_address=None, receipt_contract_address=created)[0]
     assert row["to_address"] == created
     assert row["contract_creation"] is True
+
+
+USDT = b"\xda" * 20
+
+
+def _block_with_a_token_transfer():
+    """One transaction, one Transfer log against a configured token."""
+    tx_id = (12 << 32) + 1
+    transfer = bytes.fromhex(
+        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    )
+
+    def rows(cql, params):
+        if "token_configuration" in cql:
+            return [Row(currency_ticker="USDT", token_address=USDT, decimals=6)]
+        if ".transaction" in cql:
+            return [
+                Row(
+                    tx_id=tx_id,
+                    tx_hash=TX_HASH,
+                    block_id=12,
+                    block_timestamp=1700,
+                    value=9,
+                    from_address=FROM_TX,
+                    to_address=TO_TX,
+                    input=b"",
+                    receipt_gas_used=21000,
+                    receipt_effective_gas_price=1000,
+                    receipt_contract_address=None,
+                )
+            ]
+        if ".log" in cql:
+            return [
+                Row(
+                    block_id=12,
+                    log_index=3,
+                    tx_id=tx_id,
+                    address=USDT,
+                    topic0=transfer,
+                    topics=[
+                        transfer,
+                        b"\x00" * 12 + FROM_LOG,
+                        b"\x00" * 12 + TO_LOG,
+                    ],
+                    data=(7).to_bytes(32, "big"),
+                )
+            ]
+        return []
+
+    shim = LegacyAdapter(
+        {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
+    )
+    run(shim.preload_token_configuration())
+    return run(shim.list_block_txs("eth", 12))
+
+
+def test_a_block_listing_interleaves_the_token_transfers() -> None:
+    """v2 lists a block with include_token_txs=True, so a token transfer is a
+    row of its own behind the transaction that made it. They are not stored as
+    rows anywhere -- they are Transfer logs -- so the block's logs are read
+    once and decoded."""
+    rows = _block_with_a_token_transfer()
+    assert [row["type"] for row in rows] == ["external", "erc20"]
+
+    token = rows[1]
+    assert token["currency"] == "USDT"
+    assert token["value"] == 7
+    assert token["from_address"] == FROM_LOG and token["to_address"] == TO_LOG
+    assert token["token_tx_id"] == 3
+    # The transaction paid the gas once; the transfer is not charged again.
+    assert "fee" not in token
+    assert token["tx_hash"] == TX_HASH and token["timestamp"] == 1700
+
+
+def test_block_by_date_asks_for_the_block_strictly_after() -> None:
+    """v2's own version of this query is `timestamp >= %s`, but nothing runs
+    it: with the flag off v2 answers /blocks/by_date by binary search, whose
+    exact-match block becomes `before_block`. The inclusive bound made it
+    `after_block` and shifted BOTH heights down one. The REST answer is the
+    contract, not the query."""
+    session = FakeSession(
+        lambda cql, params: (
+            [Row(block_id=1925, timestamp=1788442898)] if "block_by_date" in cql else []
+        )
+    )
+    shim = LegacyAdapter({"ltc": dal_for(session, RAW, DERIVED, dict(CONFIG))})
+    run(shim.get_block_by_date_allow_filtering("ltc", 1788442000))
+    cql, _params = session.seen[0]
+    assert "timestamp > %s" in cql and "timestamp >= %s" not in cql

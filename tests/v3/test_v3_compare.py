@@ -182,3 +182,37 @@ def test_timing_never_affects_agreement() -> None:
     entry = compare.compare("get_address", {"a": 1}, {"a": 2}, "ltc")
     entry.left_ms, entry.right_ms = 100.0, 1.0
     assert entry.agrees is False
+
+
+def test_a_field_can_be_excused_on_one_call_without_being_excused_everywhere():
+    """`timestamp` is range-dependent on the statistics response and the
+    harness's sharpest signal on a transaction -- a mismatch there is what
+    exposed the direction bug. IGNORED_FIELDS matches by name everywhere and
+    cannot say that."""
+    stats = compare.compare(
+        "get_currency_statistics",
+        {"timestamp": 1788866891},
+        {"timestamp": 1657257464},
+        "eth",
+    )
+    assert stats.agrees
+    assert "timestamp" in stats.ignored
+
+    tx = compare.compare(
+        "get_tx(abcd)", {"timestamp": 1788866891}, {"timestamp": 1657257464}, "eth"
+    )
+    assert not tx.agrees
+    assert "timestamp" not in tx.ignored
+
+
+def test_the_reason_for_a_call_scoped_exclusion_says_which_call():
+    """The NOT COMPARED block is read without the code next to it, so a reason
+    that did not say 'on this call only' would read as a blanket exclusion."""
+    text = compare.report(
+        [
+            compare.compare(
+                "get_currency_statistics", {"timestamp": 1}, {"timestamp": 2}, "eth"
+            )
+        ]
+    )
+    assert "on get_currency_statistics only" in text
