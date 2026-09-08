@@ -183,9 +183,9 @@ def diff(
 #: one question such a difference always raises.
 IDENTITY_FIELDS = ("identifier", "tx_hash", "address", "block_id", "height")
 
-#: How many identities a length mismatch prints per side. A windowed backend
-#: differs by hundreds of rows and the identities are then noise; a handful is
-#: enough to see WHICH rows, and the count still says how many.
+#: How many of the rows unique to one side a length mismatch prints. A
+#: windowed backend differs by hundreds and the rest are then noise; a handful
+#: is enough to see WHICH rows, and the count still says how many.
 IDENTITY_SAMPLE = 6
 
 
@@ -200,15 +200,35 @@ def _identity(item: Any) -> Optional[str]:
     return None
 
 
-def _population(items: list, count: int) -> str:
-    """``"N items"``, plus the first few identities when they exist."""
-    named = [name for name in (_identity(item) for item in items) if name]
-    if not named:
+def _populations(left: list, right: list) -> tuple:
+    """Two ``"N items"`` strings, each naming what is only on ITS side.
+
+    The set difference, not the first few of each: the lists usually share a
+    long prefix, so a prefix sample shows the same rows twice and buries the
+    ones that actually differ. What a length mismatch always asks is WHICH
+    rows, and that is exactly the rows one side has and the other does not.
+
+    Identities are compared as a set, so a list holding the same identity
+    twice reports it as shared. Nothing here has duplicate identifiers.
+    """
+    left_names = [name for name in (_identity(item) for item in left) if name]
+    right_names = [name for name in (_identity(item) for item in right) if name]
+    if not left_names and not right_names:
+        return f"{len(left)} items", f"{len(right)} items"
+    shared = set(left_names) & set(right_names)
+    return (
+        _only(len(left), [name for name in left_names if name not in shared]),
+        _only(len(right), [name for name in right_names if name not in shared]),
+    )
+
+
+def _only(count: int, names: list) -> str:
+    if not names:
         return f"{count} items"
-    shown = ", ".join(named[:IDENTITY_SAMPLE])
-    if len(named) > IDENTITY_SAMPLE:
-        shown += f", +{len(named) - IDENTITY_SAMPLE} more"
-    return f"{count} items [{shown}]"
+    shown = ", ".join(names[:IDENTITY_SAMPLE])
+    if len(names) > IDENTITY_SAMPLE:
+        shown += f", +{len(names) - IDENTITY_SAMPLE} more"
+    return f"{count} items (only here: {shown})"
 
 
 def _walk(left: Any, right: Any, path: str) -> list:
@@ -219,13 +239,7 @@ def _walk(left: Any, right: Any, path: str) -> list:
         return out
     if isinstance(left, list) and isinstance(right, list):
         if len(left) != len(right):
-            return [
-                Difference(
-                    f"{path}[]",
-                    _population(left, len(left)),
-                    _population(right, len(right)),
-                )
-            ]
+            return [Difference(f"{path}[]", *_populations(left, right))]
         out = []
         for index, (a, b) in enumerate(zip(left, right)):
             out += _walk(a, b, f"{path}[{index}]")
