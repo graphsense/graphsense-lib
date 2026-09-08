@@ -488,13 +488,27 @@ def sample_txs(session: Any, raw: str, blocks: "list[int]", tx_size: int) -> lis
 def sample_links(session: Any, derived: str, network: str, count: int) -> list:
     """``count`` (source, destination) pairs that really have an edge.
 
-    Sampled by TOKEN over ``(src_address, dst_bucket)``, which IS the whole
-    partition key here -- so unlike `address_stats`, a token draw is valid and
-    spreads across the ring rather than returning neighbours of one another.
+    Sampled by TOKEN over the WHOLE partition key -- so unlike `address_stats`,
+    a token draw is valid and spreads across the ring rather than returning
+    neighbours of one another.
+
+    That key differs by family, and the difference is not cosmetic: UTXO
+    partitions by ``(src_address, dst_bucket)`` with dst as a clustering
+    prefix, account partitions per EDGE as ``(src_address, dst_address,
+    tx_page)`` and has no ``dst_bucket`` column at all. Naming the UTXO columns
+    against an account keyspace is a CQL error before a single call is
+    compared, which is how an eth backtest died at fixture time.
     """
     import random
 
     from graphsense_v3.codec import decode_address
+    from graphsense_v3.schema import NETWORKS, Family
+
+    key = (
+        "src_address, dst_bucket"
+        if NETWORKS.get(network) is not Family.ACCOUNT
+        else "src_address, dst_address, tx_page"
+    )
 
     found: list = []
     seen: set = set()
@@ -506,7 +520,7 @@ def sample_links(session: Any, derived: str, network: str, count: int) -> list:
             session.execute(
                 f"SELECT src_address, dst_address FROM "
                 f"{derived}.address_link_transactions "
-                f"WHERE token(src_address, dst_bucket) >= %s LIMIT 1",
+                f"WHERE token({key}) >= %s LIMIT 1",
                 (token,),
             )
         )

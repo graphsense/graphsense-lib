@@ -36,6 +36,7 @@
 #   ./scripts/v3/backfill.sh dry-run                # build + conform, no writes
 #   ./scripts/v3/backfill.sh probe                  # read-only: every DAL query
 #   ./scripts/v3/backfill.sh run                    # the real thing
+#   ./scripts/v3/backfill.sh backtest               # v2 vs v3, service level
 #
 # Env vars:
 #   SPARK_LOCAL_DIR     the real nvme, passed through at the same path on both
@@ -70,6 +71,19 @@
 #   START_BLOCK/END_BLOCK   bound the run. STRONGLY RECOMMENDED -- see below.
 #   GRAPHSENSE_CONFIG   path to graphsense.yaml; default ./graphsense.yaml
 #   ENV_FILE            optional docker --env-file for ${VAR} secrets
+#   REST_CONFIG         backtest only: HOST path to the gs-rest config yaml,
+#                       mounted read-only. It supplies the v2 keyspaces and the
+#                       Cassandra connection BOTH backends read through, so the
+#                       comparison differs in the DAL and nothing else. Unset,
+#                       resolve_rest_config falls back to graphsense.yaml's
+#                       `web` key.
+#   SAMPLE              backtest only: additionally compare N addresses sampled
+#                       across the token ring. Two auto-picked fixtures agreeing
+#                       proves little; a spread is what catches systematic drift.
+#   STUB_CLUSTERS       backtest only, default 1: let get_fresh_cluster_id report
+#                       None instead of raising, so the rest of the address
+#                       surface can be compared before clustering (D9) lands.
+#                       v3 has no cluster tables, so 0 fails every address call.
 #
 # WRITER: `sidecar` bulk-writes SSTables through the Cassandra Sidecar, the same
 # path the TRON transform uses; `connector` goes through the CQL write path at
@@ -130,6 +144,12 @@ fi
 
 ENVFILE_ARG=()
 [[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
+
+# The gs-rest config is a SECOND file, not graphsense.yaml, and only `backtest`
+# reads it. Mounted at a fixed container path so the host path never has to be
+# valid inside the container.
+RESTCFG_ARG=()
+[[ -n "${REST_CONFIG:-}" ]] && RESTCFG_ARG=(-v "$REST_CONFIG:/rest-config.yaml:ro")
 
 # --- container plumbing, from the working TRON full-transform run ------------
 # That run drives the Scala job, but almost all of this is cluster-shaped
@@ -204,6 +224,7 @@ v3() {
     -e JAVA_HOME=/opt/java11 \
     -e JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=/opt/cacerts \
     "${ENVFILE_ARG[@]}" \
+    "${RESTCFG_ARG[@]}" \
     -v "$JAVA11_HOME:/opt/java11:ro" \
     -v "$CACERTS:/opt/cacerts:ro" \
     -v "$GRAPHSENSE_CONFIG:/graphsense.yaml:ro" \
@@ -291,6 +312,16 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \
       --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" \
       "${PREFLIGHT_ARG[@]}" --yes
+    ;;
+  backtest)
+    # Read-only on BOTH sides: every statement is a SELECT, and the tagstore is
+    # stubbed in both containers, so a difference reported here is a Cassandra
+    # difference and nothing else.
+    BT_ARGS=()
+    [[ -n "${REST_CONFIG:-}" ]] && BT_ARGS+=(--config-file /rest-config.yaml)
+    [[ -n "${SAMPLE:-}" ]] && BT_ARGS+=(--sample "$SAMPLE")
+    [[ "${STUB_CLUSTERS:-1}" == "1" ]] && BT_ARGS+=(--stub-clusters)
+    v3 backtest -n "$NETWORK" --label "$LABEL" "${BT_ARGS[@]}"
     ;;
   *)
     sed -n '2,50p' "$0"
