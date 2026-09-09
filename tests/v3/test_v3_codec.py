@@ -254,3 +254,42 @@ def test_repairing_is_not_applied_when_encoding_a_lookup() -> None:
     assert codec.encode_address("ltc", BTC_VERSIONED) != codec.encode_address(
         "ltc", LTC_P2PKH
     )
+
+
+def test_the_version_table_matches_the_one_ingest_derives_p2pk_with() -> None:
+    """`codec.P2PKH_VERSION` is a COPY, made because a pandas UDF cannot import
+    any module that holds one of the other three -- each pulls in something the
+    baked spark-env archive does not carry (orjson, pydantic, coincurve). A
+    copy is only safe while something fails when it drifts."""
+    from graphsenselib.ingest.rpc_utxo import _PUBKEY_ADDRESS_VERSION
+
+    assert codec.P2PKH_VERSION == _PUBKEY_ADDRESS_VERSION
+
+
+@pytest.mark.parametrize(
+    "function",
+    [codec.reversion_address, codec.encode_address],
+    ids=lambda f: f.__name__,
+)
+def test_what_a_udf_calls_imports_nothing_at_call_time(function) -> None:
+    """These two run INSIDE a pandas UDF, so a lazy import in them runs on the
+    EXECUTORS -- where the baked spark-env archive is deliberately slim (see
+    `spark.columns._script_types`). It fails with a ModuleNotFoundError mid-run,
+    after the raw stage has been written, which is how the LTC run died on
+    2026-09-09.
+
+    Parsed rather than grepped: "important" in a comment is not an import."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    found = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    assert not found, (
+        f"{function.__name__} imports at call time, which happens once per "
+        f"executor: {[ast.unparse(node) for node in found]}"
+    )

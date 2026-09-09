@@ -15,7 +15,35 @@ from __future__ import annotations
 import hashlib
 import zlib
 
-from graphsenselib.utils.address import address_to_bytes, address_to_str
+from graphsenselib.utils.address import (
+    InvalidAddress,
+    address_to_bytes,
+    address_to_str,
+)
+
+#: A network's P2PKH version byte -- t1 for ZEC -- for :func:`reversion_address`.
+#:
+#: A COPY of `graphsenselib.ingest.rpc_utxo._PUBKEY_ADDRESS_VERSION`, and the
+#: FOURTH of these tables in the repo. Copying one is exactly what
+#: `spark.columns._script_types` argues against, so the reason it happens here
+#: has to be stated: this is read INSIDE A pandas UDF, on the executors, and
+#: every module that holds one of the other three drags in something the baked
+#: spark-env archive does not carry. `rpc_utxo` imports `rpc_eth` for orjson;
+#: `ingest.utxo` imports `..db` and hence pydantic and goodconf;
+#: `utils.pubkey_to_address` imports coincurve and eth_keys. A five-entry dict
+#: is not worth an RPC client on every executor, and the import fails there
+#: anyway -- which is how this was found, as a ModuleNotFoundError mid-run.
+#:
+#: `tests/v3/test_v3_codec.py` fails if this drifts from the ingest table. The
+#: real fix is the pending refactor that gives these bytes one dep-free home
+#: (see `tests/ingest/test_pubkey_address_version_parity.py` for the three).
+P2PKH_VERSION = {
+    "btc": b"\x00",
+    "bch": b"\x00",
+    "ltc": b"\x30",
+    "doge": b"\x1e",
+    "zec": b"\x1c\xb8",
+}
 
 #: Leading run that carries no information for a network's bech32 addresses:
 #: human-readable part, separator, and the witness-version character.
@@ -103,9 +131,7 @@ def reversion_address(network: str, address: str) -> str:
     right byte. Only the hash160 is preserved, which is the part both backends
     agree on -- the version byte is exactly what the stale lake gets wrong.
     """
-    from graphsenselib.ingest.rpc_utxo import _PUBKEY_ADDRESS_VERSION
-
-    want = _PUBKEY_ADDRESS_VERSION.get(network.lower())
+    want = P2PKH_VERSION.get(network.lower())
     if want is None or not address or not all(c in _B58 for c in address):
         return address
     try:
@@ -124,7 +150,7 @@ def reversion_address(network: str, address: str) -> str:
     # length alone is wrong: LTC's P2SH address is also one version byte plus a
     # 20-byte hash, so a length test turns a valid P2SH address into a valid,
     # different P2PKH one -- a wrong answer rather than a reported mismatch.
-    for other in _PUBKEY_ADDRESS_VERSION.values():
+    for other in P2PKH_VERSION.values():
         if body[: len(other)] == other and len(body) == len(other) + 20:
             return _b58check(want, body[len(other) :])
     return address
@@ -145,8 +171,6 @@ def encode_address(network: str, address: str) -> bytes:
     manufacture bytes for a genuinely invalid address on every network, which
     is a far worse failure than the one it fixes.
     """
-    from graphsenselib.utils.address import InvalidAddress
-
     if address == COINBASE:
         return COINBASE_BYTES
     net = network.lower()

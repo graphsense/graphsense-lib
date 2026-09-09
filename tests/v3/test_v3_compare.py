@@ -227,8 +227,33 @@ def test_a_length_mismatch_names_the_rows_not_just_the_count():
     found = compare.diff({"txs": left}, {"txs": right}, "eth")
     assert len(found) == 1
     assert "identifier=c" in str(found[0].right)
-    assert "identifier=c" not in str(found[0].left)
     assert "2 items" in str(found[0].left) and "3 items" in str(found[0].right)
+
+
+def test_a_length_mismatch_reports_the_DIFFERENCE_not_a_prefix():
+    """The two lists usually share a long prefix -- a block listing that
+    differs by two rows agrees on the other sixty-six. Showing the first few
+    of each side prints the SAME rows twice and buries the ones that differ,
+    which is what made the first version of this useless."""
+    shared = [{"identifier": f"s{i}"} for i in range(8)]
+    found = compare.diff(
+        {"txs": shared + [{"identifier": "onlyv2"}]},
+        {"txs": shared + [{"identifier": "onlyv3"}, {"identifier": "alsov3"}]},
+        "eth",
+    )
+    left, right = str(found[0].left), str(found[0].right)
+    assert "only here: identifier=onlyv2" in left
+    assert "identifier=onlyv3" in right and "identifier=alsov3" in right
+    assert "s0" not in left and "s0" not in right
+
+
+def test_a_side_that_is_a_strict_subset_says_so_by_omission():
+    """Nothing is unique to the shorter side, so it reports its count alone --
+    which is itself the finding: those rows are MISSING, not different."""
+    rows = [{"identifier": f"s{i}"} for i in range(3)]
+    found = compare.diff({"txs": rows[:1]}, {"txs": rows}, "eth")
+    assert str(found[0].left) == "1 items"
+    assert "only here" in str(found[0].right)
 
 
 def test_a_long_length_mismatch_is_sampled_not_dumped():
