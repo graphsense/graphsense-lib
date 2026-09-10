@@ -379,9 +379,12 @@ def _relation_side(
 ) -> "DataFrame":
     """One direction of the relations pair, aggregated to epoch 0.
 
-    ``near`` is the address the partition is keyed on, ``far`` the counterparty.
-    The bucket hashes the FAR side, so a read scatters over `relation_buckets`
-    partitions and stops when it has collected `in_degree` rows.
+    ``near`` is the address whose edges these are, ``far`` the counterparty.
+    The partition is ``(address_bucket, rel_bucket)`` -- the near side hashed
+    over `entity_buckets` and the far side over `relation_buckets` -- with the
+    near address as the leading clustering column, so a read is still one
+    slice per rel_bucket but the partitions are shared rather than one per
+    entity. See the table comment for what that measured.
     """
     from pyspark.sql import functions as F
 
@@ -397,6 +400,11 @@ def _relation_side(
     )
     fiat = common.sum_fiat(priced, [near, far], config.fiat_currencies)
     return counts.join(fiat, on=[near, far], how="left").select(
+        # Two INDEPENDENT hash dimensions: the near side picks the partition an
+        # entity's edges live in, the far side picks which of `relation_buckets`
+        # within it. Swapping them silently writes edges into partitions no
+        # reader looks at.
+        common.entity_bucket(F.col(near), config).alias("address_bucket"),
         F.col(near),
         common.relation_bucket(F.col(far), config).alias("rel_bucket"),
         F.col(far),

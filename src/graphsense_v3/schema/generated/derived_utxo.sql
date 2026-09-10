@@ -173,10 +173,26 @@ CREATE TABLE IF NOT EXISTS address_tx_pages (
     WITH CLUSTERING ORDER BY (first_tx_id DESC)
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
--- One entity's relations, not 25 000 entities'. relation_buckets is a config
--- constant so a read scatters over 0..N-1 unconditionally and stops on
--- in_degree/out_degree -- the four *_secondary_ids watermark tables are gone.
--- only_ids stays a point read: the bucket is computed from the counterparty.
+-- BUCKETED on the near side, with the entity as the leading clustering
+-- column -- the same shape as address_stats, and for the same reason.
+--
+-- Partition-per-entity was the original form and it cost 4.7x v2 on a full
+-- LTC chain: 1.007 BILLION partitions averaging 259 bytes, where the
+-- per-partition overhead IS the table. Measured 2026-09-10; the control
+-- case was address_by_prefix, the one table that kept a bucketed key, which
+-- beats v2 at 0.72x on the same run. A read is unchanged in SHAPE -- still
+-- relation_buckets partition reads -- but each is now a clustering slice
+-- inside a shared partition rather than a whole partition of its own.
+--
+-- The hub ceiling does NOT move: a partition still holds one entity's edges
+-- in one rel_bucket plus its bucket-mates' (~185 KiB on LTC), and the 34.5
+-- MiB maximum is set by the biggest counterparty set divided by
+-- relation_buckets, which is unchanged.
+--
+-- relation_buckets is a config constant so a read scatters over 0..N-1
+-- unconditionally and stops on in_degree/out_degree -- the four
+-- *_secondary_ids watermark tables are gone. only_ids stays a point read:
+-- the near side gives address_bucket and the counterparty gives rel_bucket.
 -- v2 uses 100 buckets; 16 is enough and cuts the fan-out four-fold.
 --
 -- Epoch rows fold exactly as address_stats does, range delete included --
@@ -188,6 +204,7 @@ CREATE TABLE IF NOT EXISTS address_tx_pages (
 -- nets flows per (tx, entity) -- and that is precisely the chain where /links
 -- already cannot trust the netted edge.
 CREATE TABLE IF NOT EXISTS address_incoming_relations (
+    address_bucket int,                     -- crc32(near side) % entity_buckets
     dst_address blob,
     rel_bucket int,                         -- crc32(far side) % relation_buckets
     src_address blob,
@@ -196,15 +213,31 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
     value frozen<currency>,
     link_page_max int,                      -- epoch 0 only; RESERVED, see definitions.py
     link_ordinal_next bigint,
-    PRIMARY KEY ((dst_address, rel_bucket), src_address, epoch)
+    PRIMARY KEY ((address_bucket, rel_bucket), dst_address, src_address, epoch)
 )
-    WITH CLUSTERING ORDER BY (src_address ASC, epoch ASC)
+    WITH CLUSTERING ORDER BY (dst_address ASC, src_address ASC, epoch ASC)
     AND compaction = {'class':'LeveledCompactionStrategy','sstable_size_in_mb':'160'};
 
--- One entity's relations, not 25 000 entities'. relation_buckets is a config
--- constant so a read scatters over 0..N-1 unconditionally and stops on
--- in_degree/out_degree -- the four *_secondary_ids watermark tables are gone.
--- only_ids stays a point read: the bucket is computed from the counterparty.
+-- BUCKETED on the near side, with the entity as the leading clustering
+-- column -- the same shape as address_stats, and for the same reason.
+--
+-- Partition-per-entity was the original form and it cost 4.7x v2 on a full
+-- LTC chain: 1.007 BILLION partitions averaging 259 bytes, where the
+-- per-partition overhead IS the table. Measured 2026-09-10; the control
+-- case was address_by_prefix, the one table that kept a bucketed key, which
+-- beats v2 at 0.72x on the same run. A read is unchanged in SHAPE -- still
+-- relation_buckets partition reads -- but each is now a clustering slice
+-- inside a shared partition rather than a whole partition of its own.
+--
+-- The hub ceiling does NOT move: a partition still holds one entity's edges
+-- in one rel_bucket plus its bucket-mates' (~185 KiB on LTC), and the 34.5
+-- MiB maximum is set by the biggest counterparty set divided by
+-- relation_buckets, which is unchanged.
+--
+-- relation_buckets is a config constant so a read scatters over 0..N-1
+-- unconditionally and stops on in_degree/out_degree -- the four
+-- *_secondary_ids watermark tables are gone. only_ids stays a point read:
+-- the near side gives address_bucket and the counterparty gives rel_bucket.
 -- v2 uses 100 buckets; 16 is enough and cuts the fan-out four-fold.
 --
 -- Epoch rows fold exactly as address_stats does, range delete included --
@@ -216,6 +249,7 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
 -- nets flows per (tx, entity) -- and that is precisely the chain where /links
 -- already cannot trust the netted edge.
 CREATE TABLE IF NOT EXISTS address_outgoing_relations (
+    address_bucket int,                     -- crc32(near side) % entity_buckets
     src_address blob,
     rel_bucket int,                         -- crc32(far side) % relation_buckets
     dst_address blob,
@@ -224,9 +258,9 @@ CREATE TABLE IF NOT EXISTS address_outgoing_relations (
     value frozen<currency>,
     link_page_max int,                      -- epoch 0 only; RESERVED, see definitions.py
     link_ordinal_next bigint,
-    PRIMARY KEY ((src_address, rel_bucket), dst_address, epoch)
+    PRIMARY KEY ((address_bucket, rel_bucket), src_address, dst_address, epoch)
 )
-    WITH CLUSTERING ORDER BY (dst_address ASC, epoch ASC)
+    WITH CLUSTERING ORDER BY (src_address ASC, dst_address ASC, epoch ASC)
     AND compaction = {'class':'LeveledCompactionStrategy','sstable_size_in_mb':'160'};
 
 -- The single most expensive table in v3 -- roughly three times the cost of

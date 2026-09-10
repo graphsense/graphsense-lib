@@ -837,6 +837,7 @@ def _relations_table(name: str, near: str, far: str, family: Family) -> Table:
     return Table(
         name,
         (
+            C("address_bucket", "int", "crc32(near side) % entity_buckets"),
             C(near, "blob"),
             C("rel_bucket", "int", "crc32(far side) % relation_buckets"),
             C(far, "blob"),
@@ -861,13 +862,33 @@ def _relations_table(name: str, near: str, far: str, family: Family) -> Table:
             C("link_page_max", "int", "epoch 0 only; RESERVED, see definitions.py"),
             C("link_ordinal_next", "bigint"),
         ),
-        Key((near, "rel_bucket"), (far, "epoch"), ((far, "ASC"), ("epoch", "ASC"))),
+        Key(
+            ("address_bucket", "rel_bucket"),
+            (near, far, "epoch"),
+            ((near, "ASC"), (far, "ASC"), ("epoch", "ASC")),
+        ),
         LCS,
         comment=(
-            "One entity's relations, not 25 000 entities'. relation_buckets is a config\n"
-            "constant so a read scatters over 0..N-1 unconditionally and stops on\n"
-            "in_degree/out_degree -- the four *_secondary_ids watermark tables are gone.\n"
-            "only_ids stays a point read: the bucket is computed from the counterparty.\n"
+            "BUCKETED on the near side, with the entity as the leading clustering\n"
+            "column -- the same shape as address_stats, and for the same reason.\n"
+            "\n"
+            "Partition-per-entity was the original form and it cost 4.7x v2 on a full\n"
+            "LTC chain: 1.007 BILLION partitions averaging 259 bytes, where the\n"
+            "per-partition overhead IS the table. Measured 2026-09-10; the control\n"
+            "case was address_by_prefix, the one table that kept a bucketed key, which\n"
+            "beats v2 at 0.72x on the same run. A read is unchanged in SHAPE -- still\n"
+            "relation_buckets partition reads -- but each is now a clustering slice\n"
+            "inside a shared partition rather than a whole partition of its own.\n"
+            "\n"
+            "The hub ceiling does NOT move: a partition still holds one entity's edges\n"
+            "in one rel_bucket plus its bucket-mates' (~185 KiB on LTC), and the 34.5\n"
+            "MiB maximum is set by the biggest counterparty set divided by\n"
+            "relation_buckets, which is unchanged.\n"
+            "\n"
+            "relation_buckets is a config constant so a read scatters over 0..N-1\n"
+            "unconditionally and stops on in_degree/out_degree -- the four\n"
+            "*_secondary_ids watermark tables are gone. only_ids stays a point read:\n"
+            "the near side gives address_bucket and the counterparty gives rel_bucket.\n"
             "v2 uses 100 buckets; 16 is enough and cuts the fan-out four-fold.\n"
             "\n"
             "Epoch rows fold exactly as address_stats does, range delete included --\n"

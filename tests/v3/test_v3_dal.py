@@ -827,8 +827,9 @@ def _relations(edges: dict):
         if "relations" not in cql:
             return []
         seen.append((" ".join(cql.split()), params))
+        # (address_bucket, rel_bucket, near_address, after?)
         bucket_index = params[1]
-        after = params[2] if len(params) > 2 else None
+        after = params[3] if len(params) > 3 else None
         out = []
         for far in sorted(edges):
             if bucket(far, CONFIG["relation_buckets"]) != bucket_index:
@@ -919,3 +920,32 @@ def test_a_counterparty_wider_than_every_budget_falls_back_to_a_whole_read() -> 
     by_address = {bytes(n.address): n for n in found}
     assert by_address[_far(3)].no_transactions == 100_000
     assert any(" LIMIT " not in cql for cql, _p in seen), "it never fell back"
+
+
+def test_the_neighbour_read_addresses_a_shared_partition() -> None:
+    """The re-key: the partition is (address_bucket, rel_bucket) and the near
+    address is a CLUSTERING column, so a partition holds this entity's edges
+    alongside its bucket-mates'. Partition-per-entity cost 4.7x v2 on a full
+    LTC chain -- 1.007 billion partitions averaging 259 bytes."""
+    dal, session = make(lambda cql, params: [])
+    run(dal.neighbors(ADDRESS, is_outgoing=True))
+    cql, params = session.seen[0]
+    assert "WHERE address_bucket = %s AND rel_bucket = %s AND src_address = %s" in cql
+    # Two INDEPENDENT hash dimensions, and swapping them writes into partitions
+    # no reader looks at.
+    assert params[0] == bucket(ADDRESS, CONFIG["entity_buckets"])
+    assert params[2] == ADDRESS
+    assert len(session.seen) == CONFIG["relation_buckets"], "the scatter is unchanged"
+
+
+def test_a_named_edge_is_still_a_point_read() -> None:
+    """Both halves of the partition key are known -- the near side gives
+    address_bucket, the counterparty gives rel_bucket -- and the two addresses
+    then restrict the clustering prefix in full."""
+    dal, session = make(lambda cql, params: [])
+    run(dal.neighbor(ADDRESS, OTHER, is_outgoing=True))
+    assert len(session.seen) == 1, "a named edge must not scatter"
+    cql, params = session.seen[0]
+    assert params[0] == bucket(ADDRESS, CONFIG["entity_buckets"])
+    assert params[1] == bucket(OTHER, CONFIG["relation_buckets"])
+    assert params[2] == ADDRESS and params[3] == OTHER

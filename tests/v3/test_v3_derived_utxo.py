@@ -394,6 +394,23 @@ def test_relations_bucket_the_far_side(split_io, split_txs, rates, blocks) -> No
         assert row["rel_bucket"] == bucket(bytes(row["dst_address"]), buckets)
 
 
+def test_relations_bucket_the_near_side_too(split_io, split_txs, rates, blocks) -> None:
+    """The partition is (address_bucket, rel_bucket): the NEAR side hashed over
+    entity_buckets and the FAR side over relation_buckets. Two independent
+    dimensions -- writing either modulus in the other's column puts every edge
+    in a partition no reader looks at, and /neighbors returns nothing at all."""
+    from graphsense_v3.codec import bucket
+
+    frames = derived_utxo.build(split_io, split_txs, blocks, rates, "btc")
+    entity = config_for("btc").entity_buckets
+    rel = config_for("btc").relation_buckets
+    assert entity != rel, "the test cannot tell the two moduli apart"
+    for row in frames["address_outgoing_relations"].collect():
+        assert row["address_bucket"] == bucket(bytes(row["src_address"]), entity)
+    for row in frames["address_incoming_relations"].collect():
+        assert row["address_bucket"] == bucket(bytes(row["dst_address"]), entity)
+
+
 def test_link_transactions_carry_the_tx_list(
     split_io, split_txs, rates, blocks
 ) -> None:

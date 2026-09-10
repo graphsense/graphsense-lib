@@ -717,11 +717,19 @@ class Dal:
         buckets = self.config["relation_buckets"]
         clause = f" AND {far} > %s" if after is not None else ""
         extra = (after,) if after is not None else ()
+        # The near address is a CLUSTERING column, not the partition key -- the
+        # partition is (address_bucket, rel_bucket) and holds this entity's
+        # bucket-mates too. So it is restricted here, and `far` after it, which
+        # is a legal clustering prefix.
         query = (
             f"SELECT * FROM {self.derived}.{table} "
-            f"WHERE {near} = %s AND rel_bucket = %s{clause}"
+            f"WHERE address_bucket = %s AND rel_bucket = %s "
+            f"AND {near} = %s{clause}"
         )
-        params = [(address, index) + extra for index in range(buckets)]
+        params = [
+            (self.entity_bucket(address), index, address) + extra
+            for index in range(buckets)
+        ]
 
         if limit is None:
             rows = await self._gather([(query, p) for p in params])
@@ -808,8 +816,12 @@ class Dal:
     async def neighbor(
         self, address: bytes, counterparty: bytes, *, is_outgoing: bool
     ) -> Optional[Neighbor]:
-        """Whether one specific edge exists -- a POINT read, because the bucket
-        is computed from the counterparty."""
+        """Whether one specific edge exists -- still a POINT read.
+
+        Both halves of the partition key are known: the near side gives
+        `address_bucket` and the counterparty gives `rel_bucket`. The two
+        addresses then restrict the clustering prefix in full.
+        """
         table = (
             "address_outgoing_relations"
             if is_outgoing
@@ -822,8 +834,14 @@ class Dal:
         )
         rows = await self._select(
             f"SELECT * FROM {self.derived}.{table} "
-            f"WHERE {near} = %s AND rel_bucket = %s AND {far} = %s",
-            (address, self.relation_bucket(counterparty), counterparty),
+            f"WHERE address_bucket = %s AND rel_bucket = %s "
+            f"AND {near} = %s AND {far} = %s",
+            (
+                self.entity_bucket(address),
+                self.relation_bucket(counterparty),
+                address,
+                counterparty,
+            ),
         )
         if not rows:
             return None

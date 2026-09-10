@@ -1696,8 +1696,9 @@ def _many_neighbours(count: int, *, stats=True):
     def rows(cql, params):
         if "relations" in cql:
             seen.append((cql, params))
+            # (address_bucket, rel_bucket, near_address, after?)
             bucket = params[1]
-            after = params[2] if len(params) > 2 else None
+            after = params[3] if len(params) > 3 else None
             return [
                 Row(dst_address=a, no_transactions=3, epoch=0)
                 for a in addresses

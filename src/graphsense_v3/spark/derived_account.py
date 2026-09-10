@@ -568,6 +568,9 @@ def _relation_side(
         .join(tokens, on=keys, how="left")
         .join(cursors, on=edge, how="left")
         .select(
+            # See derived_utxo._relation_side: two independent hash dimensions,
+            # near for the partition and far for the bucket within it.
+            common.entity_bucket(F.col(near), config).alias("address_bucket"),
             F.col(near),
             common.relation_bucket(F.col(far), config).alias("rel_bucket"),
             F.col(far),
