@@ -65,6 +65,17 @@
 #                       of the run -- BCH block 556045 really does hold 166,882
 #                       transactions, and no configuration makes that untrue.
 #   FULL                set to 1 for a full-history run (no END_BLOCK)
+#   STAGES              comma-separated: raw, derived. Default both.
+#                       `STAGES=derived` re-derives WITHOUT rewriting raw,
+#                       which is what a DERIVED-ONLY schema change needs -- the
+#                       relations re-key, say. It still scans the lake, because
+#                       the derived stage builds its inputs from the raw frames
+#                       rather than reading them back from Cassandra; what it
+#                       skips is writing them.
+#                       A table whose PRIMARY KEY changed must be DROPPED
+#                       first: `create` is CREATE TABLE IF NOT EXISTS, so it
+#                       leaves an existing table with the old key alone and the
+#                       write then fails on the column it does not have.
 #   RF                  replication factor; default 1 (benchmark keyspace: half
 #                       the disk, half the write cost, and nothing depends on
 #                       it. NEVER 1 for anything that matters.)
@@ -114,6 +125,10 @@ WRITER="${WRITER:-sidecar}"
 ACCEPT_PREFLIGHT="${ACCEPT_PREFLIGHT:-}"
 PREFLIGHT_ARG=()
 [[ "$ACCEPT_PREFLIGHT" == "1" ]] && PREFLIGHT_ARG=(--accept-preflight)
+# Unset means both stages, which is the CLI default -- passed only when the
+# caller asked, so the default lives in one place rather than two.
+STAGES_ARG=()
+[[ -n "${STAGES:-}" ]] && STAGES_ARG=(--stages "$STAGES")
 RF="${RF:-1}"
 DATACENTER="${DATACENTER:-DC1}"
 GRAPHSENSE_CONFIG="${GRAPHSENSE_CONFIG:-$PWD/graphsense.yaml}"
@@ -311,7 +326,7 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
     fi
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \
       --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" \
-      "${PREFLIGHT_ARG[@]}" --yes
+      "${PREFLIGHT_ARG[@]}" "${STAGES_ARG[@]}" --yes
     ;;
   backtest)
     # Read-only on BOTH sides: every statement is a SELECT, and the tagstore is
