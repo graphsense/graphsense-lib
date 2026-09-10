@@ -1439,6 +1439,7 @@ def _block_listing(**extra):
                 "receipt_gas_used": 21000,
                 "receipt_effective_gas_price": 1000,
                 "receipt_contract_address": None,
+                "receipt_status": 1,
             }
             return [Row(**{**fields, **extra})]
         return []
@@ -1498,6 +1499,7 @@ def _block_with_a_token_transfer():
                     receipt_gas_used=21000,
                     receipt_effective_gas_price=1000,
                     receipt_contract_address=None,
+                    receipt_status=1,
                 )
             ]
         if ".log" in cql:
@@ -1865,3 +1867,17 @@ def test_a_neighbour_page_reads_its_transactions_in_one_batch() -> None:
     assert all(r["dst_address_row"]["first_tx"].tx_hash == b"\xf0" * 32 for r in found)
     # Three neighbours sharing two tx ids: two reads, not six.
     assert len(seen) == 2, f"one read per (page, tx id), got {len(seen)}"
+
+
+def test_a_failed_transaction_is_not_listed_in_its_block() -> None:
+    """The account model is A-i, "fee-visible, tx-invisible"
+    (`docs/eth_failed_tx_fee_accounting.md` §3): a failed transaction's sender
+    is tracked so its gas debit lands, but the transaction never becomes a
+    transaction anywhere. A-ii -- modelling them fully -- was refused.
+
+    The derived stage filters `receipt_status == 1` already; a block listing
+    reads the RAW range, which has everything, so it has to filter too. On eth
+    block 15060334 that was 184 raw rows against v2's 179, and the five extra
+    were exactly the failed ones."""
+    assert _block_listing()[0]["type"] == "external"
+    assert _block_listing(receipt_status=0) == []

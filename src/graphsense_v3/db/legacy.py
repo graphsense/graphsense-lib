@@ -482,6 +482,19 @@ class LegacyAdapter:
         dal = self._dal(currency)
         found = await dal.block_transactions(height)
         if is_eth_like(currency.lower()):
+            # FAILED TRANSACTIONS ARE NOT LISTED. The account model is A-i,
+            # "fee-visible, tx-invisible" (`docs/eth_failed_tx_fee_accounting.md`
+            # §3): a failed transaction's sender is tracked so its gas debit
+            # lands, but the transaction itself never becomes a transaction
+            # anywhere. A-ii, modelling them fully, was considered and refused.
+            #
+            # The derived stage already applies this -- `derived_account`
+            # filters `receipt_status == 1` -- but a block listing reads the raw
+            # range, which has everything, so the filter has to be repeated
+            # here. Measured on eth block 15060334: 184 raw rows against v2's
+            # 179, and the five extra were exactly the `receipt_status = 0`
+            # ones. Their logs are reverted, so no token row is lost with them.
+            found = [tx for tx in found if tx.get("receipt_status") == 1]
             tokens = await self._block_token_transfers(currency, height, found)
             rows = []
             for tx in found:
