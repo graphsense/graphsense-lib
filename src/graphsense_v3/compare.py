@@ -46,6 +46,13 @@ IGNORED_FIELDS: dict = {
     "address_id": "v2 assigns a surrogate id at write time; v3 keys on the bytes",
     "address_id_group": "derived from address_id, so equally arbitrary",
     "cluster_id": "v3 has no clusters yet (D9)",
+    # --stub-clusters exists so the rest of the address surface can be
+    # compared before D9 lands, and it says cluster FIELDS stay excluded --
+    # but this one was not on the list, so every address differed on it and
+    # the flag reported 630 differences where the same run without it
+    # reported 2. An exclusion the flag's own promise already implies.
+    "fresh_cluster_id": "v3 has no clusters yet (D9); --stub-clusters reports "
+    "None so the rest of the row can be compared",
     "entity": "the entity id, same reason",
     "entity_id": "the entity id, same reason",
     "tx_id": "v2's is dense and sequential, v3's is (block_id << 32) + index -- "

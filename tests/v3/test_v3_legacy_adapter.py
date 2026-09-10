@@ -1830,3 +1830,37 @@ def test_an_address_v3_can_answer_for_is_reported_clean() -> None:
     "clean" otherwise. v3 has no incremental writer, so nothing is ever in
     flight -- and None read as a missing field rather than as a settled one."""
     assert _address_with_txs()["status"] == "clean"
+
+
+def test_a_neighbour_page_reads_its_transactions_in_one_batch() -> None:
+    """Four point reads per neighbour -- stats, balance, first tx, last tx --
+    is three dependent waves for a page, and measured 1.6x v2 on LTC hubs.
+    The first/last tx ids live ON the stats row, so the page can read every
+    one of its transactions in a single batch once the stats are in."""
+    seen: list = []
+
+    def rows(cql, params):
+        if "relations" in cql:
+            return [
+                Row(dst_address=bytes([i]) + bytes(19), no_transactions=1, epoch=0)
+                for i in range(3)
+            ]
+        if "address_stats" in cql:
+            return [Row(epoch=0, first_tx_id=7, last_tx_id=9)]
+        if ".transaction" in cql:
+            seen.append(params)
+            return [
+                Row(
+                    tx_id=params[1], tx_hash=b"\xf0" * 32, block_id=1, block_timestamp=5
+                )
+            ]
+        return []
+
+    shim = LegacyAdapter(
+        {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
+    )
+    found, _ = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    assert len(found) == 3
+    assert all(r["dst_address_row"]["first_tx"].tx_hash == b"\xf0" * 32 for r in found)
+    # Three neighbours sharing two tx ids: two reads, not six.
+    assert len(seen) == 2, f"one read per (page, tx id), got {len(seen)}"

@@ -742,7 +742,14 @@ class LegacyAdapter:
             currency, self._bytes(currency, address), address
         )
 
-    async def _address_row(self, currency: str, raw: bytes, address) -> Optional[dict]:
+    async def _address_row(
+        self,
+        currency: str,
+        raw: bytes,
+        address,
+        *,
+        summaries: Optional[dict] = None,
+    ) -> Optional[dict]:
         """The same row, from the address BYTES.
 
         Split out for the neighbour listing, which holds the bytes already and
@@ -751,6 +758,12 @@ class LegacyAdapter:
         through rather than re-derived: an account keyspace wants the bytes and
         a UTXO one the decoded string, and `address_to_user_format` keys off
         which it is handed.
+
+        ``summaries`` is ``{tx_id: transaction}`` already read for the whole
+        page. Without it each address fetches its own first/last transaction,
+        which is a THIRD wave of round trips on a listing -- 40 point reads for
+        a page of twenty, measured at 1.6x v2 on LTC hubs. The caller that has
+        a page reads them once instead.
         """
         import asyncio
 
@@ -758,6 +771,26 @@ class LegacyAdapter:
         # Concurrent, not sequential: this runs once per neighbour of a page,
         # so a serial pair of round trips here is 2N latencies per listing.
         stats, balances = await asyncio.gather(dal.stats(raw), dal.balance(raw))
+        return await self._build_address_row(
+            currency, raw, address, stats, balances, summaries
+        )
+
+    async def _build_address_row(
+        self,
+        currency: str,
+        raw: bytes,
+        address,
+        stats,
+        balances: dict,
+        summaries: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """The row itself, once its stats and balances are in hand.
+
+        Separate from the reading so a LISTING can read for the whole page at
+        once -- see `_as_v2_neighbors`. Nothing here goes to the database
+        unless ``summaries`` is None.
+        """
+        dal = self._dal(currency)
         if stats is None:
             return None
         native = next(iter(balances), None)
@@ -797,7 +830,7 @@ class LegacyAdapter:
                 else None
             )
         row["first_tx"], row["last_tx"] = await self._tx_summaries(
-            currency, stats.first_tx_id, stats.last_tx_id
+            currency, stats.first_tx_id, stats.last_tx_id, found=summaries
         )
         # Every asset but the native one, which `balance` already carries.
         # `.get`, not a subscript, so None and {} are both fine -- but a UTXO
@@ -810,7 +843,12 @@ class LegacyAdapter:
         return row
 
     async def _tx_summaries(
-        self, currency: str, first_tx_id: Optional[int], last_tx_id: Optional[int]
+        self,
+        currency: str,
+        first_tx_id: Optional[int],
+        last_tx_id: Optional[int],
+        *,
+        found: Optional[dict] = None,
     ) -> tuple:
         """``(first_tx, last_tx)`` as the summaries the service reads.
 
@@ -828,10 +866,11 @@ class LegacyAdapter:
         but this runs once per neighbour of a listing, and one bad edge should
         not take the page down with it.
         """
-        ids = [i for i in (first_tx_id, last_tx_id) if i is not None]
-        if not ids:
-            return None, None
-        found = await self._dal(currency).transactions_by_ids(ids)
+        if found is None:
+            ids = [i for i in (first_tx_id, last_tx_id) if i is not None]
+            if not ids:
+                return None, None
+            found = await self._dal(currency).transactions_by_ids(ids)
 
         def summary(tx_id: Optional[int]) -> Optional[_TxSummary]:
             detail = found.get(tx_id) if tx_id is not None else None
@@ -1386,11 +1425,34 @@ class LegacyAdapter:
                     "labels": None,
                 }
             )
-        # One concurrent round for the page, not one round trip per neighbour.
+        # TWO concurrent rounds for the page, not four per neighbour. The
+        # stats and balances come first because the first/last tx ids are ON
+        # the stats row -- then every one of the page's transactions is read in
+        # a single batch. Per-address it was a third wave of 40 point reads for
+        # a page of twenty, and that measured 1.6x v2 on LTC hubs.
+        dal = self._dal(currency)
+        loaded = await asyncio.gather(
+            *(
+                asyncio.gather(
+                    dal.stats(bytes(e.address)), dal.balance(bytes(e.address))
+                )
+                for e in found
+            )
+        )
+        wanted = [
+            tx_id
+            for stats, _balances in loaded
+            if stats is not None
+            for tx_id in (stats.first_tx_id, stats.last_tx_id)
+            if tx_id is not None
+        ]
+        summaries = await dal.transactions_by_ids(sorted(set(wanted)))
         details = await asyncio.gather(
             *(
-                self._address_row(currency, bytes(edge.address), row[side])
-                for edge, row in zip(found, rows)
+                self._build_address_row(
+                    currency, bytes(edge.address), row[side], stats, balances, summaries
+                )
+                for edge, row, (stats, balances) in zip(found, rows, loaded)
             )
         )
         for row, detail in zip(rows, details):

@@ -273,3 +273,16 @@ def test_a_list_of_unnameable_items_still_reports_its_length():
     found = compare.diff({"xs": left}, {"xs": right}, "eth")
     assert str(found[0].left) == "2 items"
     assert str(found[0].right) == "3 items"
+
+
+def test_the_stub_clusters_flag_does_not_make_every_address_differ():
+    """`--stub-clusters` exists so the rest of the address surface can be
+    compared before D9, and it promises cluster fields stay excluded.
+    fresh_cluster_id was not on the list, so a run with the flag reported 630
+    differences where the same run without it reported 2."""
+    found = compare.diff(
+        {"address": "abc", "fresh_cluster_id": 4711, "balance": 5},
+        {"address": "abc", "fresh_cluster_id": None, "balance": 5},
+        "ltc",
+    )
+    assert found == []
