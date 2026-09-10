@@ -808,3 +808,114 @@ def test_a_token_with_no_rate_anywhere_is_none_not_an_endless_walk() -> None:
     dal, session = make(lambda cql, params: [])
     assert run(dal.rate_at_or_before("USDT", 10_000)) is None
     assert len(session.seen) == core.BLOCK_BELOW_MAX_GROUPS
+
+
+# --------------------------------------------------------------------------- #
+# neighbours: the read is bounded, and a row is not a neighbour               #
+# --------------------------------------------------------------------------- #
+
+
+def _relations(edges: dict):
+    """A session serving ``{far_address: [no_transactions per epoch]}``.
+
+    HONOURS the CQL ``LIMIT``, which a fake that ignores it cannot: the whole
+    point of the bounded read is what happens when a partition comes back full.
+    """
+    seen: list = []
+
+    def rows(cql, params):
+        if "relations" not in cql:
+            return []
+        seen.append((" ".join(cql.split()), params))
+        bucket_index = params[1]
+        after = params[2] if len(params) > 2 else None
+        out = []
+        for far in sorted(edges):
+            if bucket(far, CONFIG["relation_buckets"]) != bucket_index:
+                continue
+            if after is not None and far <= after:
+                continue
+            for epoch, count in enumerate(edges[far]):
+                out.append(
+                    Row(
+                        dst_address=far,
+                        rel_bucket=bucket_index,
+                        epoch=epoch,
+                        no_transactions=count,
+                        value={"value": count, "fiat_values": []},
+                        token_values=None,
+                    )
+                )
+        limit = None
+        if " LIMIT " in cql:
+            limit = int(cql.rsplit(" LIMIT ", 1)[1].split()[0])
+        return out[:limit] if limit else out
+
+    dal, _ = make(rows)
+    return dal, seen
+
+
+def _far(index: int) -> bytes:
+    return bytes([0]) + index.to_bytes(20, "big")
+
+
+def test_a_bounded_neighbour_read_asks_for_a_row_limit() -> None:
+    """Without one, a hub with 50 000 edges reads all of them to return 20."""
+    dal, seen = _relations({_far(i): [1] for i in range(200)})
+    found = run(dal.neighbors(b"\xaa" * 20, is_outgoing=True, limit=20))
+    assert len(found) >= 20
+    assert all(" LIMIT " in cql for cql, _p in seen)
+
+
+def test_an_unbounded_neighbour_read_still_asks_for_everything() -> None:
+    """`limit=None` is the probe's path and the one that must not change."""
+    dal, seen = _relations({_far(i): [1] for i in range(30)})
+    found = run(dal.neighbors(b"\xaa" * 20, is_outgoing=True))
+    assert len(found) == 30
+    assert all(" LIMIT " not in cql for cql, _p in seen)
+
+
+def test_a_neighbour_split_across_epochs_is_never_half_counted() -> None:
+    """THE reason a row limit is not enough. One counterparty owns one row per
+    epoch and the read SUMS them, so a cap that stops inside that run does not
+    raise -- it understates the neighbour's totals, silently.
+
+    `_far(0)` sorts first in its bucket, so a budget below its epoch count
+    fills the whole read with that one counterparty."""
+    edges = {_far(i): [1] for i in range(40)}
+    edges[_far(0)] = [1] * 60
+    dal, _ = _relations(edges)
+    found = run(dal.neighbors(b"\xaa" * 20, is_outgoing=True, limit=5))
+    by_address = {bytes(n.address): n for n in found}
+    assert _far(0) in by_address, "the counterparty the budget straddled is gone"
+    assert by_address[_far(0)].no_transactions == 60, "epoch rows were cut"
+
+
+def test_the_budget_doubles_rather_than_returning_a_short_page() -> None:
+    """A partition that came back full may have stopped inside a group, so its
+    last group is dropped -- which can leave nothing complete at all. Reading
+    again with more budget is the answer; returning what survived is not.
+
+    Wide fan-out never triggers this: 16 buckets means the first budget covers
+    far more than a page. Only a DEEP counterparty does, which is why the
+    fixture is one address with thirty epochs rather than many addresses."""
+    edges = {_far(i): [1] for i in range(40)}
+    edges[_far(0)] = [1] * 30
+    dal, seen = _relations(edges)
+    run(dal.neighbors(b"\xaa" * 20, is_outgoing=True, limit=5))
+    budgets = sorted({int(cql.rsplit(" LIMIT ", 1)[1]) for cql, _p in seen})
+    assert len(budgets) > 1, "it never had to grow, so this proves nothing"
+    assert budgets[1] == budgets[0] * 2
+
+
+def test_a_counterparty_wider_than_every_budget_falls_back_to_a_whole_read() -> None:
+    """A group larger than any budget would loop forever. The fallback reads
+    the partitions whole -- what the bound exists to avoid, and still the only
+    right answer."""
+    edges = {_far(i): [1] for i in range(10)}
+    edges[_far(3)] = [1] * 100_000
+    dal, seen = _relations(edges)
+    found = run(dal.neighbors(b"\xaa" * 20, is_outgoing=True, limit=5))
+    by_address = {bytes(n.address): n for n in found}
+    assert by_address[_far(3)].no_transactions == 100_000
+    assert any(" LIMIT " not in cql for cql, _p in seen), "it never fell back"

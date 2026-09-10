@@ -38,6 +38,17 @@ logger = logging.getLogger(__name__)
 #: than this turns a point read back into the scan the table exists to avoid.
 BLOCK_BELOW_MAX_GROUPS = 100
 
+#: Rows one counterparty is assumed to own when sizing a bounded relations
+#: read. A backfill writes ONE epoch per neighbour; the incremental path will
+#: add more, and `_bounded_slice` doubles its budget rather than trusting this,
+#: so it is a starting guess and not a limit.
+EPOCHS_PER_NEIGHBOUR = 4
+
+#: How many times `_bounded_slice` doubles before giving up and reading the
+#: partitions whole. Bounded because a counterparty with more rows than any
+#: budget would otherwise loop forever.
+NEIGHBOUR_BUDGET_ATTEMPTS = 4
+
 #: How many days `block_at_or_after` will walk forward before giving up. A
 #: timestamp late in a day often has no block after it until the next one, and a
 #: chain can pause; past this it has a gap the date index cannot answer around.
@@ -657,7 +668,12 @@ class Dal:
         return rows[0].tx_page if rows else 0
 
     async def neighbors(
-        self, address: bytes, *, is_outgoing: bool, after: Optional[bytes] = None
+        self,
+        address: bytes,
+        *,
+        is_outgoing: bool,
+        after: Optional[bytes] = None,
+        limit: Optional[int] = None,
     ) -> list:
         """Every counterparty, summed over epochs, ORDERED BY ADDRESS.
 
@@ -675,11 +691,21 @@ class Dal:
         ``after`` is pushed into CQL per bucket, so a later page reads less
         rather than re-reading and discarding.
 
-        What this still does NOT do is bound the read to one page: a hub with
-        50 000 edges reads all of them to return 20. Bounding it needs a
-        per-bucket LIMIT, and a row is not a neighbour -- the epoch rows of one
-        counterparty would be cut in half by it -- so that is a real change,
-        not a parameter. It is the read, not the response, that is unbounded.
+        ``limit`` bounds the READ, not just the answer. Without it a hub with
+        50 000 edges reads all of them to return 20.
+
+        The reason that is not simply a per-bucket ``LIMIT``: a ROW IS NOT A
+        NEIGHBOUR. One counterparty owns as many rows as it has epochs, and a
+        row cap can stop in the middle of them -- which does not raise, it
+        UNDERSTATES that neighbour's totals, because the read sums the slice.
+        So a truncated bucket's last far-group is dropped as possibly
+        incomplete, and only neighbours at or below the lowest such boundary
+        are returned; anything past it might be missing rows in some other
+        bucket. If that yields too few, the budget doubles and it reads again.
+
+        Costs one round of `relation_buckets` reads in the ordinary case --
+        the backfill writes one epoch per neighbour, so the first budget
+        covers a page with room to spare.
         """
         table = (
             "address_outgoing_relations"
@@ -691,16 +717,17 @@ class Dal:
         buckets = self.config["relation_buckets"]
         clause = f" AND {far} > %s" if after is not None else ""
         extra = (after,) if after is not None else ()
-        rows = await self._gather(
-            [
-                (
-                    f"SELECT * FROM {self.derived}.{table} "
-                    f"WHERE {near} = %s AND rel_bucket = %s{clause}",
-                    (address, index) + extra,
-                )
-                for index in range(buckets)
-            ]
+        query = (
+            f"SELECT * FROM {self.derived}.{table} "
+            f"WHERE {near} = %s AND rel_bucket = %s{clause}"
         )
+        params = [(address, index) + extra for index in range(buckets)]
+
+        if limit is None:
+            rows = await self._gather([(query, p) for p in params])
+        else:
+            rows = await self._bounded_slice(query, params, far, limit)
+
         counts: dict = {}
         amounts: dict = {}
         tokens: dict = {}
@@ -726,6 +753,57 @@ class Dal:
             )
             for key in sorted(order)
         ]
+
+    async def _bounded_slice(
+        self, query: str, params: list, column: str, limit: int
+    ) -> list:
+        """Enough rows from each partition to answer ``limit`` whole groups.
+
+        ``column`` is the clustering column that groups rows -- the far
+        address here. Every partition is read with a row LIMIT, and a
+        partition that came back FULL may have stopped inside a group, so its
+        last group is dropped and its last complete value becomes a boundary.
+        Rows past the lowest boundary are discarded: another partition might
+        hold more of those groups than it returned.
+
+        The budget doubles until the surviving groups cover ``limit`` or every
+        partition is exhausted. `NEIGHBOUR_BUDGET_ATTEMPTS` caps that, because
+        a group larger than any budget would otherwise loop forever; the
+        fallback reads the partitions whole, which is what this exists to
+        avoid but is still the right answer.
+        """
+        budget = max(1, limit + 1) * EPOCHS_PER_NEIGHBOUR
+        for attempt in range(NEIGHBOUR_BUDGET_ATTEMPTS):
+            per_bucket = await asyncio.gather(
+                *(self._select(f"{query} LIMIT {int(budget)}", p) for p in params)
+            )
+            kept: list = []
+            boundaries: list = []
+            for rows in per_bucket:
+                if len(rows) < budget:
+                    kept.extend(rows)  # exhausted, so every group is whole
+                    continue
+                last = rows[-1]._asdict()[column]
+                complete = [r for r in rows if r._asdict()[column] != last]
+                kept.extend(complete)
+                # Nothing complete means one group is wider than the budget.
+                boundaries.append(complete[-1]._asdict()[column] if complete else None)
+            if not boundaries:
+                return kept
+            if None in boundaries:
+                budget *= 2
+                continue
+            edge = min(boundaries)
+            inside = [r for r in kept if r._asdict()[column] <= edge]
+            if len({r._asdict()[column] for r in inside}) >= limit:
+                return inside
+            budget *= 2
+        logger.warning(
+            "a relation partition holds more than %d rows for one counterparty; "
+            "reading the partitions whole",
+            budget,
+        )
+        return await self._gather([(query, p) for p in params])
 
     async def neighbor(
         self, address: bytes, counterparty: bytes, *, is_outgoing: bool

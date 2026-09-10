@@ -542,7 +542,13 @@ class LegacyAdapter:
                     "to_address": _address_bytes(parameters.get("to")),
                     "type": "erc20",
                     "token_tx_id": log.get("log_index"),
-                    "contract_creation": False,
+                    # NOT contract_creation. v2 sets False on a token row of an
+                    # ADDRESS listing (`cassandra.py:5003`) and leaves it unset
+                    # on a BLOCK listing, where the row is built by
+                    # `build_token_tx` instead -- so the same transfer reports
+                    # False on one endpoint and null on the other. Matching
+                    # that is the contract; unifying it would be inventing an
+                    # answer v2 does not give here.
                     "input": None,
                     "input_parsed": None,
                 }
@@ -1282,17 +1288,21 @@ class LegacyAdapter:
                 )
             )
         else:
+            limit = int(pagesize or DEFAULT_NEIGHBOUR_PAGE)
+            # One more than the page, so a full page can be told from a last
+            # one -- and so the READ stops there too, rather than walking every
+            # edge of a hub to hand back twenty.
             found = await dal.neighbors(
                 bytes(raw),
                 is_outgoing=is_outgoing,
                 after=bytes.fromhex(page) if page else None,
+                limit=limit + 1,
             )
             # PAGED, and it has to be. The service builds a full address row
             # per neighbour of the page, so handing it every edge of a hub
             # turns one request into thousands of sequential round trips --
             # 3 573 of them for WETH, which is a request that never returns
             # rather than a slow one.
-            limit = int(pagesize or DEFAULT_NEIGHBOUR_PAGE)
             if len(found) > limit:
                 found = found[:limit]
                 # The cursor is the last address emitted, and the listing is
