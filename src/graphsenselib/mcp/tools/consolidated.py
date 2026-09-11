@@ -9,6 +9,8 @@ import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
+from graphsenselib.mcp.pagesize import resolve_pagesize
+
 logger = logging.getLogger(__name__)
 
 # Regex guards on user-controlled path segments. httpx does not URL-encode
@@ -404,6 +406,10 @@ def register_lookup_cluster(mcp, app, stack) -> None:
         return {"cluster": _slim(_strip_cluster_legacy(base))}
 
 
+# Every consolidated list tool routes through _params_from, so this is where
+# the shared pagesize policy (see mcp/pagesize.py) is applied for them:
+# callers can page onward via `next_page`. Auto-generated tools have no such
+# chokepoint and get the default from PagesizeDefaultMiddleware instead.
 def _params_from(
     direction: Optional[str],
     pagesize: Optional[int],
@@ -413,8 +419,7 @@ def _params_from(
     params: dict[str, Any] = {}
     if direction is not None:
         params["direction"] = direction
-    if pagesize is not None:
-        params["pagesize"] = pagesize
+    params["pagesize"] = resolve_pagesize(pagesize)
     if page is not None:
         params["page"] = page
     for k, v in extra.items():
@@ -490,7 +495,9 @@ def register_list_neighbors(mcp, app, stack) -> None:
             currency: Network identifier (e.g. "btc").
             address: The address to list neighbors for.
             direction: "in" (incoming) or "out" (outgoing).
-            pagesize: Results per page (when filtering: target match count).
+            pagesize: Results per page, or the target match count when
+                filtering. Omitted, it defaults to 25 unfiltered and 50
+                with `tag_filter` set; page onward via `next_page`.
             page: Pagination token from a previous response.
             only_ids: Limit to specific neighbor ids.
             include_tag_summary: Enrich each neighbor with its `tag_summary`.
@@ -768,7 +775,8 @@ def register_list_txs_for(mcp, app, stack) -> None:
                 `address` and which is `neighbor`.
             direction: "in" / "out" / None to include both. Ignored when
                 `neighbor` is set (raises on combination).
-            pagesize: Results per page.
+            pagesize: Results per page (defaults to 25 when omitted); page
+                onward via `next_page`.
             page: Pagination token from a previous response.
             min_height: Only include transactions at or above this block height.
             max_height: Only include transactions at or below this block height.
@@ -851,7 +859,8 @@ def register_list_tags_by_address(mcp, app, stack) -> None:
             currency: Network identifier (e.g. "btc", "eth").
             address: Address to list tags for.
             page: Pagination token from a previous response.
-            pagesize: Results per page.
+            pagesize: Results per page (defaults to 25 when omitted); page
+                onward via `next_page`.
 
         Returns:
             A dict with `address_tags` and a `next_page` cursor.
