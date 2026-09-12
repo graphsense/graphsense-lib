@@ -1,9 +1,14 @@
 """Tests for rpc_utxo.py — direct JSON-RPC UTXO block/tx exporter."""
 
+import copy
+import gzip
+import importlib.resources
+import json
 from unittest.mock import patch
 
 import pytest
 
+from graphsenselib.ingest import rpc_utxo
 from graphsenselib.ingest.rpc_utxo import (
     BtcBlockExporter,
     _btc_to_satoshi,
@@ -14,6 +19,30 @@ from graphsenselib.ingest.rpc_utxo import (
     _parse_output,
     _script_hex_to_non_standard_address,
 )
+
+from .ingest import resources as ingest_resources
+
+
+def load_zcash_block(height):
+    """Return the verbatim ``getblock(<height>, 2)`` response stored for a height.
+
+    The fixtures are captured from a Zcash mainnet node and stored unmodified,
+    only gzipped; the shielded bundles carry kilobytes of proof and ciphertext
+    that no assertion reads but that the field validation must still accept.
+    """
+    path = importlib.resources.files(ingest_resources).joinpath(
+        f"zcash_block_{height}.json.gz"
+    )
+    with path.open("rb") as fh:
+        return json.loads(gzip.decompress(fh.read()))
+
+
+def tx_by_hash(txs, tx_hash):
+    return next(tx for tx in txs if tx["hash"] == tx_hash)
+
+
+def shielded(inoutputs):
+    return [x for x in inoutputs if x["type"] == "shielded"]
 
 
 class TestBtcToSatoshi:
@@ -495,7 +524,7 @@ class TestParseBlockAndTxs:
         assert shielded_inputs[0]["value"] == 1_000_000_000
 
     def test_zcash_value_balance(self):
-        """ZCash valueBalance creates shielded inputs or outputs."""
+        """ZCash valueBalanceZat creates shielded inputs or outputs."""
         block_raw = {
             "hash": "zcash_block2",
             "height": 200,
@@ -532,7 +561,7 @@ class TestParseBlockAndTxs:
                             },
                         }
                     ],
-                    "valueBalance": -5.0,  # negative → shielded output
+                    "valueBalanceZat": -500_000_000,  # negative → shielded output
                 }
             ],
         }
@@ -543,61 +572,26 @@ class TestParseBlockAndTxs:
         assert shielded_outputs[0]["value"] == 500_000_000
 
     def test_zcash_v6_ironwood_bundle(self):
-        """ZCash NU6.3 v6 tx: the ironwood bundle is ignored, not fatal.
+        """ZCash NU6.3 v6 tx: the ironwood bundle is accounted, not ignored.
 
-        Zebra 6.0.0 emits an ``ironwood`` object (same shape as ``orchard``)
-        on v6 transactions from NU6.3 activation onward. It carries no field
-        the parser reads, so it must be tolerated like ``orchard``.
+        Mainnet block 3,479,000, tx af9eae20...9b82 — a fully shielded v6
+        transaction with no transparent inputs or outputs, whose entire value
+        movement is an Ironwood balance of +40,000 zat. Positive means value
+        left the pool, so it becomes a shielded input; with nothing on the
+        transparent side, that amount is exactly the fee.
         """
-        block_raw = {
-            "hash": "zcash_block3",
-            "height": 3_428_143,
-            "time": 3000000,
-            "size": 500,
-            "version": 6,
-            "merkleroot": "mk",
-            "nonce": "00",
-            "bits": "1d00ffff",
-            "tx": [
-                {
-                    "txid": "zec_tx3",
-                    "size": 300,
-                    "vsize": 300,
-                    "version": 6,
-                    "locktime": 0,
-                    "vin": [
-                        {
-                            "txid": "prev",
-                            "vout": 0,
-                            "scriptSig": {"asm": "", "hex": ""},
-                            "sequence": 0,
-                        }
-                    ],
-                    "vout": [
-                        {
-                            "value": 1.0,
-                            "n": 0,
-                            "scriptPubKey": {
-                                "asm": "",
-                                "hex": "00",
-                                "type": "pubkeyhash",
-                                "addresses": ["t1addr"],
-                            },
-                        }
-                    ],
-                    "orchard": {"actions": [], "valueBalance": 0.0},
-                    "ironwood": {"actions": [], "valueBalance": 0.0},
-                    "valueBalance": -5.0,
-                }
-            ],
-        }
-        block, txs = _parse_btc_block_and_txs(block_raw)
-        tx = txs[0]
-        assert tx["hash"] == "zec_tx3"
-        # Sapling valueBalance is still the only shielded amount the parser reads.
-        shielded_outputs = [o for o in tx["outputs"] if o["type"] == "shielded"]
-        assert len(shielded_outputs) == 1
-        assert shielded_outputs[0]["value"] == 500_000_000
+        block_raw = load_zcash_block(3_479_000)
+        _, txs = _parse_btc_block_and_txs(block_raw, network="zec")
+        tx = tx_by_hash(
+            txs, "af9eae20963e5e53e2bda3275ffcd1d19decad6530ce46f55b83585336819b82"
+        )
+
+        assert tx["ironwood_value_balance"] == 40_000
+        assert [i["value"] for i in shielded(tx["inputs"])] == [40_000]
+        assert shielded(tx["outputs"]) == []
+        assert tx["input_value"] == 40_000
+        assert tx["output_value"] == 0
+        assert tx["fee"] == 40_000
 
     def test_regular_tx_with_prevout(self):
         """Verbosity 3: prevout resolves input_value and fee correctly."""
@@ -688,6 +682,400 @@ class TestParseBlockAndTxs:
         assert block["transaction_count"] == 0
         assert block["coinbase_param"] is None
         assert len(txs) == 0
+
+
+class TestZcashShieldedPools:
+    """Orchard (NU5) and Ironwood (NU6.3) value-balance accounting.
+
+    Every fixture here is an unmodified mainnet ``getblock(<height>, 2)``
+    response, so the values, the bundle shape and the key sets are the node's
+    rather than this file's. Heights and txids are recorded in each docstring
+    so any assertion can be re-checked against the chain.
+
+    Transparent input values are resolved in a later stage, so ``fee`` is only
+    meaningful here for transactions with no transparent inputs; those are
+    exactly the fully shielded ones the assertions below use it on.
+    """
+
+    def parse(self, height):
+        return _parse_btc_block_and_txs(load_zcash_block(height), network="zec")[1]
+
+    def test_orchard_shielding_becomes_a_shielded_output(self):
+        """7bd7717f...fe69 @ 2,501,409 — Orchard -362,999,000, one t-input.
+
+        The transparent direction into Orchard: a negative balance produces a
+        shielded output of the negated amount, so the value entering the pool
+        is still accounted for on the output side. The transparent input is
+        larger than that by the fee, but its value is resolved in a later
+        stage and is not visible here.
+        """
+        tx = tx_by_hash(
+            self.parse(2_501_409),
+            "7bd7717f8897e323840ac0f6b09518e580dbca1fa77dbd20ed0b90fc56d2fe69",
+        )
+
+        assert tx["orchard_value_balance"] == -362_999_000
+        assert shielded(tx["inputs"]) == []
+        assert [o["value"] for o in shielded(tx["outputs"])] == [362_999_000]
+        assert tx["output_value"] == 362_999_000
+
+    def test_positive_balance_can_be_a_fee_rather_than_an_unshielding(self):
+        """224daf9f...7c5a @ 2,501,409 — Orchard +1,000 and nothing else.
+
+        Three Orchard actions, no transparent legs, and a balance of exactly
+        the 1,000 zat fee: value left the pool only to pay the miner. The
+        shielded input is right for value conservation, but reading it as a
+        z->t transfer of spendable value would be wrong, which is why the
+        CHANGELOG says so explicitly.
+        """
+        tx = tx_by_hash(
+            self.parse(2_501_409),
+            "224daf9f01485fceacfe1fa49daf4d498c23a5c58ff237d28aa1495cd8bc7c5a",
+        )
+
+        assert tx["orchard_value_balance"] == 1_000
+        assert [i["value"] for i in shielded(tx["inputs"])] == [1_000]
+        assert tx["output_count"] == 0
+        assert tx["fee"] == 1_000
+
+    def test_orchard_unshielding_becomes_a_shielded_input(self):
+        """3115796d...9e53 @ 3,479,000 — Orchard +1,020,000, Ironwood -1,000,000.
+
+        A pool migration: value leaves Orchard and all but the 20,000 zat fee
+        enters Ironwood. It is the clearest demonstration that the two pools
+        are read independently and accumulate rather than overwrite.
+        """
+        tx = tx_by_hash(
+            self.parse(3_479_000),
+            "3115796d7ebd1f35d270229221166f2318888587153a294dfb712ef620899e53",
+        )
+
+        assert tx["orchard_value_balance"] == 1_020_000
+        assert tx["ironwood_value_balance"] == -1_000_000
+        assert [i["value"] for i in shielded(tx["inputs"])] == [1_020_000]
+        assert [o["value"] for o in shielded(tx["outputs"])] == [1_000_000]
+        assert tx["fee"] == 20_000
+
+    def test_ironwood_shielding_becomes_a_shielded_output(self):
+        """e6b8618c...8f1b @ 3,479,000 — Ironwood -2,132,669 with transparent input.
+
+        Negative means value entered the pool, so it is emitted as a shielded
+        output of the negated amount alongside the transparent output.
+        """
+        tx = tx_by_hash(
+            self.parse(3_479_000),
+            "e6b8618cfeccce30cec8ad811768231f82bb1f93b8cec4d789537cdf2bde8f1b",
+        )
+
+        assert tx["ironwood_value_balance"] == -2_132_669
+        assert shielded(tx["inputs"]) == []
+        assert [o["value"] for o in shielded(tx["outputs"])] == [2_132_669]
+        assert tx["output_count"] == 2
+
+    def test_mixed_orchard_and_sapling_legs_accumulate(self):
+        """bd84ece1...6517 @ 1,687,194 — Sapling +89,000, Orchard -88,000.
+
+        No transparent legs at all, so the two shielded amounts have to account
+        for the whole transaction and their difference is the 1,000 zat fee.
+        A sign error or a missed leg shows up here as a fee of 89,000 — which
+        is what the parser reported while the bundle was blacklisted — or as a
+        negative one.
+        """
+        tx = tx_by_hash(
+            self.parse(1_687_194),
+            "bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517",
+        )
+
+        assert tx["sapling_value_balance"] == 89_000
+        assert tx["orchard_value_balance"] == -88_000
+        assert tx["ironwood_value_balance"] == 0
+        assert [i["value"] for i in shielded(tx["inputs"])] == [89_000]
+        assert [o["value"] for o in shielded(tx["outputs"])] == [88_000]
+        assert tx["input_value"] - tx["output_value"] == 1_000
+        assert tx["fee"] == 1_000
+
+    def test_fully_shielded_fee_is_paid_out_of_the_pool(self):
+        """aee031d4...60a2 @ 3,479,000 — Ironwood +300,015,000, one t-output.
+
+        The positive balance is not a 300,015,000 zat unshielding of spendable
+        value: 300,000,000 reaches the transparent output and the remaining
+        15,000 is the fee. Mapping the balance to a shielded input is what
+        makes the two sides balance.
+        """
+        tx = tx_by_hash(
+            self.parse(3_479_000),
+            "aee031d4299acacdfc4d1b0bfc6d34d760f5b759e187a202a917f3b297af60a2",
+        )
+
+        assert tx["ironwood_value_balance"] == 300_015_000
+        assert [i["value"] for i in shielded(tx["inputs"])] == [300_015_000]
+        assert tx["output_value"] == 300_000_000
+        assert tx["fee"] == 15_000
+
+    def test_empty_orchard_bundle_contributes_nothing(self):
+        """Every NU5+ transaction carries an ``orchard`` key, usually empty.
+
+        The empty bundle is a distinct three-key shape with no flags, anchor,
+        proof or bindingSig; it must validate and emit no shielded I/O.
+        """
+        raw = load_zcash_block(1_687_194)
+        empty = [
+            tx for tx in raw["tx"] if "orchard" in tx and not tx["orchard"]["actions"]
+        ]
+        assert empty, "fixture no longer contains an empty orchard bundle"
+        assert all(
+            set(tx["orchard"]) == {"actions", "valueBalance", "valueBalanceZat"}
+            for tx in empty
+        )
+
+        parsed = {tx["hash"]: tx for tx in self.parse(1_687_194)}
+        for tx in empty:
+            assert parsed[tx["txid"]]["orchard_value_balance"] == 0
+            assert shielded(parsed[tx["txid"]]["inputs"]) == []
+            assert shielded(parsed[tx["txid"]]["outputs"]) == []
+
+    def test_value_balance_zat_is_read_verbatim_not_converted(self):
+        """The bundle amount is already zatoshi, so it must not be scaled.
+
+        The float sibling sits right next to it in the response; passing that
+        one through _btc_to_satoshi, or the integer through it a second time,
+        is a 10^8 error that no hand-written fixture would catch because it
+        would share the mistaken assumption.
+        """
+        raw = load_zcash_block(3_479_000)
+        parsed = {tx["hash"]: tx for tx in self.parse(3_479_000)}
+        seen = 0
+        for tx in raw["tx"]:
+            for pool in ("orchard", "ironwood"):
+                bundle = tx.get(pool)
+                if bundle is None:
+                    continue
+                seen += 1
+                assert (
+                    parsed[tx["txid"]][f"{pool}_value_balance"]
+                    == (bundle["valueBalanceZat"])
+                )
+                assert round(bundle["valueBalance"] * 1e8) == bundle["valueBalanceZat"]
+        assert seen >= 8
+
+    def test_three_shielded_legs_accumulate_in_pool_order(self):
+        """6f37465a...04c8 @ 3,463,373 — Sapling, Orchard and Ironwood at once.
+
+        Rare (31 such transactions in the whole NU6.3 range so far) and the
+        strongest accumulation check available: three balances of two different
+        signs on one transaction, with no transparent leg to absorb a mistake.
+        Legs are appended Sprout, Sapling, Orchard, Ironwood, so the two
+        positive ones arrive as inputs in that order.
+        """
+        tx = tx_by_hash(
+            self.parse(3_463_373),
+            "6f37465ac2a718135c61fb62049e6205977da2042774002d301d018a76da04c8",
+        )
+
+        assert tx["sapling_value_balance"] == -500_000
+        assert tx["orchard_value_balance"] == 24_898
+        assert tx["ironwood_value_balance"] == 505_102
+        assert [i["value"] for i in shielded(tx["inputs"])] == [24_898, 505_102]
+        assert [o["value"] for o in shielded(tx["outputs"])] == [500_000]
+        assert tx["fee"] == 30_000
+
+    def test_sapling_shielding_alongside_ironwood_in_one_block(self):
+        """Block 3,463,373 also carries single-pool legs of both signs.
+
+        7e39f93e...5cdc is a v4 transaction shielding 18.77 ZEC into Sapling
+        with fifteen transparent inputs; 83528670...b942 is a v6 one shielding
+        1.25 ZEC into Ironwood. Both are negative balances and must produce a
+        shielded output rather than an input.
+        """
+        txs = self.parse(3_463_373)
+
+        sapling = tx_by_hash(
+            txs, "7e39f93eb6542dad5cdcbffaa2fb7a88524da7df3195849a44fb467cc47c1c90"
+        )
+        assert sapling["sapling_value_balance"] == -1_877_909_839
+        assert [o["value"] for o in shielded(sapling["outputs"])] == [1_877_909_839]
+
+        ironwood = tx_by_hash(
+            txs, "83528670357dab26b94211f39d5dcf2e7efa776d7ca68c8762e49676e0562780"
+        )
+        assert ironwood["ironwood_value_balance"] == -124_985_000
+        assert [o["value"] for o in shielded(ironwood["outputs"])] == [124_985_000]
+
+    def test_sapling_reads_the_integer_field_not_the_float(self):
+        """Both Sapling amounts are on every transaction; only the int is read.
+
+        Mainnet block 600,000, 00c8e2ed...af10 carries valueBalance -0.9199
+        and valueBalanceZat -91990000. Dropping the integer leaves the float
+        in place and must produce no shielded output, which is what keeps a
+        revert to the lossy float from passing unnoticed.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10"
+        )
+        assert target["valueBalance"] == -0.9199
+        del target["valueBalanceZat"]
+
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+        tx = tx_by_hash(txs, target["txid"])
+
+        assert tx["sapling_value_balance"] == 0
+        assert shielded(tx["outputs"]) == []
+        # the Sprout leg is untouched by the Sapling field being absent
+        assert [i["value"] for i in shielded(tx["inputs"])] == [92_000_000]
+
+    def test_pre_nu5_transactions_carry_an_empty_orchard_bundle(self):
+        """Mainnet block 600,000 — every transaction is v4 and long pre-NU5.
+
+        Zebra emits ``orchard`` unconditionally, so the bundle is present and
+        empty on transactions that predate the pool by a million blocks. This
+        is why ``orchard`` is an optional known key rather than something
+        gated on transaction version: a version gate would reject these.
+        """
+        raw = load_zcash_block(600_000)
+
+        assert {tx["version"] for tx in raw["tx"]} == {4}
+        assert all("orchard" in tx for tx in raw["tx"])
+        assert all(tx["orchard"]["actions"] == [] for tx in raw["tx"])
+        assert not any("ironwood" in tx for tx in raw["tx"])
+
+        for tx in self.parse(600_000):
+            assert tx["orchard_value_balance"] == 0
+            assert tx["ironwood_value_balance"] == 0
+
+    def test_sprout_to_sapling_migration_balances(self):
+        """00c8e2ed...af10 @ 600,000 — Sprout vpub_new 0.92, Sapling -0.9199.
+
+        A fully shielded pool migration predating Orchard, kept as a control:
+        the Sprout and Sapling paths must keep producing the same shielded I/O
+        and the same 10,000 zat fee now that a third path runs after them.
+        """
+        tx = tx_by_hash(
+            self.parse(600_000),
+            "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10",
+        )
+
+        assert tx["sapling_value_balance"] == -91_990_000
+        assert [i["value"] for i in shielded(tx["inputs"])] == [92_000_000]
+        assert [o["value"] for o in shielded(tx["outputs"])] == [91_990_000]
+        assert tx["fee"] == 10_000
+
+
+class TestZcashShieldedFieldValidation:
+    """The bundle is enumerated strictly, so a new field fails loudly."""
+
+    # Every stored block, oldest first. The four NU6.3 ones were picked so that
+    # between them they carry all seven distinct transaction key sets observed
+    # over the whole NU6.3 range.
+    BLOCKS = (600_000, 1_687_194, 2_501_409, 3_442_130, 3_442_400, 3_463_373, 3_479_000)
+    NU63_BLOCKS = (3_442_130, 3_442_400, 3_463_373, 3_479_000)
+
+    def test_validation_runs_at_every_level(self):
+        """validate_rpc_fields does not recurse, so each level is called directly.
+
+        Counts the real calls made while parsing unmodified mainnet blocks, to
+        prove the bundle, action and flags levels are reached rather than
+        merely defined.
+        """
+        contexts = {}
+        real = rpc_utxo.validate_rpc_fields
+
+        def spy(json_keys, known, blacklist, context):
+            contexts[context] = contexts.get(context, 0) + 1
+            return real(json_keys, known, blacklist, context)
+
+        with patch.object(rpc_utxo, "validate_rpc_fields", spy):
+            for height in self.BLOCKS:
+                _parse_btc_block_and_txs(load_zcash_block(height), network="zec")
+
+        assert contexts == {
+            "block": 7,
+            "transaction": 40,
+            "vin": 102,
+            "scriptSig": 95,
+            "vout": 96,
+            "scriptPubKey": 96,
+            "vjoinsplit": 8,
+            "orchard bundle": 40,
+            "ironwood bundle": 8,
+            "orchard action": 11,
+            "ironwood action": 15,
+            "orchard flags": 5,
+            "ironwood flags": 8,
+        }
+
+    def test_distinct_transaction_key_sets_are_covered(self):
+        """The NU6.3 fixtures carry every transaction shape the range contains.
+
+        A census of all 52,157 blocks from NU6.3 activation to the chain tip
+        (328,134 transactions) found exactly seven distinct transaction key
+        sets. ``ironwood``, ``authdigest``, ``bindingSig``, ``joinSplitPubKey``
+        and ``joinSplitSig`` are each optional and vary independently, and the
+        transaction-level validation has to accept all seven combinations —
+        including the rarest, Sprout joinsplits still appearing in the NU6.3
+        range, which numbered 14 transactions in that census.
+        """
+        key_sets = set()
+        for height in self.NU63_BLOCKS:
+            key_sets |= {frozenset(tx) for tx in load_zcash_block(height)["tx"]}
+
+        assert len(key_sets) == 7
+        for optional in ("ironwood", "authdigest", "bindingSig", "joinSplitSig"):
+            assert any(optional in ks for ks in key_sets)
+            assert any(optional not in ks for ks in key_sets)
+
+    @pytest.mark.parametrize(
+        "path, context",
+        [
+            (("orchard",), "orchard bundle"),
+            (("orchard", "actions", 0), "orchard action"),
+            (("orchard", "flags"), "orchard flags"),
+            (("ironwood",), "ironwood bundle"),
+            (("ironwood", "actions", 0), "ironwood action"),
+            (("ironwood", "flags"), "ironwood flags"),
+        ],
+    )
+    def test_unknown_field_raises_at_each_level(self, path, context):
+        """A key that is neither read nor blacklisted must abort the parse."""
+        raw = copy.deepcopy(load_zcash_block(3_479_000))
+        target = next(
+            tx for tx in raw["tx"] if path[0] in tx and tx[path[0]]["actions"]
+        )
+        for key in path:
+            target = target[key]
+        target["someFieldZcashAdded"] = True
+
+        with pytest.raises(ValueError, match=f"in {context}"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    def test_enable_cross_address_flag_is_already_tolerated(self):
+        """ZIP-229's third flag bit is accepted before any node emits it.
+
+        Zebra carries enableCrossAddress in its consensus types but its RPC
+        flags struct exposes only enableSpends and enableOutputs, so it is
+        absent from every bundle on chain today. Listing it in advance keeps a
+        Zebra release that adds the serde field from breaking every Ironwood
+        transaction at once.
+        """
+        raw = copy.deepcopy(load_zcash_block(3_479_000))
+        touched = 0
+        for tx in raw["tx"]:
+            for pool in ("orchard", "ironwood"):
+                bundle = tx.get(pool)
+                if bundle and bundle.get("flags") is not None:
+                    assert "enableCrossAddress" not in bundle["flags"]
+                    bundle["flags"]["enableCrossAddress"] = True
+                    touched += 1
+        assert touched > 0
+
+        _, with_flag = _parse_btc_block_and_txs(raw, network="zec")
+        _, without = _parse_btc_block_and_txs(
+            load_zcash_block(3_479_000), network="zec"
+        )
+        assert with_flag == without
 
 
 class TestResolveUnresolvedInputs:
