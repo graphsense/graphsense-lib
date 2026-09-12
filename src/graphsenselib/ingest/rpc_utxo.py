@@ -95,7 +95,22 @@ _TX_KNOWN_KEYS = frozenset(
         "vout",
         # ZCash shielded I/O
         "vjoinsplit",
-        "valueBalance",
+        # Sapling's value balance. Both this and the "valueBalance" float
+        # beside it are Option fields in Zebra's RPC types, but every node
+        # emits the pair from a single construction site, so they are always
+        # present or absent together — the integer is therefore no less
+        # available than the float, and avoids the lossy float round-trip.
+        "valueBalanceZat",
+        # NU5 Orchard and NU6.3 Ironwood bundles. Optional: validate_rpc_fields
+        # works by set difference, so a known key that is absent never raises.
+        # Zebra emits "orchard" on every transaction, including pre-NU5 v1-v4
+        # ones where it is present but empty, and "ironwood" only when the
+        # transaction carries one; zcashd instead gates "orchard" on
+        # nVersion >= ZIP225 (v5) and has no Ironwood field at all. Gating on
+        # transaction version would therefore be wrong for one node or the
+        # other, which is why both keys are optional rather than conditional.
+        "orchard",
+        "ironwood",
     }
 )
 
@@ -111,14 +126,14 @@ _TX_BLACKLIST = frozenset(
         "bindingSig",
         "overwintered",
         "expiryheight",
-        "valueBalanceZat",
+        # Float ZEC rendering of the Sapling "valueBalanceZat" this parser
+        # reads; same lossy_zec helper as the bundle-level float.
+        "valueBalance",
         "authDigest",
         "authdigest",  # same as authDigest, lowercase in some ZEC block ranges
         "versiongroupid",  # ZEC Overwinter/Sapling version group ID
         "joinSplitPubKey",  # ZEC Sprout joinsplit public key
         "joinSplitSig",  # ZEC Sprout joinsplit signature
-        "orchard",  # ZEC NU5 Orchard bundle (actions, proof, etc.)
-        "ironwood",  # ZEC NU6.3 Ironwood bundle, same shape as orchard (v6 txs)
         # Zebra adds these per-transaction lookup fields that zcashd does not
         # emit inside getblock; none carry parser-relevant data.
         "blockhash",
@@ -240,6 +255,65 @@ _JOINSPLIT_BLACKLIST = frozenset(
         "vpub_newZat",
         "anchor",  # Sprout anchor hash
         "ciphertexts",  # encrypted note ciphertexts
+    }
+)
+
+# -- Orchard-shaped bundle (ZCash NU5 Orchard, NU6.3 Ironwood) ---------------
+#
+# Zebra types both pools as Option<Orchard> and serializes them through one
+# shared helper, so a single set of key sets covers both. validate_rpc_fields
+# does not recurse, so the bundle, its actions and its flags are each validated
+# explicitly at their own level.
+
+_ORCHARD_BUNDLE_KNOWN_KEYS = frozenset(
+    {
+        "valueBalanceZat",
+        "actions",
+        "flags",
+    }
+)
+
+_ORCHARD_BUNDLE_BLACKLIST = frozenset(
+    {
+        # Float ZEC rendering of valueBalanceZat. Zebra produces it with a
+        # helper named lossy_zec, documented as unfit for consensus-critical
+        # use, so the integer field is the one this parser reads.
+        "valueBalance",
+        "anchor",  # Orchard note commitment tree anchor
+        "proof",  # Halo 2 proof
+        "bindingSig",  # bundle binding signature
+    }
+)
+
+# The parser reads no field of an individual action; they are enumerated only
+# so that a new one fails loudly rather than being silently dropped.
+_ORCHARD_ACTION_KNOWN_KEYS = frozenset()
+
+_ORCHARD_ACTION_BLACKLIST = frozenset(
+    {
+        "cv",
+        "nullifier",
+        "rk",
+        "cmx",
+        "ephemeralKey",
+        "encCiphertext",
+        "outCiphertext",
+        "spendAuthSig",
+    }
+)
+
+_ORCHARD_FLAGS_KNOWN_KEYS = frozenset()
+
+_ORCHARD_FLAGS_BLACKLIST = frozenset(
+    {
+        "enableSpends",
+        "enableOutputs",
+        # ZIP-229 defines a third flag bit, set on Ironwood-pool actions. It is
+        # already carried in Zebra's consensus types but its RPC flags struct
+        # exposes only the two above, so no node emits it today. Listed in
+        # advance because a Zebra release that adds the serde field would
+        # otherwise break every Ironwood transaction at once.
+        "enableCrossAddress",
     }
 )
 
@@ -535,14 +609,53 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                 if vpub_old > 0:
                     outputs.append(_make_shielded_output(len(outputs), vpub_old))
 
-        # ZCash: Sapling value balance
-        value_balance = raw_tx.get("valueBalance")
-        if value_balance is not None and value_balance != 0:
-            value_balance_sat = _btc_to_satoshi(value_balance)
-            if value_balance_sat > 0:
-                inputs.append(_make_shielded_input(len(inputs), value_balance_sat))
-            elif value_balance_sat < 0:
-                outputs.append(_make_shielded_output(len(outputs), -value_balance_sat))
+        # ZCash: Sapling value balance, already in zatoshi like the bundles below.
+        sapling_value_balance = raw_tx.get("valueBalanceZat") or 0
+        if sapling_value_balance > 0:
+            inputs.append(_make_shielded_input(len(inputs), sapling_value_balance))
+        elif sapling_value_balance < 0:
+            outputs.append(_make_shielded_output(len(outputs), -sapling_value_balance))
+
+        # ZCash: Orchard (NU5) and Ironwood (NU6.3) bundle value balances.
+        # Same convention as Sapling — positive means value left the pool — but
+        # read from the bundle's integer valueBalanceZat, which is already in
+        # zatoshi and must not be passed through _btc_to_satoshi. The float
+        # sibling is deliberately not read; see _ORCHARD_BUNDLE_BLACKLIST.
+        pool_value_balance = {}
+        for pool in ("orchard", "ironwood"):
+            bundle = raw_tx.get(pool)
+            if bundle is None:
+                pool_value_balance[pool] = 0
+                continue
+            validate_rpc_fields(
+                bundle.keys(),
+                _ORCHARD_BUNDLE_KNOWN_KEYS,
+                _ORCHARD_BUNDLE_BLACKLIST,
+                f"{pool} bundle",
+            )
+            for action in bundle.get("actions") or []:
+                validate_rpc_fields(
+                    action.keys(),
+                    _ORCHARD_ACTION_KNOWN_KEYS,
+                    _ORCHARD_ACTION_BLACKLIST,
+                    f"{pool} action",
+                )
+            # anchor/proof/bindingSig/flags are emitted only alongside a
+            # non-empty actions list, so an empty bundle has no flags to check.
+            flags = bundle.get("flags")
+            if flags is not None:
+                validate_rpc_fields(
+                    flags.keys(),
+                    _ORCHARD_FLAGS_KNOWN_KEYS,
+                    _ORCHARD_FLAGS_BLACKLIST,
+                    f"{pool} flags",
+                )
+            balance = bundle.get("valueBalanceZat") or 0
+            pool_value_balance[pool] = balance
+            if balance > 0:
+                inputs.append(_make_shielded_input(len(inputs), balance))
+            elif balance < 0:
+                outputs.append(_make_shielded_output(len(outputs), -balance))
 
         # Calculate values AFTER adding shielded I/O so totals include
         # both transparent and shielded amounts (matching bitcoin-etl).
@@ -574,6 +687,14 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                 "input_value": input_value,
                 "output_value": output_value,
                 "fee": fee,
+                # Per-pool shielded balances in zatoshi, positive when value
+                # left the pool. Every shielded input/output is address-less
+                # and indistinguishable once emitted, and the bundle itself is
+                # not stored, so without these the pool behind a shielded row
+                # can only be recovered by re-reading the node.
+                "sapling_value_balance": sapling_value_balance,
+                "orchard_value_balance": pool_value_balance["orchard"],
+                "ironwood_value_balance": pool_value_balance["ironwood"],
             }
         )
 
