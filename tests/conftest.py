@@ -1,9 +1,12 @@
+import gc
 import logging
+import warnings
 from functools import cache
 from os import environ
 from pathlib import Path
 import asyncio
 
+import docker
 import pytest
 import pytest_asyncio
 from docker.errors import ImageNotFound, NotFound
@@ -77,6 +80,70 @@ def cassandra_container() -> CassandraContainer:
 @cache
 def postgres_container() -> PostgresContainer:
     return PostgresContainer("postgres:16-alpine")
+
+
+@cache
+def _docker_unreachable_reason() -> str | None:
+    """Why the Docker daemon cannot be reached, or None when it answers a ping.
+
+    Probed once per session with a short timeout: a dead ``DOCKER_HOST`` must
+    not cost the client's default 60s connect timeout per fixture. A failed
+    connect leaves docker-py's socket to the garbage collector, whose
+    ``ResourceWarning`` would become an error under ``filterwarnings = error``,
+    so the whole probe runs with that warning ignored.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        client = None
+        try:
+            client = docker.from_env(timeout=5)
+            client.ping()
+            reason = None
+        except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+        finally:
+            if client is not None:
+                client.close()
+        gc.collect()
+    return reason
+
+
+def require_docker() -> None:
+    """Skip the requesting test when no Docker daemon is reachable.
+
+    Every container-backed fixture calls this first, so a laptop without a
+    daemon gets one skip reason (and a summary banner) instead of ~1000 setup errors
+    with a urllib3 traceback each. On CI (``CI`` set, as GitHub Actions does)
+    a missing daemon stays a hard error: silently skipping the container tests
+    there would turn a broken runner green while covering nothing.
+    """
+    reason = _docker_unreachable_reason()
+    if reason is None:
+        return
+    if environ.get("CI"):
+        raise RuntimeError(
+            f"Docker daemon unreachable ({reason}); the container-backed tests "
+            "(Cassandra/Postgres/Redis) would be skipped, which CI must not do"
+        )
+    global _docker_skip_notice
+    _docker_skip_notice = (
+        f"Docker daemon unreachable ({reason}); "
+        "container-backed tests (Cassandra/Postgres/Redis) were skipped"
+    )
+    pytest.skip(_docker_skip_notice)
+
+
+_docker_skip_notice: str | None = None
+
+
+def pytest_terminal_summary(terminalreporter) -> None:
+    """One visible banner when container tests were skipped for lack of Docker.
+
+    A skip reason only shows under ``-rs``, and ``filterwarnings = error``
+    makes ``warnings.warn`` unusable for a notice, so say it here.
+    """
+    if _docker_skip_notice:
+        terminalreporter.write_sep("=", "WARNING: " + _docker_skip_notice, yellow=True)
 
 
 # Test data directories for tagpack tests
@@ -422,6 +489,7 @@ _cassandra_coords = ("localhost", "9042")
 def gs_db_setup():
     """Start Cassandra container. Only tests requesting this fixture pay the cost."""
     global _cassandra_coords
+    require_docker()
     cassandra = cassandra_container()
     try:
         cassandra.start()
@@ -449,6 +517,7 @@ def db_setup():
     if not TAGSTORE_AVAILABLE:
         pytest.skip("Tagstore dependencies not available")
 
+    require_docker()
     postgres = postgres_container()
     postgres.start()
 

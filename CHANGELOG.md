@@ -72,6 +72,23 @@ Use one changelog file, but separate entries by track in each release window.
   feeding the delta/Spark contract and an unnoticed drift, so it now runs on
   every push and PR.
 
+#### Fixed
+- **Running the suite without a Docker daemon now skips the container-backed
+  tests instead of erroring ~1000 times.** #160 made a daemon-less machine
+  *collect*, but every test requesting the Cassandra/Postgres/Redis fixtures
+  still failed at setup with a full urllib3 traceback each. The session
+  fixtures now ping the daemon once (5s timeout, so a dead `DOCKER_HOST` is
+  cheap) and skip with one reason plus a summary banner when it does not answer.
+  On CI (`CI` set) an unreachable daemon stays a hard error -- skipping there
+  would turn a broken runner green while covering nothing. (#161)
+
+#### Removed
+- **`graphsenselib.utils.pipeline`** and its tests. Nothing has imported the
+  multiprocessing `Pipeline` since the account ingester was rewritten, and its
+  tests failed on every `spawn` platform (macOS, Windows): the stages carried
+  `mp.Queue`/`mp.Event` objects into child processes, which cannot be
+  re-pickled. Linux forks, so only local macOS runs saw it. (#161)
+
 ## [2.16.3] - 2026-08-28
 
 ### Library

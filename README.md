@@ -795,6 +795,14 @@ make test-spark
 | `make test-rust` | `cargo test` | 3.3s cold, 0.06s warm |
 | `make test-spark` | `sbt test` | minutes |
 
+#### Without a Docker daemon
+
+The suite collects and runs without one. Tests that need a Cassandra, Postgres
+or Redis container (`tests/web`, `tests/db`, `tests/tagstore`,
+`tests/integration`) are skipped with a single reason and a banner in the
+summary. On CI (`CI` set) an unreachable daemon is a hard error instead, so a
+broken runner cannot pass while covering nothing.
+
 #### Podman Notes
 
 If you run the test suite with Podman, make sure your shell points at the Podman socket:
