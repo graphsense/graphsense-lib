@@ -3,7 +3,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from graphsenselib.rates import coindesk, coingecko, coinmarketcap, cryptocompare
+from graphsenselib.rates import coingecko, coinmarketcap, cryptocompare
 from graphsenselib.rates.cryptocompare import fetch_impl
 
 from ..helpers import vcr_default_params
@@ -86,42 +86,6 @@ def test_rates_fetching_normalizes_naive_db_dates(monkeypatch):
         "api_key": "api-key",
     }
     assert df.to_dict("records") == [{"date": "2026-03-17", "USD": 100.0, "EUR": 90.0}]
-
-
-def test_coindesk_normalizes_naive_db_dates(monkeypatch):
-    seen = {}
-
-    def fake_fetch_exchange_rates(start_date, end_date, symbol_list):
-        seen["start"] = start_date
-        seen["end"] = end_date
-        seen["symbols"] = symbol_list
-        return pd.DataFrame(
-            [{"date": "2026-03-17", "fiat_values": {"USD": 100.0, "EUR": 90.0}}]
-        )
-
-    monkeypatch.setattr(coindesk, "fetch_exchange_rates", fake_fetch_exchange_rates)
-
-    df = coindesk.fetch_impl(
-        DummyDb(datetime(2026, 3, 17)),
-        "dev",
-        "BTC",
-        ["USD", "EUR"],
-        "2026-03-01T00:00:00.000000+00:00",
-        "2026-03-17T00:00:00.000000+00:00",
-        "exchange_rates",
-        False,
-        False,
-        False,
-    )
-
-    assert seen == {
-        "start": "2026-03-17",
-        "end": "2026-03-17",
-        "symbols": ["USD", "EUR"],
-    }
-    assert df.to_dict("records") == [
-        {"date": "2026-03-17", "fiat_values": {"USD": 100.0, "EUR": 90.0}}
-    ]
 
 
 def test_coingecko_normalizes_naive_db_dates(monkeypatch):
@@ -277,25 +241,6 @@ def test_cryptocompare_resume_past_end_is_noop(monkeypatch):
     df["fiat_values"] = df.drop("date", axis=1).to_dict(orient="records")
     df.drop(["USD", "EUR"], axis=1, inplace=True)
     assert df.to_dict("records") == []
-
-
-def test_coindesk_resume_past_end_is_noop(monkeypatch):
-    monkeypatch.setattr(coindesk, "fetch_exchange_rates", _raise_no_fetch)
-
-    df = coindesk.fetch_impl(
-        DummyDb(datetime(2026, 7, 8)),
-        "dev",
-        "BTC",
-        ["USD", "EUR"],
-        "2026-06-01T00:00:00.000000+00:00",
-        "2026-07-07T00:00:00.000000+00:00",
-        "exchange_rates",
-        False,
-        False,
-        True,
-    )
-
-    assert len(df) == 0
 
 
 def test_coingecko_resume_past_end_is_noop(monkeypatch):

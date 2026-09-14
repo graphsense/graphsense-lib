@@ -495,9 +495,6 @@ Fetch and ingest exchange rates from various sources.
 # Show exchange rate options
 graphsense-cli exchange-rates --help
 
-# Fetch from CoinDesk
-graphsense-cli exchange-rates coindesk -e dev -c btc
-
 # Fetch from CoinMarketCap (requires API key in config)
 graphsense-cli exchange-rates coinmarketcap -e dev -c btc
 

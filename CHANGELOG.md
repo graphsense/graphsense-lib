@@ -107,6 +107,16 @@ Use one changelog file, but separate entries by track in each release window.
   tests failed on every `spawn` platform (macOS, Windows): the stages carried
   `mp.Queue`/`mp.Event` objects into child processes, which cannot be
   re-pickled. Linux forks, so only local macOS runs saw it. (#161)
+- **The `exchange-rates coindesk` provider (`fetch`/`ingest`) and
+  `graphsenselib.rates.coindesk`.** It called CoinDesk's old Bitcoin Price
+  Index API (`api.coindesk.com/v1/bpi`), which CoinDesk has shut down: the
+  hostname no longer resolves, so every run died with a bare
+  `NameResolutionError`, and the API had stopped returning recent rates as
+  far back as 2022. CoinDesk's surviving data API is the former CryptoCompare
+  API (CoinDesk acquired CCData/CryptoCompare in 2024), so use
+  `exchange-rates cryptocompare` with a `cryptocompare_api_key` from
+  https://developers.coindesk.com/ instead. `scripts/dev-ingest.sh` no longer
+  calls it.
 
 ## [2.16.3] - 2026-08-28
 
