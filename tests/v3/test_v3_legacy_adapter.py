@@ -1835,21 +1835,32 @@ def test_an_address_v3_can_answer_for_is_reported_clean() -> None:
     assert _address_with_txs()["status"] == "clean"
 
 
-def test_a_neighbour_page_reads_its_transactions_in_one_batch() -> None:
-    """Four point reads per neighbour -- stats, balance, first tx, last tx --
-    is three dependent waves for a page, and measured 1.6x v2 on LTC hubs.
-    The first/last tx ids live ON the stats row, so the page can read every
-    one of its transactions in a single batch once the stats are in."""
+def _neighbour_page(neighbours: int = 3, one_tx: bool = False) -> tuple:
+    """A page of `neighbours`, each with its own first/last transaction.
+
+    Returns the adapter's rows and the (cql, params) the fake session saw, so a
+    test can count the reads a listing actually costs.
+    """
     seen: list = []
 
     def rows(cql, params):
         if "relations" in cql:
             return [
                 Row(dst_address=bytes([i]) + bytes(19), no_transactions=1, epoch=0)
-                for i in range(3)
+                for i in range(neighbours)
             ]
         if "address_stats" in cql:
-            return [Row(epoch=0, first_tx_id=7, last_tx_id=9)]
+            # Distinct ids per neighbour -- shared ids would hide whether the
+            # reads are batched per page or per neighbour.
+            which = params[1][0]
+            first = 10 * which + 1
+            return [
+                Row(
+                    epoch=0,
+                    first_tx_id=first,
+                    last_tx_id=first if one_tx else first + 1,
+                )
+            ]
         if ".transaction" in cql:
             seen.append(params)
             return [
@@ -1863,10 +1874,41 @@ def test_a_neighbour_page_reads_its_transactions_in_one_batch() -> None:
         {"eth": dal_for(FakeSession(rows), "eth_raw_v3_t", "eth_derived_v3_t", CONFIG)}
     )
     found, _ = run(shim.list_neighbors("eth", b"\xaa" * 20, True, pagesize=20))
+    return found, seen
+
+
+def test_a_neighbour_reads_its_transactions_without_the_pages_barrier() -> None:
+    """Four point reads per neighbour -- stats, balance, first tx, last tx --
+    is three dependent waves for a page, and measured 1.6x v2 on LTC hubs. The
+    first/last tx ids live ON the stats row, so each neighbour runs its own
+    stats -> transactions chain: the page then costs max over neighbours of
+    (stats + transactions), not max(stats) + max(transactions).
+
+    Two reads per neighbour, and no neighbour waits on the page's slowest stats
+    row. An earlier version awaited every stats row and then read the page's
+    transactions in ONE batch, which dedups ids across neighbours -- worth 12 ms
+    less than the barrier it needs (measured on LTC hubs, 75.9 -> 63.7 ms),
+    because two addresses sharing a first or last transaction is rare."""
+    found, seen = _neighbour_page()
     assert len(found) == 3
     assert all(r["dst_address_row"]["first_tx"].tx_hash == b"\xf0" * 32 for r in found)
-    # Three neighbours sharing two tx ids: two reads, not six.
-    assert len(seen) == 2, f"one read per (page, tx id), got {len(seen)}"
+    assert len(seen) == 6, f"two reads per neighbour, got {len(seen)}"
+    # Each neighbour resolved ITS OWN transactions, not another's.
+    assert {p[1] for p in seen} == {1, 2, 11, 12, 21, 22}
+
+
+def test_a_one_transaction_neighbour_is_read_once_not_twice() -> None:
+    """An address with a single transaction has first_tx_id == last_tx_id, and
+    that is the long tail, not a corner case. `transactions_by_ids` does not
+    dedup its argument, so the ids have to be deduped before the call or every
+    such neighbour costs two identical point reads."""
+    found, seen = _neighbour_page(one_tx=True)
+    assert len(found) == 3
+    assert all(
+        r["dst_address_row"]["first_tx"] == r["dst_address_row"]["last_tx"]
+        for r in found
+    )
+    assert len(seen) == 3, f"one read per neighbour, got {len(seen)}"
 
 
 def test_a_failed_transaction_is_not_listed_in_its_block() -> None:
