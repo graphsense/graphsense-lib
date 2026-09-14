@@ -297,7 +297,7 @@ class DeltaTableWriter:
                     not_written = False
                 except ArrowInvalid as e:
                     ste = str(e)
-                    if "large_binary" in ste or "named input expected length":
+                    if "large_binary" in ste or "named input expected length" in ste:
                         new_row_group_size = int(len(data) * fraction)
                         if new_row_group_size < 100:
                             raise e
