@@ -409,7 +409,7 @@ def register_lookup_cluster(mcp, app, stack) -> None:
 # Every consolidated list tool routes through _params_from, so this is where
 # the shared pagesize policy (see mcp/pagesize.py) is applied for them:
 # callers can page onward via `next_page`. Auto-generated tools have no such
-# chokepoint and get the default from PagesizeDefaultMiddleware instead.
+# chokepoint and get an omitted default from FastMCP's ToolTransform instead.
 def _params_from(
     direction: Optional[str],
     pagesize: Optional[int],

@@ -94,8 +94,8 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     mcp.add_middleware(ErrorLoggingMiddleware())
 
     # An explicit null bypasses a schema default because the argument is
-    # present. Default that case too. Invalid explicit values pass through to
-    # the route's validation.
+    # present. Default that case too, and reject JSON containers before HTTPX
+    # can serialize an empty one as an omitted query parameter.
     mcp.add_middleware(PagesizeDefaultMiddleware(paged_tools))
 
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;

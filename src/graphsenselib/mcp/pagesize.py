@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 DEFAULT_PAGESIZE = 25
@@ -42,7 +43,9 @@ class PagesizeDefaultMiddleware(Middleware):
     `_params_from`, and `list_neighbors` reads `pagesize` as a target match
     count when filtering, with its own default. The `ToolTransform` handles an
     omitted argument. This middleware only prevents explicit null from
-    bypassing that default and leaves invalid values to normal validation.
+    bypassing that default. It rejects JSON containers before HTTPX can
+    serialize an empty one as an omitted query parameter. Other invalid values
+    reach normal route validation.
     """
 
     def __init__(self, tool_names: set[str]) -> None:
@@ -56,5 +59,7 @@ class PagesizeDefaultMiddleware(Middleware):
             arguments = dict(message.arguments or {})
             if "pagesize" in arguments and arguments["pagesize"] is None:
                 arguments["pagesize"] = DEFAULT_PAGESIZE
+            elif isinstance(arguments.get("pagesize"), (list, dict)):
+                raise ToolError("pagesize must be an integer or null")
             message.arguments = arguments
         return await call_next(context)

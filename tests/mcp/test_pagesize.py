@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 from graphsenselib.mcp.pagesize import (
     DEFAULT_PAGESIZE,
@@ -45,6 +46,10 @@ async def test_middleware_defaults_only_explicit_null_on_listed_tools():
     assert (await _call(mw, "list_tx_flows", {"pagesize": 10}))["pagesize"] == 10
     assert (await _call(mw, "list_tx_flows", {"pagesize": 0}))["pagesize"] == 0
     assert (await _call(mw, "list_tx_flows", {"pagesize": "50"}))["pagesize"] == "50"
+
+    for pagesize in ([], {}):
+        with pytest.raises(ToolError, match="pagesize must be an integer or null"):
+            await _call(mw, "list_tx_flows", {"pagesize": pagesize})
 
     # list_neighbors reads pagesize as a filter target with its own default;
     # injecting one here would silently change that.
@@ -151,7 +156,6 @@ async def test_invalid_explicit_pagesize_reaches_route_validation(
     paged_stub_app, pagesize
 ):
     from fastmcp import Client, FastMCP
-    from fastmcp.exceptions import ToolError
     from fastmcp.server.transforms import ToolTransform
     from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 
@@ -169,4 +173,30 @@ async def test_invalid_explicit_pagesize_reaches_route_validation(
 
     async with Client(mcp) as client:
         with pytest.raises(ToolError, match="HTTP error 422"):
+            await _flows_call(client, pagesize=pagesize)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pagesize", [[], {}], ids=["array", "object"])
+async def test_container_pagesize_is_rejected_before_http_serialization(
+    paged_stub_app, pagesize
+):
+    from fastmcp import Client, FastMCP
+    from fastmcp.server.transforms import ToolTransform
+    from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
+
+    mcp = FastMCP.from_fastapi(app=paged_stub_app)
+    mcp.add_transform(
+        ToolTransform(
+            {
+                "list_tx_flows": ToolTransformConfig(
+                    arguments={"pagesize": ArgTransformConfig(default=DEFAULT_PAGESIZE)}
+                )
+            }
+        )
+    )
+    mcp.add_middleware(PagesizeDefaultMiddleware({"list_tx_flows"}))
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="pagesize must be an integer or null"):
             await _flows_call(client, pagesize=pagesize)
