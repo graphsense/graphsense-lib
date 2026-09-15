@@ -83,6 +83,15 @@ Use one changelog file, but separate entries by track in each release window.
   `lint.select`.
 
 #### Fixed
+- **UTXO ingest no longer aborts on transaction versions >= 2^31 from
+  Bitcoin Core >= 28.0.** Core 28.0 changed the tx version to `uint32`
+  (bitcoin/bitcoin#29325), so its RPC reports the two negative-version txs in
+  BTC block 256818 as 2591798512 and 2187681472. The raw `transaction.version`
+  column is `int`, and the bind failed (`'i' format requires -2147483648 <=
+  number <= 2147483647`), stopping any BTC ingest that reaches that block. The
+  parser now wraps such versions to the signed int32 older nodes returned, so
+  the stored value matches keyspaces ingested from pre-28 nodes and no schema
+  change is needed.
 - **`transformation raw-to-transformed --local` keeps a configured
   `local[N]` master.** The flag used to force `spark.master=local[*]`
   unconditionally, so a `spark.master: local[1]` in the `spark_config`
