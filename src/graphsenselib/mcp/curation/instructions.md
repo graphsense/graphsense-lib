@@ -78,11 +78,13 @@ nothing useful.
 
 ## Pagination
 
-All `list_*` tools accept `pagesize` and `page`; the `next_page`
-cursor in each response feeds back as `page=<cursor>`. **Start small**
-— `pagesize=20–30` when you don't know the row shape; raise it once
-you've seen what comes back. Don't materialize every page unless the
-user asked you to; summarize a page and offer to drill in.
+For list tools that expose `pagesize` and `page`, the `next_page` cursor
+in each response feeds back as `page=<cursor>`. An omitted `pagesize`
+defaults to 25. Filtered `list_neighbors` calls instead use 50 as their
+default target match count. Start with `pagesize=20–30` when you don't
+know the row shape; raise it once you've seen what comes back. Don't
+materialize every page unless the user asked you to; summarize a page
+and offer to drill in.
 
 ## Tag fields — fallback order
 
