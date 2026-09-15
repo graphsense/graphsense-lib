@@ -83,6 +83,12 @@ Use one changelog file, but separate entries by track in each release window.
   `lint.select`.
 
 #### Fixed
+- **`transformation raw-to-transformed --local` keeps a configured
+  `local[N]` master.** The flag used to force `spark.master=local[*]`
+  unconditionally, so a `spark.master: local[1]` in the `spark_config`
+  profile was silently widened to all cores. A local master from the config
+  is now kept; a non-local master (e.g. `spark://…`) is still replaced by
+  `local[*]`, now with a warning.
 - **Every `ArrowInvalid` from the delta sink took the shrink-the-row-group
   retry, not just the two it was meant for.** The guard read
   `if "large_binary" in ste or "named input expected length":` -- the second

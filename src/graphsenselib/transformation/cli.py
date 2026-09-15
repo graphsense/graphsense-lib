@@ -1400,7 +1400,7 @@ def _expected_transformed_ks(currency, suffix, no_date):
 @click.option(
     "--local",
     is_flag=True,
-    help="Run Spark locally (master=local[*]) for testing.",
+    help="Run Spark locally for testing (keeps a configured local[N], else master=local[*]).",
 )
 @click.option(
     "--dry-run",
@@ -1494,7 +1494,14 @@ def run_full_transform(
         config.get_spark_config(spark_profile or fta.profile_for(currency))
     )
     if local:
-        spark_props["spark.master"] = "local[*]"
+        # Keep a configured local[N] so --local can still cap the core count.
+        configured_master = spark_props.get("spark.master", "")
+        if not configured_master.startswith("local"):
+            if configured_master:
+                logger.warning(
+                    f"--local overrides spark.master={configured_master} with local[*]"
+                )
+            spark_props["spark.master"] = "local[*]"
     if "spark.master" not in spark_props:
         raise click.UsageError(
             "No spark.master configured. Set it in the spark_config profile "
