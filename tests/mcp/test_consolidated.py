@@ -1311,10 +1311,10 @@ async def test_backend_4xx_does_not_log_at_error(caplog):
     ] == []
 
 
-def test_params_from_defaults_and_caps_pagesize():
+def test_params_from_defaults_but_does_not_cap_pagesize():
     # An omitted pagesize must not reach upstream as "no limit": one
     # unbounded list_txs_for on a hot wallet returned ~2.7 MB. The default
-    # and ceiling apply to every list tool via this shared helper.
+    # applies to every consolidated list tool via this shared helper.
     from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE
     from graphsenselib.mcp.tools.consolidated import _params_from
 

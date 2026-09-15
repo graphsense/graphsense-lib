@@ -4,6 +4,8 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastmcp import FastMCP
+from fastmcp.server.transforms import ToolTransform
+from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 from mcp.types import Icon
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import RedirectResponse
@@ -13,7 +15,7 @@ from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
-from graphsenselib.mcp.pagesize import PagesizeDefaultMiddleware
+from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE, PagesizeDefaultMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 from graphsenselib.mcp.tools import register_custom_tools
 
@@ -72,15 +74,28 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         icons=icons,
     )
 
+    # Publish the default in each generated tool's input schema and apply it
+    # when the caller omits pagesize. component_fn populated paged_tools while
+    # from_fastapi built the tools above.
+    mcp.add_transform(
+        ToolTransform(
+            {
+                name: ToolTransformConfig(
+                    arguments={"pagesize": ArgTransformConfig(default=DEFAULT_PAGESIZE)}
+                )
+                for name in paged_tools
+            }
+        )
+    )
+
     # Surface unhandled tool/resource/prompt exceptions to the graphsenselib.mcp
     # logger so the same handlers the REST app uses for incident notifications
     # (Slack/SMTP, set up in web/app.py:setup_logging) fire for MCP failures too.
     mcp.add_middleware(ErrorLoggingMiddleware())
 
-    # Auto-generated tools pass the model's arguments straight to the
-    # upstream route, so an omitted pagesize arrives as "no limit". The
-    # consolidated tools default themselves in _params_from; this covers
-    # the rest (today: list_tx_flows).
+    # An explicit null bypasses a schema default because the argument is
+    # present. Default that case too. Invalid explicit values pass through to
+    # the route's validation.
     mcp.add_middleware(PagesizeDefaultMiddleware(paged_tools))
 
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;

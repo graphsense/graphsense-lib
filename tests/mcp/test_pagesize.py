@@ -1,7 +1,4 @@
-"""Page-size policy: the default/ceiling that keeps one list call from
-returning megabytes, and the middleware that applies it to the
-auto-generated tools (which have no chokepoint of their own).
-"""
+"""Page-size defaults for consolidated and auto-generated MCP tools."""
 
 from types import SimpleNamespace
 
@@ -14,16 +11,14 @@ from graphsenselib.mcp.pagesize import (
 )
 
 
-def test_resolve_pagesize_defaults_but_does_not_clamp():
+def test_resolve_pagesize_defaults_only_none():
     # Omission is the failure mode: None reaches the route as "no limit".
     assert resolve_pagesize(None) == DEFAULT_PAGESIZE
-    # An explicit page is the caller's call; the route bounds it at 5000.
+    # Explicit values pass through. The route validates them.
     assert resolve_pagesize(40) == 40
     assert resolve_pagesize(5000) == 5000
-    # Middleware runs before schema validation, so junk can reach us.
-    assert resolve_pagesize("50") == DEFAULT_PAGESIZE
-    assert resolve_pagesize(0) == DEFAULT_PAGESIZE
-    assert resolve_pagesize(-1) == DEFAULT_PAGESIZE
+    assert resolve_pagesize(0) == 0
+    assert resolve_pagesize(-1) == -1
 
 
 async def _call(middleware, name, arguments):
@@ -39,12 +34,17 @@ async def _call(middleware, name, arguments):
 
 
 @pytest.mark.asyncio
-async def test_middleware_defaults_only_listed_tools():
+async def test_middleware_defaults_only_explicit_null_on_listed_tools():
     mw = PagesizeDefaultMiddleware({"list_tx_flows"})
 
-    assert (await _call(mw, "list_tx_flows", {}))["pagesize"] == DEFAULT_PAGESIZE
+    assert await _call(mw, "list_tx_flows", {}) == {}
+    assert (await _call(mw, "list_tx_flows", {"pagesize": None}))[
+        "pagesize"
+    ] == DEFAULT_PAGESIZE
     assert (await _call(mw, "list_tx_flows", {"pagesize": 9999}))["pagesize"] == 9999
     assert (await _call(mw, "list_tx_flows", {"pagesize": 10}))["pagesize"] == 10
+    assert (await _call(mw, "list_tx_flows", {"pagesize": 0}))["pagesize"] == 0
+    assert (await _call(mw, "list_tx_flows", {"pagesize": "50"}))["pagesize"] == "50"
 
     # list_neighbors reads pagesize as a filter target with its own default;
     # injecting one here would silently change that.
@@ -100,15 +100,32 @@ async def test_paging_onward_works_with_the_default(paged_stub_app):
     cursor must fetch a distinct page 2.
     """
     from fastmcp import Client, FastMCP
+    from fastmcp.server.transforms import ToolTransform
+    from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 
     mcp = FastMCP.from_fastapi(app=paged_stub_app)
+    mcp.add_transform(
+        ToolTransform(
+            {
+                "list_tx_flows": ToolTransformConfig(
+                    arguments={"pagesize": ArgTransformConfig(default=DEFAULT_PAGESIZE)}
+                )
+            }
+        )
+    )
     mcp.add_middleware(PagesizeDefaultMiddleware({"list_tx_flows"}))
 
     async with Client(mcp) as client:
+        tool = next(t for t in await client.list_tools() if t.name == "list_tx_flows")
+        assert tool.inputSchema["properties"]["pagesize"]["default"] == DEFAULT_PAGESIZE
+
         first = await _flows_call(client)
-        assert first["seen_pagesize"] == DEFAULT_PAGESIZE  # injected, not omitted
+        assert first["seen_pagesize"] == DEFAULT_PAGESIZE
         assert first["txs"] == list(range(DEFAULT_PAGESIZE))
         assert first["next_page"] == 2
+
+        explicit_null = await _flows_call(client, pagesize=None)
+        assert explicit_null["seen_pagesize"] == DEFAULT_PAGESIZE
 
         # The cursor comes back as an int while `page` is typed string
         # upstream; FastMCP coerces, so either form reaches the route.
@@ -126,3 +143,30 @@ async def test_paging_onward_works_with_the_default(paged_stub_app):
         wide = await _flows_call(client, pagesize=5000)
         assert wide["seen_pagesize"] == 5000
         assert wide["next_page"] is None  # one 5000-row page covers them all
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pagesize", [0, -1, 5001])
+async def test_invalid_explicit_pagesize_reaches_route_validation(
+    paged_stub_app, pagesize
+):
+    from fastmcp import Client, FastMCP
+    from fastmcp.exceptions import ToolError
+    from fastmcp.server.transforms import ToolTransform
+    from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
+
+    mcp = FastMCP.from_fastapi(app=paged_stub_app)
+    mcp.add_transform(
+        ToolTransform(
+            {
+                "list_tx_flows": ToolTransformConfig(
+                    arguments={"pagesize": ArgTransformConfig(default=DEFAULT_PAGESIZE)}
+                )
+            }
+        )
+    )
+    mcp.add_middleware(PagesizeDefaultMiddleware({"list_tx_flows"}))
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="HTTP error 422"):
+            await _flows_call(client, pagesize=pagesize)

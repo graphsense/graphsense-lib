@@ -68,9 +68,10 @@ include:
       hundreds of events. Use `lookup_tx_details` first for the consolidated
       tx body (IO list, traces, conversions); reach for `list_tx_flows`
       when you need to walk every flow event in an account-model tx and
-      the count isn't bounded. UTXO chains carry the equivalent
-      information in the tx's `inputs`/`outputs`, so this endpoint is
-      account-model focused. Each event carries its own `identifier`
+      the count isn't bounded. Omitted `pagesize` defaults to 25; pass the
+      response's `next_page` back as `page` to continue. UTXO chains carry
+      the equivalent information in the tx's `inputs`/`outputs`, so this
+      endpoint is account-model focused. Each event carries its own `identifier`
       (the sub-payment id within the parent `tx_hash`); pass that
       `identifier` — not the bare `tx_hash` — when feeding the event
       into `build_pathfinder_file`, so pathfinder can render the
