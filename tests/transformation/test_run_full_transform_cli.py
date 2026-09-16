@@ -169,3 +169,42 @@ def test_run_full_transform_local_flag_sets_master(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "spark.master=local[*]" in result.output
+
+
+def _dry_run_local(monkeypatch, spark_config):
+    cfg = get_config()
+    cfg.full_transform_args = FullTransformArgs(version="v26.06.0")
+    cfg.spark_config = spark_config
+    monkeypatch.setattr(spark_jar, "fetch_release_jar", lambda *a, **k: "/x.jar")
+    return CliRunner().invoke(
+        transformation_cli,
+        [
+            "transformation",
+            "raw-to-transformed",
+            "-e",
+            "pytest",
+            "-c",
+            "btc",
+            "--local",
+            "--dry-run",
+        ],
+    )
+
+
+def test_run_full_transform_local_flag_keeps_configured_local_master(monkeypatch):
+    """--local must not widen a configured local[N] to local[*]."""
+    result = _dry_run_local(monkeypatch, {"baseline": {"spark.master": "local[1]"}})
+
+    assert result.exit_code == 0, result.output
+    assert "--conf spark.master=local[1]" in result.output
+    assert "local[*]" not in result.output
+
+
+def test_run_full_transform_local_flag_overrides_cluster_master(monkeypatch):
+    result = _dry_run_local(
+        monkeypatch, {"baseline": {"spark.master": "spark://m:7077"}}
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--conf spark.master=local[*]" in result.output
+    assert "spark://m:7077" not in result.output

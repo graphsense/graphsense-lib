@@ -185,9 +185,18 @@ async def get_conversions_from_db(
 
     from graphsenselib.defi.swaps import get_swap_from_decoded_logs
 
-    swap_results = get_swap_from_decoded_logs(
-        decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
-    )
+    if tx.get("input"):
+        swap_results = get_swap_from_decoded_logs(
+            decoded_log_data,
+            tx_logs_raw_filtered,
+            tx_traces,
+            visualize,
+            transaction_input=tx["input"],
+        )
+    else:
+        swap_results = get_swap_from_decoded_logs(
+            decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
+        )
     conversions += swap_results
 
     return conversions

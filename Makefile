@@ -60,6 +60,23 @@ endif
 test: install-dev
 	DANGEROUSLY_ACCELERATE_TESTS=$(DANGEROUSLY_ACCELERATE_TESTS) uv run --exact --all-extras pytest $(PYTEST_OPTS) $(PYTEST_MARK)
 
+# Directories whose tests need testcontainers (Cassandra/Postgres/Redis). They
+# dominate wall-clock -- ~80s of a ~95s suite, and ~35s of that is container
+# start/stop rather than test execution, because the fixtures are session-scoped
+# so the cost is all-or-nothing per run.
+CONTAINER_TEST_PATHS := tests/web tests/db tests/tagstore tests/integration
+
+# The pre-commit gate (see .pre-commit-config.yaml). Drops the three things that
+# make the full suite unusable in a commit loop: coverage (~18%, and nothing
+# reads the local report), the `slow` marks, and the container directories.
+# ~33s / 1307 tests instead of ~226s / 2327. Everything it skips is still gated
+# by CI on every push and PR -- `make test-ci` runs the whole suite, slow marks
+# included. No `install-dev` prerequisite: the `ensure-env` hook already syncs,
+# and depending on it here made every commit sync twice.
+test-fast:
+	uv run --exact --all-extras pytest -x -rx -q -m "not slow" \
+		$(addprefix --ignore=,$(CONTAINER_TEST_PATHS))
+
 # Coverage measurement costs ~18% of suite runtime (127s vs 108s locally) and
 # the report is only ever read from the CI log — nothing uploads it. The test
 # matrix therefore runs it on one leg only and passes COVERAGE=0 on the rest;
@@ -72,15 +89,20 @@ else
 COVERAGE_OPTS :=
 endif
 
+# Runs the whole suite, `slow` marks included. Those tests are skipped by the
+# local pre-commit gate (test-fast), so CI is the only place they run -- do not
+# add `-m "not slow"` back here.
 test-ci:
-	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" $(COVERAGE_OPTS) --capture=no
+	uv run --exact --all-extras pytest  -x -rx -vv $(COVERAGE_OPTS) --capture=no
 
 # Guards that the package still imports and works with only the base extras
 # installed (no [all]). That is a packaging property, not an interpreter one, so
 # CI runs this on a single matrix leg. Never measures coverage: it is a subset
-# run whose numbers would only be confusing next to the full one.
+# run whose numbers would only be confusing next to the full one. Like test-ci
+# it does not filter `slow`: no CI target does, so that nothing can be skipped
+# everywhere at once.
 test-with-base-dependencies-ci:
-	uv run --exact --no-dev --group testing --extra conversions --extra ingest --extra tagpacks --extra web pytest  -x -rx -vv -m "not slow" --capture=no
+	uv run --exact --no-dev --group testing --extra conversions --extra ingest --extra tagpacks --extra web pytest  -x -rx -vv --capture=no
 
 
 # Build pre-baked Cassandra image with all test schemas (resttest_* + pytest_*)
@@ -265,4 +287,4 @@ serve-docker:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-spark-packages check-spark-packages sync-client-version update-client-version check-client-version show-versions mcp-validate-curation
+.PHONY: all test test-fast install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-spark-packages check-spark-packages sync-client-version update-client-version check-client-version show-versions mcp-validate-curation

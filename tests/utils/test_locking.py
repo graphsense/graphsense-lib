@@ -119,7 +119,11 @@ class TestRedisLockBackend:
         except ImportError:
             pytest.skip("redis not installed")
 
-        cfg = _mock_config(use_redis_locks=True, redis_url="redis://invalid-host:6379")
+        # Port 1 on loopback: refuses instantly. A bogus *hostname* here instead
+        # makes the test cost whatever the local resolver charges for a dead
+        # name -- on a dev box behind a blackholing DNS server that was 120s,
+        # more than half the whole suite.
+        cfg = _mock_config(use_redis_locks=True, redis_url="redis://127.0.0.1:1")
         with patch("graphsenselib.config.get_config", return_value=cfg):
             with pytest.raises(LockAcquisitionError, match="connection error"):
                 with create_lock("test"):

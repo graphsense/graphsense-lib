@@ -7,9 +7,6 @@ import click
 from ..cli.common import require_currency, require_environment
 from ..config import get_config, supported_fiat_currencies
 from ..utils.console import console
-from .coindesk import MIN_START as MS_CD
-from .coindesk import fetch as fetchCD
-from .coindesk import ingest as ingestCD
 from .coingecko import fetch as fetchGecko
 from .coingecko import fetch_impl as fetchGeckoDump
 from .coingecko import ingest as ingestGecko
@@ -79,8 +76,6 @@ def shared_flags(provider="cmc"):
         min_date = "2009-01-03"
         if provider == "cmc":
             min_date = MS_CMK
-        elif provider == "cdesk":
-            min_date = MS_CD
         elif provider == "cryptocompare":
             min_date = MS_CC
 
@@ -170,12 +165,6 @@ def rates_cli():
 @rates_cli.group()
 def exchange_rates():
     """Fetching and ingesting exchange rates."""
-    pass
-
-
-@exchange_rates.group()
-def coindesk():
-    """From coindesk."""
     pass
 
 
@@ -375,27 +364,6 @@ def fetch_gecko(
     console.print(df)
 
 
-@coindesk.command("fetch")
-@require_environment()
-@require_currency()
-@shared_flags(provider="cdesk")
-def fetch_cd(
-    env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
-):
-    """Only fetches the to be imported exchange rates.
-    \f
-    Args:
-        env (str): -
-        currency (str): -
-        fiat_currencies (list[str]): -
-        start_date (str): -
-        end_date (str): -
-    """
-    df = fetchCD(env, currency, list(fiat_currencies), start_date, end_date)
-    console.rule("Rates Coindesk")
-    console.print(df)
-
-
 @cryptocompare.command("fetch")
 @require_environment()
 @require_currency()
@@ -531,51 +499,6 @@ def ingest_gecko(
         dry_run,
         api_key,
         no_token_rates,
-    )
-
-
-@coindesk.command("ingest")
-@require_environment()
-@require_currency()
-@shared_flags(provider="cdesk")
-@shared_ingest_flags()
-def ingest_cd(
-    env,
-    currency,
-    fiat_currencies,
-    start_date,
-    end_date,
-    table,
-    force,
-    dry_run,
-    abort_on_gaps,
-    no_token_rates,
-):
-    """Ingests new exchange rates into cassandra raw keyspace.
-    \f
-    Args:
-        env (str): -
-        currency (str): -
-        fiat_currencies (list[str]): -
-        start_date (str): -
-        end_date (str): -
-        table (str): -
-        force (bool): -
-        dry_run (bool): -
-        abort_on_gaps (bool): -
-        no_token_rates (bool): -
-    """
-    # coindesk is BTC-only (Bitcoin Price Index); no unpegged tokens to fetch.
-    ingestCD(
-        env,
-        currency,
-        list(fiat_currencies),
-        start_date,
-        end_date,
-        table,
-        force,
-        dry_run,
-        abort_on_gaps,
     )
 
 

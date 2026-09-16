@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -221,7 +221,7 @@ class Parameter(BaseModel):
 class ParameterDetails(Parameter):
     name: str
     type: str
-    value: Union[str, int, float, bool]
+    value: Any
 
 
 class FunctionDefinition(BaseModel):
@@ -233,9 +233,7 @@ class FunctionDefinition(BaseModel):
 
 class FunctionCall(BaseModel):
     parameter_details: List[ParameterDetails]
-    parameter_values: Dict[str, Union[str, int, float, bool]] = Field(
-        default_factory=dict
-    )
+    parameter_values: Dict[str, Any] = Field(default_factory=dict)
     function_definition: FunctionDefinition
 
 

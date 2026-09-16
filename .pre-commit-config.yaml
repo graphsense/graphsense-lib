@@ -53,7 +53,6 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit, pre-push]
     -   id: update-api-version
         name: Sync API version from Makefile to version.py
         entry: make update-api-version
@@ -72,12 +71,17 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+    # 7s of Docker + the Java openapi-generator. Its only inputs are
+    # graphsenselib.web.app (via scripts/generate_openapi_spec.py), the mustache
+    # templates and the compat patches, so it ran on every commit that could not
+    # possibly change the spec. CI regenerates unconditionally, so drift still
+    # surfaces there if this filter is ever too narrow.
     -   id: codegen
         name: Ensure Generated Code is up to date
         entry: make run-codegen
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(src/graphsenselib/web/|clients/python/templates/|clients/python/compat/)
     -   id: sync-gs-files
         name: Sync gs_files into the python client
         entry: make -C clients/python sync-gs-files
@@ -96,10 +100,20 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit, pre-push]
+    # cargo test is 3.3s cold / 0.06s warm -- cheap enough to gate on commit,
+    # and until now the Rust extension was only ever tested in CI.
+    -   id: rust-test
+        name: cargo test (gs_clustering)
+        entry: make test-rust
+        language: system
+        pass_filenames: false
+        files: ^rust/
+    # The fast gate: no coverage, no slow marks, no testcontainers (~33s vs
+    # ~226s). The container-backed and slow tests are covered by `make test-ci`
+    # in .github/workflows/run_tests.yaml, which runs the suite in full.
     -   id: pytest-check
-        name: pytest-check
-        entry: make test
+        name: 'pytest: fast subset only (no slow/container tests)'
+        entry: make test-fast
         language: system
         pass_filenames: false
         always_run: true

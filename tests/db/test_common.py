@@ -121,6 +121,31 @@ def test_function_call_from_row_with_empty_inputs():
     assert result.function_definition.arguments == []
 
 
+def test_function_call_from_row_supports_structured_abi_values():
+    parsed_input = {
+        "inputs": [
+            {"name": "desc", "type": "tuple", "value": ["0x1", 1]},
+            {"name": "data", "type": "bytes", "value": "0x1234"},
+        ],
+        "parameters": {"desc": ["0x1", 1], "data": "0x1234"},
+        "function_def": {
+            "name": "swap",
+            "inputs": [
+                {"name": "desc", "type": "tuple"},
+                {"name": "data", "type": "bytes"},
+            ],
+            "tags": ["swap", "1inch"],
+        },
+        "selector": "0x07ed2379",
+    }
+
+    result = function_call_from_row(parsed_input)
+
+    assert result.parameter_values == {"desc": ["0x1", 1], "data": "0x1234"}
+    assert result.parameter_details[0].value == ["0x1", 1]
+    assert result.parameter_details[1].value == "0x1234"
+
+
 def test_real_function_call_from_row():
     """
     This function is a placeholder for the actual implementation of function_call_from_row.

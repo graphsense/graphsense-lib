@@ -12,9 +12,16 @@
 - Format: `make format`
 - Fast pre-commit gate: `make pre-commit`
 - Test suite:
-  - Local default: `make test`
-  - CI-like (no slow tests): `make test-ci`
+  - What the pre-commit hook runs: `make test-fast` (~33s). A **subset**: 1307 of
+    2327 tests, skipping the `slow` marks and the four testcontainer directories
+    (`tests/web`, `tests/db`, `tests/tagstore`, `tests/integration`). Green here
+    does not mean green in CI.
+  - Full suite, `slow` included, and what CI runs: `make test-ci` (~105s).
+  - Local default (full suite + coverage + forced dep sync): `make test` (~145s).
   - Base-dependency matrix variant: `make test-with-base-dependencies-ci`
+  - Rust extension: `make test-rust` (pre-commit, gated on `rust/**`; and CI).
+  - Scala pipeline: `make test-spark`. No hook runs it; CI runs it on every push
+    and PR.
 - Run a single test:
   - `uv run --exact --all-extras pytest tests/path/to/test_file.py::test_name -x -vv`
 

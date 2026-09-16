@@ -1,4 +1,5 @@
 import logging
+from functools import cache
 from os import environ
 
 import pytest
@@ -26,6 +27,7 @@ class RedisContainer(DockerContainer):
     def get_exposed_port(self, port: int = REDIS_PORT) -> int:
         return int(super().get_exposed_port(port))
 
+
 from graphsenselib.web.app import create_app
 from graphsenselib.web.config import GSRestConfig
 from tests.web.cassandra.insert import load_test_data as cas_load_test_data
@@ -33,9 +35,16 @@ from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
 from tests.conftest import DANGEROUSLY_ACCELERATE_TESTS, create_web_schemas
 
-# Web-specific containers (not shared with root tests)
-postgres = PostgresContainer("postgres:16-alpine")
-redis = RedisContainer("redis:7-alpine")
+
+# Web-specific containers (not shared with root tests), built on first use.
+@cache
+def postgres_container() -> PostgresContainer:
+    return PostgresContainer("postgres:16-alpine")
+
+
+@cache
+def redis_container() -> RedisContainer:
+    return RedisContainer("redis:7-alpine")
 
 
 def _stop_container(container, name: str) -> None:
@@ -68,6 +77,8 @@ def gs_rest_db_setup(gs_db_setup):
 
     cas_host, cas_port = gs_db_setup
 
+    postgres = postgres_container()
+    redis = redis_container()
     postgres.start()
     redis.start()
 
@@ -145,6 +156,7 @@ async def redis_client(gs_rest_db_setup):
     """Provide an async Redis client for tests."""
     from redis import asyncio as aioredis
 
+    redis = redis_container()
     redis_host = redis.get_container_host_ip()
     redis_port = redis.get_exposed_port(6379)
     redis_url = f"redis://{redis_host}:{redis_port}"

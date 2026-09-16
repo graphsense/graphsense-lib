@@ -264,6 +264,19 @@ def _nonce_to_hex(nonce):
     return format(nonce, "x")
 
 
+def _tx_version_to_int32(version):
+    """Map a tx version to the signed int32 the raw schema stores.
+
+    Bitcoin Core >= 28.0 reports the version as uint32 (bitcoin/bitcoin#29325);
+    older nodes, and every keyspace ingested from them, carry it as int32. A
+    version >= 2**31 (e.g. the two txs in BTC block 256818) therefore wraps to
+    the negative value an older node would have returned.
+    """
+    if version is None or version < 2**31:
+        return version
+    return version - 2**32
+
+
 def _script_hex_to_non_standard_address(script_hex):
     """Replicate bitcoin-etl's btc_script_service.script_hex_to_non_standard_address."""
     if script_hex is None:
@@ -560,7 +573,7 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                 "hash": raw_tx.get("txid"),
                 "size": raw_tx.get("size"),
                 "virtual_size": raw_tx.get("vsize"),
-                "version": raw_tx.get("version"),
+                "version": _tx_version_to_int32(raw_tx.get("version")),
                 "lock_time": raw_tx.get("locktime"),
                 "block_number": block_number,
                 "block_hash": block_hash,

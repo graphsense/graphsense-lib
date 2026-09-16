@@ -1,5 +1,6 @@
 """Tests for rpc_utxo.py — direct JSON-RPC UTXO block/tx exporter."""
 
+import copy
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,7 @@ from graphsenselib.ingest.rpc_utxo import (
     _parse_input,
     _parse_output,
     _script_hex_to_non_standard_address,
+    _tx_version_to_int32,
 )
 
 
@@ -921,3 +923,33 @@ class TestResolveUnresolvedInputs:
             mock_rpc.assert_not_called()
 
         assert transactions[1]["inputs"][0]["value"] == 100
+
+
+class TestTxVersionToInt32:
+    """Bitcoin Core >= 28 reports tx versions as uint32; the schema stores int32."""
+
+    @pytest.mark.parametrize(
+        "version,expected",
+        [
+            # The two txs in BTC block 256818, as a Core >= 28 node returns
+            # them, and the value a pre-28 node stored (checked in a keyspace).
+            (2591798512, -1703168784),  # c659729a...52e369
+            (2187681472, -2107285824),  # 637dd1a3...f7413f
+            (2**31, -(2**31)),
+            (2**32 - 1, -1),
+            (2**31 - 1, 2**31 - 1),
+            (2, 2),
+            (-1703168784, -1703168784),  # pre-28 nodes already return int32
+            (None, None),
+        ],
+    )
+    def test_maps_to_int32(self, version, expected):
+        assert _tx_version_to_int32(version) == expected
+
+    def test_parser_stores_int32_version(self):
+        raw_block = copy.deepcopy(TestParseBlockAndTxs.SAMPLE_BLOCK)
+        raw_block["tx"][1]["version"] = 2591798512
+
+        _, txs = _parse_btc_block_and_txs(raw_block)
+
+        assert txs[1]["version"] == -1703168784

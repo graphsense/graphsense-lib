@@ -495,9 +495,6 @@ Fetch and ingest exchange rates from various sources.
 # Show exchange rate options
 graphsense-cli exchange-rates --help
 
-# Fetch from CoinDesk
-graphsense-cli exchange-rates coindesk -e dev -c btc
-
 # Fetch from CoinMarketCap (requires API key in config)
 graphsense-cli exchange-rates coinmarketcap -e dev -c btc
 
@@ -752,8 +749,6 @@ make install-dev
 
 ### Code Quality and Testing
 
-Before committing, please format, lint, and test your code:
-
 ```bash
 # Format code
 make format
@@ -761,19 +756,49 @@ make format
 # Lint code
 make lint
 
-# Run fast tests
-make test
+# The gate the pre-commit hook runs (~33s)
+make test-fast
 
-# Or run all steps at once
+# Run every hook over the whole tree
 make pre-commit
 ```
 
-For comprehensive testing:
+**`make test-fast` is a subset, not the full suite.** It runs 1307 of 2327
+tests: it skips the `slow` marks and the four directories whose tests need a
+Cassandra/Postgres/Redis testcontainer (`tests/web`, `tests/db`,
+`tests/tagstore`, `tests/integration` — ~80s of a ~95s suite, and the fixtures
+are session-scoped so the cost is all-or-nothing). That keeps the commit loop
+at ~33s; CI runs everything on every push and PR.
+
+Before opening a PR, or whenever you touch the web/REST, DB or tagstore layers,
+run the full suite yourself:
 
 ```bash
-# Run complete test suite (including slow tests)
-make test
+# The whole Python suite, slow tests included (~105s) -- what CI runs
+make test-ci
+
+# Rust clustering extension (also gated on rust/** in pre-commit)
+make test-rust
+
+# Scala pipeline. No hook runs this; CI does, on every push and PR.
+make test-spark
 ```
+
+| command | scope | time |
+| --- | --- | --- |
+| `make test-fast` | Python minus slow + container tests (1307 tests) | ~33s |
+| `make test-ci` | whole Python suite, slow included (2327 tests) | ~105s |
+| `make test` | as `test-ci`, plus coverage and a forced dependency sync | ~145s |
+| `make test-rust` | `cargo test` | 3.3s cold, 0.06s warm |
+| `make test-spark` | `sbt test` | minutes |
+
+#### Without a Docker daemon
+
+The suite collects and runs without one. Tests that need a Cassandra, Postgres
+or Redis container (`tests/web`, `tests/db`, `tests/tagstore`,
+`tests/integration`) are skipped with a single reason and a banner in the
+summary. On CI (`CI` set) an unreachable daemon is a hard error instead, so a
+broken runner cannot pass while covering nothing.
 
 #### Podman Notes
 
@@ -883,7 +908,8 @@ See LICENSE file for licensing details.
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Run `make pre-commit` to ensure code quality
+4. Run `make pre-commit` for the fast gate, then `make test-ci` for the full
+   suite (the hook deliberately skips the slow and container-backed tests)
 5. Submit a pull request
 
 ---

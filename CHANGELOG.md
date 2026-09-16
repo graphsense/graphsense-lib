@@ -53,6 +53,99 @@ Use one changelog file, but separate entries by track in each release window.
   removal in `spark/build.sbt` (see `spark/CHANGELOG.md`): nothing in the Scala
   job imports it. This list only feeds the `slim` artifact's `--packages`;
   production runs `fat`, where the assembly jar is authoritative.
+- **The pre-commit gate is now a fast subset; CI runs everything.** The hook
+  ran the full suite with coverage and no marker filter, so a commit cost ~236s
+  — and more than half of that was one test, which resolved a bogus hostname
+  (`redis://invalid-host`) and paid whatever the local resolver charged for a
+  dead name: 120s on a box behind a blackholing DNS server, instant on CI. With
+  that fixed, `make test-fast` drops coverage (nothing reads the local report),
+  the `slow` marks and the four testcontainer directories (`tests/web`,
+  `tests/db`, `tests/tagstore`, `tests/integration` — ~80s of a ~95s suite,
+  mostly container start/stop, since the fixtures are session-scoped and the
+  cost is all-or-nothing). A typical commit is now ~33s / 1307 tests.
+  `make test-rust` joins the hook path-gated on `rust/**` (0.06s warm) and the
+  `codegen` hook is no longer `always_run`: 7s of Docker plus the Java
+  openapi-generator now fires only for `src/graphsenselib/web/`, the client
+  templates and the compat patches, which are its only inputs. The hook prints
+  as `pytest: fast subset only (no slow/container tests)` rather than
+  `pytest-check`, which read exactly like a full-suite pass. `semver-check` and
+  `ensure-env` drop their `stages: [pre-commit, pre-push]`: `make dev` runs
+  `pre-commit install`, which installs the `pre-commit` hook only, so the
+  pre-push half had never fired. README, `CLAUDE.md` and
+  `.github/copilot-instructions.md` document what each target covers and what
+  it costs -- the latter two had claimed `make test-ci` skips slow tests.
+- **CI no longer skips `slow` tests, and the Spark job no longer path-filters.**
+  Every CI pytest invocation passed `-m "not slow"`, so the three `slow`-marked
+  tests ran only on a developer's machine — and the fast local gate would have
+  left them running nowhere at all. `make test-ci` now runs the suite in full
+  (2326 tests, ~104s), and so does `make test-with-base-dependencies-ci` (2046
+  passed / 26 skipped, ~78s) -- no CI target filters `slow` any more, so nothing
+  can be skipped everywhere at once. `spark_tests.yml` likewise ran on a path list covering
+  `spark/`, the delta updater and `transformed_*.sql`; since sbt is not run
+  locally at all, that list was the only thing standing between a new file
+  feeding the delta/Spark contract and an unnoticed drift, so it now runs on
+  every push and PR.
+- **Dependency bumps: the `uv-minor-patch` group (22 packages), setuptools
+  84.0.0, the `docker-images` group (uv 0.12.9, a new temurin 11 digest) and
+  arrow 59.3.0 in `rust/gs_clustering`.** Notable inside the group: fastapi
+  0.136.3 -> 0.141.1, sqlmodel 0.0.38 -> 0.0.42, rapidyaml 0.13.0 -> 0.15.2,
+  redis 8.0.0 -> 8.1.0, cassandra-driver 3.30.0 -> 3.30.1, ty 0.0.73 -> 0.0.79.
+  **`ruff` is deliberately held at 0.15.17**: 0.16 widens the default rule set
+  and reports 3442 findings (2741 autofixable) on a tree that is clean today,
+  which is what failed every job on the group's PR -- the tests passed there.
+  Adopting it is a separate change, either the autofixes or an explicit
+  `lint.select`.
+
+#### Fixed
+- **UTXO ingest no longer aborts on transaction versions >= 2^31 from
+  Bitcoin Core >= 28.0.** Core 28.0 changed the tx version to `uint32`
+  (bitcoin/bitcoin#29325), so its RPC reports the two negative-version txs in
+  BTC block 256818 as 2591798512 and 2187681472. The raw `transaction.version`
+  column is `int`, and the bind failed (`'i' format requires -2147483648 <=
+  number <= 2147483647`), stopping any BTC ingest that reaches that block. The
+  parser now wraps such versions to the signed int32 older nodes returned, so
+  the stored value matches keyspaces ingested from pre-28 nodes and no schema
+  change is needed.
+- **`transformation raw-to-transformed --local` keeps a configured
+  `local[N]` master.** The flag used to force `spark.master=local[*]`
+  unconditionally, so a `spark.master: local[1]` in the `spark_config`
+  profile was silently widened to all cores. A local master from the config
+  is now kept; a non-local master (e.g. `spark://…`) is still replaced by
+  `local[*]`, now with a warning.
+- **Every `ArrowInvalid` from the delta sink took the shrink-the-row-group
+  retry, not just the two it was meant for.** The guard read
+  `if "large_binary" in ste or "named input expected length":` -- the second
+  operand is a bare string literal, so the condition is always true and the
+  `else: raise e` beneath it was dead code. An unrelated Arrow error therefore
+  spent up to 20 attempts halving `max_row_group_size` before surfacing as
+  "Could not write delta-file after 20 attempts", which names neither the real
+  error nor the file. Found by the `ty` bump below, which is the entire reason
+  that bump is worth taking.
+- **Running the suite without a Docker daemon now skips the container-backed
+  tests instead of erroring ~1000 times.** #160 made a daemon-less machine
+  *collect*, but every test requesting the Cassandra/Postgres/Redis fixtures
+  still failed at setup with a full urllib3 traceback each. The session
+  fixtures now ping the daemon once (5s timeout, so a dead `DOCKER_HOST` is
+  cheap) and skip with one reason plus a summary banner when it does not answer.
+  On CI (`CI` set) an unreachable daemon stays a hard error -- skipping there
+  would turn a broken runner green while covering nothing. (#161)
+
+#### Removed
+- **`graphsenselib.utils.pipeline`** and its tests. Nothing has imported the
+  multiprocessing `Pipeline` since the account ingester was rewritten, and its
+  tests failed on every `spawn` platform (macOS, Windows): the stages carried
+  `mp.Queue`/`mp.Event` objects into child processes, which cannot be
+  re-pickled. Linux forks, so only local macOS runs saw it. (#161)
+- **The `exchange-rates coindesk` provider (`fetch`/`ingest`) and
+  `graphsenselib.rates.coindesk`.** It called CoinDesk's old Bitcoin Price
+  Index API (`api.coindesk.com/v1/bpi`), which CoinDesk has shut down: the
+  hostname no longer resolves, so every run died with a bare
+  `NameResolutionError`, and the API had stopped returning recent rates as
+  far back as 2022. CoinDesk's surviving data API is the former CryptoCompare
+  API (CoinDesk acquired CCData/CryptoCompare in 2024), so use
+  `exchange-rates cryptocompare` with a `cryptocompare_api_key` from
+  https://developers.coindesk.com/ instead. `scripts/dev-ingest.sh` no longer
+  calls it.
 
 ## [2.16.3] - 2026-08-28
 
