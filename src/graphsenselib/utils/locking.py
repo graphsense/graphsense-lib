@@ -91,9 +91,18 @@ def create_lock(
     return _file_lock(lock_name, blocking_timeout)
 
 
+# Fixed on purpose rather than tempfile.gettempdir(): every process contending
+# for a lock must resolve the same path, and TMPDIR can differ between them.
+LOCK_DIR = "/tmp"
+
+
+def _lockfile_path(lock_name):
+    return os.path.join(LOCK_DIR, f"{lock_name}.lock")
+
+
 @contextlib.contextmanager
 def _file_lock(lock_name, blocking_timeout):
-    lockfile_name = f"/tmp/{lock_name}.lock"
+    lockfile_name = _lockfile_path(lock_name)
     logger.info(f"Try acquiring file lock {lockfile_name}")
     try:
         with FileLock(lockfile_name, timeout=blocking_timeout):
