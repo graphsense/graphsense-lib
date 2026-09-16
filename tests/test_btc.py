@@ -906,9 +906,9 @@ class TestZcashShieldedPools:
         """Both Sapling amounts are on every transaction; only the int is read.
 
         Mainnet block 600,000, 00c8e2ed...af10 carries valueBalance -0.9199
-        and valueBalanceZat -91990000. Dropping the integer leaves the float
-        in place and must produce no shielded output, which is what keeps a
-        revert to the lossy float from passing unnoticed.
+        and valueBalanceZat -91990000. Swapping the float for a different value
+        must not change the result, which is what keeps a revert to the lossy
+        float from passing unnoticed.
         """
         raw = copy.deepcopy(load_zcash_block(600_000))
         target = next(
@@ -918,15 +918,60 @@ class TestZcashShieldedPools:
             == "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10"
         )
         assert target["valueBalance"] == -0.9199
-        del target["valueBalanceZat"]
+        target["valueBalance"] = -1.0
 
         _, txs = _parse_btc_block_and_txs(raw, network="zec")
         tx = tx_by_hash(txs, target["txid"])
 
-        assert tx["sapling_value_balance"] == 0
-        assert shielded(tx["outputs"]) == []
-        # the Sprout leg is untouched by the Sapling field being absent
+        assert tx["sapling_value_balance"] == -91_990_000
+        assert [o["value"] for o in shielded(tx["outputs"])] == [91_990_000]
+        # the Sprout leg is untouched by the Sapling float
         assert [i["value"] for i in shielded(tx["inputs"])] == [92_000_000]
+
+    def test_sapling_float_without_integer_raises(self):
+        """A valueBalance with no valueBalanceZat must not become 0 silently.
+
+        No node emits the float alone, but validation cannot catch it: the
+        float is blacklisted and a missing known key never raises. Without
+        the guard this transaction would lose its Sapling output.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10"
+        )
+        del target["valueBalanceZat"]
+
+        with pytest.raises(ValueError, match="transaction has valueBalance but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    @pytest.mark.parametrize("pool", ["orchard", "ironwood"])
+    def test_bundle_float_without_integer_raises(self, pool):
+        """Same guard for the per-pool balance inside each bundle."""
+        raw = copy.deepcopy(load_zcash_block(3_479_000))
+        target = next(
+            tx[pool]
+            for tx in raw["tx"]
+            if tx.get(pool) and tx[pool].get("valueBalanceZat")
+        )
+        assert target.get("valueBalance") is not None
+        del target["valueBalanceZat"]
+
+        with pytest.raises(ValueError, match=f"{pool} bundle has valueBalance but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    def test_missing_value_balance_pair_is_zero(self):
+        """With both fields absent there is no amount to lose, so no error."""
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        for tx in raw["tx"]:
+            tx.pop("valueBalance", None)
+            tx.pop("valueBalanceZat", None)
+
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+
+        assert all(tx["sapling_value_balance"] == 0 for tx in txs)
 
     def test_pre_nu5_transactions_carry_an_empty_orchard_bundle(self):
         """Mainnet block 600,000 — every transaction is v4 and long pre-NU5.

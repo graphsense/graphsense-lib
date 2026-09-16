@@ -318,6 +318,24 @@ _ORCHARD_FLAGS_BLACKLIST = frozenset(
 )
 
 
+def _value_balance_zat(obj, context):
+    """Return ``obj``'s integer ``valueBalanceZat``, or 0 if it has none.
+
+    Every node emits the float ``valueBalance`` and ``valueBalanceZat``
+    together, and only the integer is read. A float without its integer would
+    otherwise pass validation (the float is blacklisted, and a missing known
+    key never raises) and turn a real shielded amount into 0, so that case
+    raises instead.
+    """
+    balance = obj.get("valueBalanceZat")
+    if balance is None and obj.get("valueBalance") is not None:
+        raise ValueError(
+            f"{context} has valueBalance but no valueBalanceZat; "
+            "refusing to drop the shielded amount."
+        )
+    return balance or 0
+
+
 def _btc_to_satoshi(value):
     """Convert BTC float to satoshis (int).
 
@@ -623,7 +641,7 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     outputs.append(_make_shielded_output(len(outputs), vpub_old))
 
         # ZCash: Sapling value balance, already in zatoshi like the bundles below.
-        sapling_value_balance = raw_tx.get("valueBalanceZat") or 0
+        sapling_value_balance = _value_balance_zat(raw_tx, "transaction")
         if sapling_value_balance > 0:
             inputs.append(_make_shielded_input(len(inputs), sapling_value_balance))
         elif sapling_value_balance < 0:
@@ -663,7 +681,7 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     _ORCHARD_FLAGS_BLACKLIST,
                     f"{pool} flags",
                 )
-            balance = bundle.get("valueBalanceZat") or 0
+            balance = _value_balance_zat(bundle, f"{pool} bundle")
             pool_value_balance[pool] = balance
             if balance > 0:
                 inputs.append(_make_shielded_input(len(inputs), balance))
