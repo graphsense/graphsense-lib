@@ -17,6 +17,7 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     has_no_obfuscation_group,
     obfuscate_private_tags,
     obfuscate_tagpack_uri_by_rule,
+    suppress_tags_by_uri_rule,
 )
 from graphsenselib.web.app import setup_plugins
 from graphsenselib.web.routes.base import should_obfuscate_private_tags
@@ -166,6 +167,50 @@ class TestObfuscateTagpackUriByRule:
         tag = make_tag(uri="public/tp.yaml")
         obfuscate_tagpack_uri_by_rule(r"internal/.*", tag)
         assert tag.tagpack_uri == "public/tp.yaml"
+
+
+class TestSuppressTagsByUriRule:
+    def test_suppresses_whole_matching_tag(self):
+        # Leak packs: label/source/actor must all go, not just the uri — the
+        # label itself is the leaked answer.
+        tag = make_tag(label="Perp", source="src", actor="binance",
+                       uri="investigations/GA2602/tagpack.yaml")
+        suppress_tags_by_uri_rule(r".*investigations.*", tag)
+        assert tag.tagpack_uri == ""
+        assert tag.label == ""
+        assert tag.source == ""
+        assert tag.actor == ""
+
+    def test_preserves_non_matching_tag(self):
+        # Legit private attribution (dune/eth-labels) has non-matching uris and
+        # must pass through fully.
+        tag = make_tag(label="HTX", actor="huobi", uri="eth-labels/tp.yaml")
+        suppress_tags_by_uri_rule(r".*investigations.*", tag)
+        assert tag.label == "HTX"
+        assert tag.actor == "huobi"
+        assert tag.tagpack_uri == "eth-labels/tp.yaml"
+
+    def test_handles_list(self):
+        tags = [make_tag(label="Perp", uri="investigations/x.yaml"),
+                make_tag(label="HTX", uri="eth-labels/tp.yaml")]
+        suppress_tags_by_uri_rule(r".*investigations.*", tags)
+        assert tags[0].label == "" and tags[1].label == "HTX"
+
+    def test_lenient_drops_revealing_label_keeps_benign(self):
+        # Lenient mode: within a leak pack, an investigation-revealing label
+        # (matches label_rule) is fully blanked; a benign label survives with
+        # only the uri redacted.
+        perp = make_tag(label="perpetrator address", uri="investigations/GA2602/tp.yaml")
+        benign = make_tag(label="Binance deposit address", actor="binance",
+                          uri="investigations/GA2602/tp.yaml")
+        rule = r".*investigations.*"
+        label_rule = r"perpetrator|DOJ case"
+        suppress_tags_by_uri_rule(rule, perp, label_rule=label_rule)
+        suppress_tags_by_uri_rule(rule, benign, label_rule=label_rule)
+        assert perp.label == ""  # revealing → gone
+        assert benign.label == "Binance deposit address"  # benign → kept
+        assert benign.actor == "binance"
+        assert benign.tagpack_uri == ""  # but pack source hidden
 
 
 # --- before_request Tests ---
