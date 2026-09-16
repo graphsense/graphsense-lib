@@ -24,7 +24,15 @@ from graphsenselib.tagpack import (
     load_yaml_fast,
 )
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
-from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
+from graphsenselib.tagpack.constants import (
+    is_known_network,
+    suggest_networks_from_currency,
+)
+from graphsenselib.tagpack.utils import (
+    apply_to_dict_field,
+    normalize_tag_address,
+    try_parse_date,
+)
 from graphsenselib.utils.address import validate_address
 from graphsenselib.tagpack.cmd_utils import get_user_choice
 import logging
@@ -404,23 +412,8 @@ class TagPack(object):
             address = tag.all_fields.get("address")
             network = str(tag.all_fields.get("network", "")).upper()
 
-            # Apply network-specific address normalization (matches tagstore._perform_address_modifications)
-            if network == "BCH" and address.startswith("bitcoincash"):
-                from graphsenselib.utils.bch import (
-                    bch_address_to_legacy as to_legacy_address,
-                )
-
-                try:
-                    address = to_legacy_address(address)
-                except Exception as exc:
-                    logger.warning(
-                        "Could not normalize BCH cash address during validation; "
-                        "using original address as-is: %s (%s)",
-                        address,
-                        exc,
-                    )
-            elif network == "ETH":
-                address = address.lower()
+            # Same normalization as the tagstore insert path.
+            address = normalize_tag_address(address, network, "validation")
 
             identifier = address
         else:
@@ -698,6 +691,26 @@ class TagPack(object):
             logger.warning(
                 f"{src_prefix}{nr_no_actors}/{len(ut)} tags have no actor configured. "
                 "Please consider connecting the tag to an actor."
+            )
+
+        # A token currency without an explicit network ends up with the token
+        # as its network (see load-time defaulting), which says nothing about
+        # the chain the address lives on.
+        token_networks = defaultdict(int)
+        for tag in ut:
+            network = str(tag.all_fields.get("network", "")).upper()
+            if not is_known_network(network) and suggest_networks_from_currency(
+                network
+            ):
+                token_networks[network] += 1
+
+        for network, count in token_networks.items():
+            src_prefix = self._source_prefix()
+            chains = ", ".join(suggest_networks_from_currency(network))
+            logger.warning(
+                f"{src_prefix}{count} tag(s) have network {network}, which is a "
+                "token, not a chain (network defaults to the currency when "
+                f"unset). Set network explicitly, e.g. one of: {chains}."
             )
 
         address_counts = defaultdict(int)

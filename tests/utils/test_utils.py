@@ -14,6 +14,7 @@ from graphsenselib.utils import (
     to_int,
     truncateI32,
 )
+from graphsenselib.utils.accountmodel import normalize_hex_identifier
 from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.generic import camel_to_snake_case, dict_to_dataobject
 
@@ -35,6 +36,25 @@ def test_dict_to_dataobject():
 def test_btoh_works(capsys):
     assert bytes_to_hex(b"") is None
     assert bytes_to_hex(b"asdfasdf") == "6173646661736466"
+
+
+@pytest.mark.parametrize(
+    "identifier,expected",
+    [
+        ("0xAbC123", "0xabc123"),
+        ("0xabc123", "0xabc123"),
+        # 64 hex chars, e.g. SUI
+        ("0x" + "Ab" * 32, "0x" + "ab" * 32),
+        # uppercase prefix is not our stored form and not what clients send
+        ("0XABC", "0XABC"),
+        ("0x", "0x"),
+        ("0xZZ", "0xZZ"),
+        ("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"),
+        ("", ""),
+    ],
+)
+def test_normalize_hex_identifier(identifier, expected):
+    assert normalize_hex_identifier(identifier) == expected
 
 
 def test_strip_0x_works1():

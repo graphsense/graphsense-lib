@@ -1,10 +1,39 @@
+import logging
 import re
 from importlib.resources import files as imprtlb_files
 
 import os
 from urllib.parse import urlparse
 
+from graphsenselib.utils.accountmodel import normalize_hex_identifier
+
 from . import conf, db
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_tag_address(address, network, context="insert"):
+    """Normalize a tag address the way it is stored in the tagstore.
+
+    The single source of truth for both the insert path and the duplicate
+    check in TagPack validation; ``context`` only labels the log message.
+    """
+    if network.upper() == "BCH" and address.startswith("bitcoincash"):
+        from graphsenselib.utils.bch import bch_address_to_legacy
+
+        try:
+            return bch_address_to_legacy(address)
+        except Exception as exc:
+            logger.warning(
+                "Could not normalize BCH cash address during %s; "
+                "using original address as-is: %s (%s)",
+                context,
+                address,
+                exc,
+            )
+            return address
+
+    return normalize_hex_identifier(address)
 
 
 def strip_values(listlike, values):

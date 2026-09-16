@@ -83,6 +83,20 @@ Use one changelog file, but separate entries by track in each release window.
   `lint.select`.
 
 #### Fixed
+- **Tagstore: `0x` hex addresses are lowercased on every network, not just
+  ETH.** A token tag without an explicit `network` (e.g. `currency: USDT`)
+  gets the currency as its network, which skipped the ETH-only lowercasing, so
+  checksummed addresses were stored verbatim and never matched the exact,
+  lowercase lookup the API does. The insert path and the validation
+  duplicate-key check now share one normalizer (`tagpack.utils.
+  normalize_tag_address`), and the tagstore lookups (single and batch
+  subject-id queries, user-reported tags) normalize incoming `0x` ids the same
+  way; batch results stay keyed by the ids the caller passed. Validation now
+  warns when a tag's network is a token rather than a chain. Existing rows are
+  not rewritten; fix them with
+  `UPDATE tag SET identifier = lower(identifier) WHERE identifier ~ '^0x[0-9a-fA-F]+$' AND identifier <> lower(identifier);`
+  after removing rows whose lowercase twin already exists, or by reimporting
+  the affected tagpacks with `--force` (which drops their old rows).
 - **UTXO ingest no longer aborts on transaction versions >= 2^31 from
   Bitcoin Core >= 28.0.** Core 28.0 changed the tx version to `uint32`
   (bitcoin/bitcoin#29325), so its RPC reports the two negative-version txs in
