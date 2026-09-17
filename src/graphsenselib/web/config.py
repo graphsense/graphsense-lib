@@ -131,6 +131,31 @@ class ExternalBackendsConfig(BaseSettings):
     )
 
 
+class CurrencyRolesConfig(BaseSettings):
+    """Gate externally served currencies on the gateway's roles header (see
+    middleware/currency_roles.py). The role names are an IAM contract: a new
+    network gets its ``currency-<code>`` role in Keycloak, nothing changes
+    here unless ``gated_currencies`` is pinned explicitly."""
+
+    roles_header: str = Field(
+        default="X-User-Roles", description="Header name to parse"
+    )
+    currency_role_prefix: str = Field(
+        default="currency-", description="Prefix of the per-currency roles"
+    )
+    gated_currencies: Optional[List[str]] = Field(
+        default=None,
+        description="Currencies that require the role; unset = every network "
+        "served by an external backend (external_backends.networks). Others "
+        "are open",
+    )
+    enforce_currency_roles: bool = Field(
+        default=True,
+        description="Kill switch: false disables the gate without a redeploy "
+        "(local development has no gateway and therefore no header)",
+    )
+
+
 class GSRestConfig(BaseSettings):
     model_config = ConfigDict(env_prefix="GSREST_", case_sensitive=False, extra="allow")
 
@@ -304,6 +329,13 @@ class GSRestConfig(BaseSettings):
         default=None,
         description="Networks served by external GraphSense-API-compatible "
         "backends (middleware/external_backends.py)",
+    )
+
+    auth: Optional[CurrencyRolesConfig] = Field(
+        default=None,
+        description="Role-based gating of externally served currencies "
+        "(middleware/currency_roles.py); unset = defaults, i.e. enforced for "
+        "every external-backend network",
     )
 
     @model_validator(mode="after")

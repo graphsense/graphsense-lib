@@ -43,11 +43,17 @@ from graphsenselib.utils.slack import SlackLogHandler
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
-from graphsenselib.web.config import FileStoreConfig, GSRestConfig, LoggingConfig
+from graphsenselib.web.config import (
+    CurrencyRolesConfig,
+    FileStoreConfig,
+    GSRestConfig,
+    LoggingConfig,
+)
 from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
 from graphsenselib.web.middleware.body_size import RequestBodySizeLimitMiddleware
 from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
+from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
@@ -982,6 +988,38 @@ def _promote_common_security_to_global(schema: dict[str, Any]) -> dict[str, Any]
     return schema
 
 
+def _setup_currency_roles_middleware(app: FastAPI, config: GSRestConfig):
+    """Gate externally served currencies on the gateway's roles header
+    (middleware/currency_roles.py). Added AFTER the external-backends
+    middleware so it wraps it: a refused request never reaches a backend and
+    the listing filter sees the merged /stats, /capabilities, /search and
+    related_addresses answers. No-op when the gate is switched off or nothing
+    is gated (no external backends and no explicit list).
+    """
+    roles_config = config.auth or CurrencyRolesConfig()
+    if not roles_config.enforce_currency_roles:
+        logger.info("Currency role gating disabled (auth.enforce_currency_roles)")
+        return
+    if roles_config.gated_currencies is not None:
+        gated = set(roles_config.gated_currencies)
+    else:
+        eb_config = config.external_backends
+        gated = (
+            set(eb_config.networks)
+            if eb_config is not None and eb_config.enabled
+            else set()
+        )
+    if not gated:
+        return
+    app.add_middleware(CurrencyRoleMiddleware, config=roles_config, gated=gated)
+    logger.info(
+        "Currency role gating enforced for: %s (header %s, prefix %s)",
+        ", ".join(sorted(gated)),
+        roles_config.roles_header,
+        roles_config.currency_role_prefix,
+    )
+
+
 def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
@@ -1122,6 +1160,9 @@ def create_app(
     # ends up INSIDE it (Starlette: last added = outermost) — short-circuited
     # proxy responses must still receive CORS headers.
     _setup_external_backends_middleware(app, config)
+    # Role gate for the externally served currencies: outside the backends
+    # middleware (added after it), still inside CORS.
+    _setup_currency_roles_middleware(app, config)
 
     logger.info(f"ALLOWED_ORIGINS: {config.ALLOWED_ORIGINS}")
     _setup_cors_middleware(app, config)
