@@ -491,7 +491,9 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     Reingold-Tilford) places leaves on consecutive rows and centres
     every internal node on the midpoint of its first and last child —
     so a node's descendants stay clustered in its vertical
-    neighbourhood instead of spreading across the whole column. Sibling
+    neighbourhood instead of spreading across the whole column. Leaf
+    txs (whose other endpoint was discovered elsewhere) take no row;
+    their y is overwritten by the snap step anyway. Sibling
     order follows spec order, so listing the most relevant nodes first
     puts them near the top of their column.
 
@@ -614,6 +616,16 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # internal nodes sit at the midpoint of their first and last child.
     # Iterative post-order traversal (explicit stack) so a deep chain —
     # e.g. a long peel trace — can't blow Python's recursion limit.
+    #
+    # A non-start tx that discovered no address (a leaf tx: its other
+    # endpoint was already reached via a sibling tx or another path) is
+    # skipped entirely. Its y is overwritten by the snap-to-endpoints
+    # step below, so spending a row on it only pushes the parent's
+    # midpoint away from the real children. Typical case: N txs between
+    # one address pair. Without the skip, the first tx (which discovered
+    # the destination) shares its row and the other N-1 each take one,
+    # centring the source over N rows while the destination sits on the
+    # first, so the two addresses drift apart vertically.
     row: dict[tuple[str, str], float] = {}
     next_row = 0
     for s in starts:
@@ -621,15 +633,19 @@ def apply_hierarchical_layout(spec: dict) -> dict:
         while stack:
             node, processed = stack.pop()
             kids = children.get(node, [])
-            if not kids:
-                row[node] = float(next_row)
-                next_row += 1
-            elif processed:
-                row[node] = (row[kids[0]] + row[kids[-1]]) / 2.0
-            else:
+            if kids and not processed:
                 stack.append((node, True))
                 for k in reversed(kids):
                     stack.append((k, False))
+                continue
+            if not kids and node[0] == "tx" and parent.get(node) is not None:
+                continue
+            rowed = [row[k] for k in kids if k in row]
+            if rowed:
+                row[node] = (rowed[0] + rowed[-1]) / 2.0
+            else:
+                row[node] = float(next_row)
+                next_row += 1
         next_row += 1  # blank row between independent starting trees
 
     # Labels widen the global row step so the tallest label still clears
@@ -654,11 +670,14 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # starting trees, and disconnected nodes below, trail downward.
     shift_row: float = row[starts[0]] if starts else 0.0
 
+    # Skipped leaf txs have no row; they get a placeholder y that the
+    # snap step below replaces (every non-start tx in the tree entered
+    # it through an agg edge, so it always has endpoints to snap to).
     coords: dict[tuple[str, str], tuple[float, float]] = {}
     for key in level:
         coords[key] = (
             float(level[key]) * _HIER_X_STEP,
-            (row[key] - shift_row) * y_step,
+            (row.get(key, shift_row) - shift_row) * y_step,
         )
 
     disconnected = [n for n in nodes if n not in level]
