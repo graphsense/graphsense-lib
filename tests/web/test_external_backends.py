@@ -13,7 +13,10 @@ from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
 from graphsenselib.web.config import ExternalBackendsConfig, GSRestConfig
-from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
+from graphsenselib.web.middleware.external_backends import (
+    SERVED_BY_HEADER,
+    ExternalBackendMiddleware,
+)
 
 BACKEND_URL = "https://backend.test"
 
@@ -572,3 +575,42 @@ def test_address_declares_truncation_extension_fields():
         "total_received": "gt",
         "balance": "approx",
     }
+
+
+# --- client opt-out: X-External-Backends: off ---------------------------------
+
+OPT_OUT = {"X-External-Backends": "off"}
+
+
+def test_opt_out_header_serves_stats_locally_without_touching_the_backend():
+    client, seen = make_client()
+    doc = client.get("/stats", headers=OPT_OUT).json()
+    assert [c["name"] for c in doc["currencies"]] == ["btc"]
+    assert seen == []
+
+
+def test_opt_out_header_makes_a_configured_network_a_local_miss():
+    client, seen = make_client()
+    r = client.get("/bnb/addresses/0xabc", headers=OPT_OUT)
+    assert r.status_code == 404
+    assert SERVED_BY_HEADER not in r.headers
+    assert seen == []
+
+
+def test_opt_out_header_skips_the_twin_merge_and_search_merge():
+    client, seen = make_client()
+    doc = client.get("/eth/addresses/0xsame/related_addresses", headers=OPT_OUT).json()
+    assert doc == LOCAL_RELATED_ADDRESSES
+    doc = client.get("/search?q=0xhit", headers=OPT_OUT).json()
+    assert [c["currency"] for c in doc["currencies"]] == ["btc"]
+    assert seen == []
+
+
+def test_opt_out_header_value_is_case_insensitive_and_other_values_are_ignored():
+    client, seen = make_client()
+    doc = client.get("/stats", headers={"X-External-Backends": " OFF "}).json()
+    assert [c["name"] for c in doc["currencies"]] == ["btc"]
+    assert seen == []
+    doc = client.get("/stats", headers={"X-External-Backends": "on"}).json()
+    assert "bnb" in [c["name"] for c in doc["currencies"]]
+    assert seen != []

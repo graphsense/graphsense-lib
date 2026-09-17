@@ -52,6 +52,15 @@ Decision rules:
    ``merge_related_addresses: false`` switches this rule off, so the local
    answer stays exactly as without this feature.
 
+Client opt-out: a request carrying ``X-External-Backends: off`` is served
+exactly as without this feature — no proxying, no merging, not one call to a
+backend. The dashboard sends it on every request while its "lite networks"
+switch is off (user decision 2026-09-17), so a congested or unavailable
+backend never delays or breaks work on the core networks; the externally
+served networks then simply do not appear in ``/stats``, ``/search``,
+``/capabilities`` or a twin list, and a direct ``/{network}/…`` request on one
+of them gets the core's own answer (404, unknown network).
+
 Backend transport errors propagate — a broken backend must be loud (500 via
 the generic exception handler), not silently shaped as an empty answer.
 
@@ -72,6 +81,10 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from graphsenselib.web.config import ExternalBackendConfig, ExternalBackendsConfig
+
+# client opt-out header (module docstring): "off" bypasses the feature entirely
+OPT_OUT_HEADER = "x-external-backends"
+OPT_OUT_VALUE = "off"
 
 SERVED_BY_HEADER = "x-served-by"
 SERVED_BY_VALUE = "external-backend"
@@ -115,6 +128,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if not (self.config.enabled and self.config.networks):
+            return await call_next(request)
+        if request.headers.get(OPT_OUT_HEADER, "").strip().lower() == OPT_OUT_VALUE:
             return await call_next(request)
         short_circuit = await self._route(request)
         if short_circuit is not None:

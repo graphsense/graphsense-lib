@@ -37,6 +37,14 @@ Use one changelog file, but separate entries by track in each release window.
 ### Web API + Python client
 
 #### Added
+- **Clients can opt out of the external backends per request.** A request
+  carrying `X-External-Backends: off` is served exactly as without the
+  feature: no proxying, no merging, not one call to a backend. The dashboard
+  sends it on every request while its "lite networks" switch is off, so a
+  congested or unavailable backend never delays or breaks work on the core
+  networks; the externally served networks then do not appear in `/stats`,
+  `/search`, `/capabilities` or a twin list, and a direct request on one of
+  them gets the core's own 404. (`middleware/external_backends.py`)
 - **Externally served currencies are gated on the gateway's roles header.**
   `X-User-Roles` (set by APISIX for API-key and OIDC traffic, unspoofable)
   lists Keycloak realm roles without the `ikn-` prefix; a request on a gated
