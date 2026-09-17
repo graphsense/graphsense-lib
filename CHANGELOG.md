@@ -37,6 +37,22 @@ Use one changelog file, but separate entries by track in each release window.
 ### Web API + Python client
 
 #### Added
+- **Externally served currencies are gated on the gateway's roles header.**
+  `X-User-Roles` (set by APISIX for API-key and OIDC traffic, unspoofable)
+  lists Keycloak realm roles without the `ikn-` prefix; a request on a gated
+  currency needs `currency-<code>` (`currency-bnb` grants bnb), the only
+  check — the grouped `currencies-extended` role is expanded into leaves by
+  Keycloak, so no bundle list lives here. A miss answers 403
+  `{"detail": "currency not enabled for this account"}`; `/stats`,
+  `/capabilities`, `/search` and `related_addresses` drop the gated
+  currencies the caller lacks so the dashboard hides them instead of
+  discovering them via 403s. Gated by default: every network in
+  `external_backends.networks`; core currencies stay open. Config under
+  `auth`: `roles_header` (X-User-Roles), `currency_role_prefix`
+  (currency-), `gated_currencies` (unset = the external-backend networks),
+  `enforce_currency_roles` (true; false switches the gate off for
+  deployments without a gateway, e.g. local development).
+  (`middleware/currency_roles.py`)
 - **Cross-chain twins of a locally served address include the externally
   served networks.** `related_addresses` (pubkey) of a network answered from
   Cassandra now also asks each external backend about the same address and
