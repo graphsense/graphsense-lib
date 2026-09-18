@@ -67,7 +67,10 @@ the generic exception handler), not silently shaped as an empty answer.
 The middleware must sit INSIDE the CORS middleware (added before it in
 ``create_app``) so short-circuited proxy responses still receive CORS
 headers. Authentication is not a concern here: API keys are validated by the
-gateway in front, never by this app (see ``security.get_api_key``).
+gateway in front, never by this app (see ``security.get_api_key``). The
+gateway's identity header (``consumer_header``, default ``X-Username``) IS
+relayed to the backends as ``X-Consumer-Username``: they pace provider
+spend per user, and without it every user would share one bucket.
 """
 
 import json
@@ -318,6 +321,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         headers = {"Accept": request.headers.get("accept", "application/json")}
         if backend.api_key:
             headers["Authorization"] = backend.api_key
+        # the gateway strips and re-asserts the identity header, so its value
+        # is trustworthy here; the backend keys per-user pacing on it
+        consumer = (
+            request.headers.get(self.config.consumer_header)
+            if self.config.consumer_header
+            else None
+        )
+        if consumer:
+            headers["X-Consumer-Username"] = consumer
         body = await request.body() if request.method not in ("GET", "HEAD") else None
         if body:
             headers["Content-Type"] = request.headers.get(

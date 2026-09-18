@@ -349,6 +349,24 @@ def test_post_body_is_forwarded():
     assert seen[-1].headers["content-type"] == "application/json"
 
 
+def test_gateway_identity_is_relayed_as_consumer_username():
+    client, seen = make_client()
+    client.get("/bnb/blocks/1", headers={"X-Username": "alice@example.org"})
+    assert seen[-1].headers["x-consumer-username"] == "alice@example.org"
+    client.post(
+        "/bnb/bulk.json/get_address",
+        json={"address": ["0x1"]},
+        headers={"X-Username": "bob@example.org"},
+    )
+    assert seen[-1].headers["x-consumer-username"] == "bob@example.org"
+
+
+def test_no_identity_header_relays_nothing():
+    client, seen = make_client()
+    client.get("/bnb/blocks/1")
+    assert "x-consumer-username" not in seen[-1].headers
+
+
 def test_stats_merges_configured_networks_only():
     client, seen = make_client()
     body = client.get("/stats").json()

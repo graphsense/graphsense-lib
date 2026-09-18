@@ -129,6 +129,13 @@ class ExternalBackendsConfig(BaseSettings):
         "(pubkey) also lists the address's twins on the externally served "
         "networks, asked from the backends; false keeps the local answer alone",
     )
+    consumer_header: str = Field(
+        default="X-Username",
+        description="Incoming header carrying the gateway-asserted user "
+        "identity; its value is relayed to the backends as "
+        "X-Consumer-Username so they can pace and attribute per user. Empty "
+        "disables the relay.",
+    )
 
 
 class CurrencyRolesConfig(BaseSettings):
