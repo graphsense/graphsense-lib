@@ -595,9 +595,9 @@ def test_address_declares_truncation_extension_fields():
     }
 
 
-# --- client opt-out: X-External-Backends: off ---------------------------------
+# --- client opt-out: X-Ikn-Currency-Opt-Out: all-light ---------------------------------
 
-OPT_OUT = {"X-External-Backends": "off"}
+OPT_OUT = {"X-Ikn-Currency-Opt-Out": "all-light"}
 
 
 def test_opt_out_header_serves_stats_locally_without_touching_the_backend():
@@ -626,9 +626,9 @@ def test_opt_out_header_skips_the_twin_merge_and_search_merge():
 
 def test_opt_out_header_value_is_case_insensitive_and_other_values_are_ignored():
     client, seen = make_client()
-    doc = client.get("/stats", headers={"X-External-Backends": " OFF "}).json()
+    doc = client.get("/stats", headers={"X-Ikn-Currency-Opt-Out": "bnb, ALL "}).json()
     assert [c["name"] for c in doc["currencies"]] == ["btc"]
     assert seen == []
-    doc = client.get("/stats", headers={"X-External-Backends": "on"}).json()
+    doc = client.get("/stats", headers={"X-Ikn-Currency-Opt-Out": "bnb"}).json()
     assert "bnb" in [c["name"] for c in doc["currencies"]]
     assert seen != []

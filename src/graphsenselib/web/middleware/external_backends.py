@@ -52,7 +52,7 @@ Decision rules:
    ``merge_related_addresses: false`` switches this rule off, so the local
    answer stays exactly as without this feature.
 
-Client opt-out: a request carrying ``X-External-Backends: off`` is served
+Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
 backend. The dashboard sends it on every request while its "lite networks"
 switch is off (user decision 2026-09-17), so a congested or unavailable
@@ -85,9 +85,13 @@ from starlette.types import ASGIApp
 
 from graphsenselib.web.config import ExternalBackendConfig, ExternalBackendsConfig
 
-# client opt-out header (module docstring): "off" bypasses the feature entirely
-OPT_OUT_HEADER = "x-external-backends"
-OPT_OUT_VALUE = "off"
+# Client opt-out header, the same one the gateway understands: behind APISIX
+# the ikn-auth-validator consumes ``X-Ikn-Currency-Opt-Out`` and strips the
+# lite-currency roles instead, so this branch only ever runs without a gateway
+# in front (local development, direct access). ``all-light`` and ``all``
+# bypass the feature entirely; the gateway's per-code form is not handled here.
+OPT_OUT_HEADER = "x-ikn-currency-opt-out"
+OPT_OUT_VALUES = frozenset({"all-light", "all"})
 
 SERVED_BY_HEADER = "x-served-by"
 SERVED_BY_VALUE = "external-backend"
@@ -132,7 +136,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         if not (self.config.enabled and self.config.networks):
             return await call_next(request)
-        if request.headers.get(OPT_OUT_HEADER, "").strip().lower() == OPT_OUT_VALUE:
+        opt_out = {
+            part.strip().lower()
+            for part in request.headers.get(OPT_OUT_HEADER, "").split(",")
+        }
+        if opt_out & OPT_OUT_VALUES:
             return await call_next(request)
         short_circuit = await self._route(request)
         if short_circuit is not None:
