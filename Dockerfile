@@ -15,7 +15,7 @@
 # line, the weekly docker updater opens a normal bump PR (tag for uv, digest
 # for temurin) and CI proves it before it reaches prod.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.12.9 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.16 AS uv
 FROM eclipse-temurin:11-jre-jammy@sha256:372c96aef3c1c32281ecffbf9aa10de22ef9d8335c60033c2498a2ed4edcdb6f AS java11
 
 # =============================================================================
