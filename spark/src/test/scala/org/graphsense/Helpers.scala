@@ -30,6 +30,16 @@ trait SparkSessionTestWrapper {
       .appName("Transformation Test")
       .config("spark.sql.shuffle.partitions", "3")
       .config("spark.sql.session.timeZone", "UTC")
+      // Every suite shares this session in one forked JVM, and the status
+      // store keeps finished executions (with their full plan text) and tasks
+      // by default — 1000 executions, 100k tasks. That heap only grows over
+      // the run, and on CI runners it intermittently ended in an OOM inside
+      // AdaptiveSparkPlanExec.onUpdatePlan. Nothing in the tests reads it.
+      .config("spark.ui.enabled", "false")
+      .config("spark.sql.ui.retainedExecutions", "10")
+      .config("spark.ui.retainedJobs", "10")
+      .config("spark.ui.retainedStages", "10")
+      .config("spark.ui.retainedTasks", "100")
       .getOrCreate()
   }
 }
