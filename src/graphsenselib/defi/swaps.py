@@ -552,7 +552,16 @@ def handle_cow_settlement(
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
 ) -> List[ExternalSwap]:
-    """One swap per order of a CoW Protocol settlement.
+    """One swap per order of a CoW Protocol settlement (see cow_order_swaps)."""
+    return [swap for _, swap in cow_order_swaps(dlogs, logs_raw, traces)]
+
+
+def cow_order_swaps(
+    dlogs: List[Dict[str, Any]],
+    logs_raw: List[Dict[str, Any]],
+    traces: List[Trace],
+) -> List[Tuple[Dict[str, Any], ExternalSwap]]:
+    """(Trade event, swap) per order of a CoW Protocol settlement.
 
     A settlement batches the orders of several owners. Each order emits a
     Trade event of the settlement contract (owner, sellToken, buyToken,
@@ -647,17 +656,20 @@ def handle_cow_settlement(
             receiver = lower(payout.to_address)
             to_payment = create_payment_identifier(tx_hash, "trace", payout.trace_index)
         swaps.append(
-            ExternalSwap(
-                fromAddress=owner,
-                toAddress=receiver,
-                fromAsset=normalize_asset(sell_token),
-                toAsset=normalize_asset(buy_token),
-                fromAmount=sold["parameters"]["value"],
-                toAmount=buy_amount,
-                fromPayment=create_payment_identifier(
-                    tx_hash, "erc20", log_index[id(sold)]
+            (
+                trade,
+                ExternalSwap(
+                    fromAddress=owner,
+                    toAddress=receiver,
+                    fromAsset=normalize_asset(sell_token),
+                    toAsset=normalize_asset(buy_token),
+                    fromAmount=sold["parameters"]["value"],
+                    toAmount=buy_amount,
+                    fromPayment=create_payment_identifier(
+                        tx_hash, "erc20", log_index[id(sold)]
+                    ),
+                    toPayment=to_payment,
                 ),
-                toPayment=to_payment,
             )
         )
     return swaps

@@ -105,7 +105,8 @@ async def get_conversions_from_db(
     Extract all conversion information (swaps and bridges) from decoded logs.
 
     cow_protocol_swaps: report the orders of CoW Protocol settlements as
-    swaps (one per order); False ignores settlements.
+    swaps (one per order), and link the eth-flow ETH sell orders placed in tx
+    to their settlements; False ignores both.
 
     Returns:
         List of dictionaries with 'type' key ('swap' or 'bridge') and 'data' key containing
@@ -207,6 +208,17 @@ async def get_conversions_from_db(
             cow_protocol=cow_protocol_swaps,
         )
     conversions += swap_results
+
+    if cow_protocol_swaps:
+        from graphsenselib.defi.swapping.cow_ethflow import (
+            get_eth_flow_swaps,
+            is_eth_flow_placement,
+        )
+
+        if any(map(is_eth_flow_placement, decoded_log_data)):
+            conversions += await get_eth_flow_swaps(
+                network, db, tx, list(decoded_log_data), tx_traces
+            )
 
     return conversions
 

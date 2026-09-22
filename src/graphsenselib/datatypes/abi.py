@@ -501,6 +501,46 @@ log_signatures = {
             "tags": ["cow-protocol", "settlement"],
         },
     ],
+    # CoW eth-flow: an ETH sell order placed on chain; the order is settled
+    # later by a settlement tx (see defi/swapping/cow_ethflow.py)
+    "0xcf5f9de2984132265203b5c335b25727702ca77262ff622e136baa7362bf1da9": [
+        {
+            "name": "OrderPlacement",
+            "inputs": [
+                {"name": "sender", "type": "address", "indexed": True},
+                {
+                    "name": "order",
+                    "type": "tuple",
+                    "indexed": False,
+                    "components": [
+                        {"name": "sellToken", "type": "address"},
+                        {"name": "buyToken", "type": "address"},
+                        {"name": "receiver", "type": "address"},
+                        {"name": "sellAmount", "type": "uint256"},
+                        {"name": "buyAmount", "type": "uint256"},
+                        {"name": "validTo", "type": "uint32"},
+                        {"name": "appData", "type": "bytes32"},
+                        {"name": "feeAmount", "type": "uint256"},
+                        {"name": "kind", "type": "bytes32"},
+                        {"name": "partiallyFillable", "type": "bool"},
+                        {"name": "sellTokenBalance", "type": "bytes32"},
+                        {"name": "buyTokenBalance", "type": "bytes32"},
+                    ],
+                },
+                {
+                    "name": "signature",
+                    "type": "tuple",
+                    "indexed": False,
+                    "components": [
+                        {"name": "scheme", "type": "uint8"},
+                        {"name": "data", "type": "bytes"},
+                    ],
+                },
+                {"name": "data", "type": "bytes", "indexed": False},
+            ],
+            "tags": ["cow-protocol", "eth-flow", "order-placement"],
+        },
+    ],
     "0x5844b8bbe3fd2b0354e73f27bfde28d2e6d991f14139c382876ec4360391a47b": [
         {
             "name": "ExpressExecutedWithToken",
