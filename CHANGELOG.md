@@ -94,20 +94,42 @@ Use one changelog file, but separate entries by track in each release window.
   `cargo test` (22 passed) against the updated locks. `arrow` 60 is a major
   bump, but confined to the clustering extension: it adds `arrow-cmp`, moves
   the transitive `atoi` to 3.1.0, and needed no source change in the crate.
-- **Four Dependabot PRs are deliberately left for their own change.** `fastmcp`
+- **The github-actions group (#167) and the `clients/python` group (#166) were
+  applied as well.** #167 pins `docker/setup-buildx-action` to v4.4.0 and
+  `docker/build-push-action` to v7.4.0 across the three image workflows and
+  moves `actions/setup-java` v5 -> v6 in the three Scala ones; both SHAs were
+  re-verified against their tags before pinning. Its red `spark-test` job was
+  **not** the bump: the failure is a JVM `OutOfMemoryError: Java heap space` in
+  `org.graphsense.utxo.TransformationTest`, `spark_tests.yml` is green on every
+  recent `develop` run, the sbt heap options are identical on both branches,
+  and re-running that exact job on that exact commit passed. setup-java v6
+  changes distribution handling, caching and the Zulu/Azul API — nothing that
+  touches heap.
+- **#166 was not a lockfile-only bump, and hid a real bug.** `click` 8.4.2 ->
+  8.5.0 moved `get_text_stream` behind a module-level `__getattr__` that raises
+  a `DeprecationWarning` (removal in Click 9.0), and the CLI resolved its
+  stderr through it on every write. The deprecation hook resolves that stream
+  inside a `try/except Exception`, so under the client's `-W error` suite the
+  warning *became* the exception the hook swallows and every "endpoint is
+  deprecated" message vanished —
+  `test_deprecation_header_triggers_stderr_warning` is what caught it, and no
+  amount of bumping `ty` fixed the matching `call-non-callable` diagnostic,
+  because the annotation really is `-> object`. `graphsense/cli/context.py` now
+  resolves `sys.stderr` directly, which is what the helper returned anyway and
+  what the hook already does for `stream=None`. The client is **not**
+  re-released in this window: on click 8.x the bug is invisible under Python's
+  default warning filters, so the fix rides the next `webapi-v*` release.
+  Verified with the client's own gate — `lint`, `type-check`, `test-ci` (122
+  passed, `-W error`) and `test-compat`.
+- **Two Dependabot PRs are deliberately left for their own change.** `fastmcp`
   3.4.2 -> 4.0.3 (#169) is a major carrying `mcp` 1.28.1 -> 2.2.0, and it fails
   `tests/mcp/test_server_integration.py::test_tool_surface_shape`, where
   `Tool.inputSchema` is now the deprecated spelling of `input_schema`; it also
   crosses the DNS-rebinding host check that made `GS_MCP_ALLOWED_HOSTS`
   necessary in the first place, so it wants a deployment check rather than a
-  same-day bugfix slot. `ruff` 0.16.7 stays held for the reason above. The
-  `clients/python` group (#166) moves the generated client only, which releases
-  on its own `webapi-v*` track and has no entry in this window. The
-  github-actions group (#167) never reaches the artifact, and its red
-  `spark-test` job is a JVM `OutOfMemoryError: Java heap space` in
-  `org.graphsense.utxo.TransformationTest`, unrelated to the action pins it
-  proposes. Left inside #168 for the next group PR: `filelock` 3.32.6, `grpcio`
-  and `grpcio-tools` 1.84.0, `psycopg2-binary` 2.9.13, `build` 1.6.1 and `ty`
+  same-day bugfix slot. `ruff` 0.16.7 stays held for the reason above, and that
+  keeps the rest of #168 with it: `filelock` 3.32.6, `grpcio` and
+  `grpcio-tools` 1.84.0, `psycopg2-binary` 2.9.13, `build` 1.6.1 and `ty`
   0.0.81.
 
 #### Fixed
