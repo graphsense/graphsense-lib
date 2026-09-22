@@ -51,7 +51,7 @@ Example (run in the graphsense-lib image, like scripts/pubkey/*):
     docker run --rm --network host \
       -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \
       -v /path/to/graphsense.yaml:/graphsense.yaml:ro \
-      -v $PWD/scripts/backfill_trx_is_contract.py:/backfill_trx_is_contract.py:ro \
+      -v $PWD/scripts/one-off-fixes/backfill_trx_is_contract.py:/backfill_trx_is_contract.py:ro \
       -v gs-backfill-ivy:/root/.ivy2 \
       ghcr.io/graphsense/graphsense-lib:<tag> \
       python /backfill_trx_is_contract.py --env <env> --spark-profile <profile>
