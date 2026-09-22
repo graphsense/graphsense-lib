@@ -147,6 +147,14 @@ Use one changelog file, but separate entries by track in each release window.
   0.0.81.
 
 #### Fixed
+- **User-reported tags now get cluster mappings.** `add_user_reported_tag`
+  wrote only the `tag` row, but the cluster-mapping job maps only addresses
+  listed in `address` (which the tagpack importer fills alongside every tag),
+  so addresses reported via the dashboard never got a cluster mapping and
+  never contributed to cluster-level tags. The address row is now written in
+  the same transaction. Existing tags are backfilled with
+  `INSERT INTO address (network, address) SELECT DISTINCT network, identifier FROM tag t WHERE tag_subject = 'address' AND NOT EXISTS (SELECT 1 FROM address a WHERE a.network = t.network AND a.address = t.identifier) ON CONFLICT DO NOTHING;`
+  followed by a cluster-mapping run and `tagstore refresh-views`.
 - **Tagstore: `0x` hex addresses are lowercased on every network, not just
   ETH.** A token tag without an explicit `network` (e.g. `currency: USDT`)
   gets the currency as its network, which skipped the ETH-only lowercasing, so

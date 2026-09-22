@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Set
 from pydantic import BaseModel, computed_field
 from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
@@ -28,6 +29,7 @@ from .database import get_db_engine_async
 from .errors import TagAlreadyExistsException
 from .models import (
     Actor,
+    Address,
     AddressClusterMapping,
     AddressClusterMappingV2,
     BestClusterTagView,
@@ -1498,10 +1500,13 @@ class TagstoreDbAsync:
 
         context = {"user": tag.user, "uuid": unique_id}
 
+        identifier = _normalize_subject_id(tag.address)
+        network = tag.network.upper()
+
         tagN = Tag(
             label=tag.label,
-            identifier=_normalize_subject_id(tag.address),
-            network=tag.network.upper(),
+            identifier=identifier,
+            network=network,
             tag_subject_id="address",
             tag_type_id="actor",
             confidence_id="unknown",
@@ -1515,6 +1520,16 @@ class TagstoreDbAsync:
             tagN.actor_id = actor.id
             tagN.concepts = [TagConcept(concept_id=c) for c in actor.concepts]
 
+        # The cluster-mapping job only maps what is in `address` (the tagpack
+        # importer writes it alongside every tag); without this row a
+        # user-reported address never gets a cluster mapping. Executed before
+        # adding the tag so the autoflush cannot raise a duplicate-tag error
+        # outside the handler below; both commit (or roll back) together.
+        await session.exec(
+            pg_insert(Address)
+            .values(network=network, address=identifier)
+            .on_conflict_do_nothing()
+        )
         session.add(tagN)
 
         try:

@@ -767,3 +767,38 @@ async def test_user_reported_tag_lowercases_hex_address(async_tagstore_db):
     assert [t.identifier for t in tags] == [checksummed.lower()]
     actors = await db.get_actors_by_subjectids([checksummed], ["public"])
     assert [a.id for a in actors[checksummed]] == ["binance"]
+
+
+@pytest.mark.asyncio
+async def test_user_reported_tag_registers_address_for_cluster_mapping(
+    db_setup, async_tagstore_db
+):
+    """The cluster-mapping job maps only rows of `address`; a user-reported
+    tag must add its address there, once, however often it is reported."""
+    db = async_tagstore_db
+    address = "1UserReportedClusterMapTest"
+    for label in ("first report", "second report"):
+        await db.add_user_reported_tag(
+            UserReportedAddressTag(
+                address=address,
+                network="btc",
+                actor="binance",
+                label=label,
+                description="user reported",
+            )
+        )
+    # Duplicate tag still maps to the domain error, address insert included.
+    with pytest.raises(TagAlreadyExistsException):
+        await db.add_user_reported_tag(
+            UserReportedAddressTag(
+                address=address,
+                network="btc",
+                actor="binance",
+                label="second report",
+                description="user reported",
+            )
+        )
+
+    ts = TagStore(db_setup["db_connection_string"], "public")
+    unmapped = list(ts.get_addresses(update_existing=False))
+    assert unmapped.count((address, "BTC")) == 1
