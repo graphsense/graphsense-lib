@@ -99,9 +99,13 @@ async def get_conversions_from_db(
     tx: Dict[str, Any],
     visualize: bool = False,
     included_bridges: Tuple[str, ...] = (),
+    cow_protocol_swaps: bool = True,
 ) -> List[Union[ExternalSwap, Bridge]]:
     """
     Extract all conversion information (swaps and bridges) from decoded logs.
+
+    cow_protocol_swaps: report the orders of CoW Protocol settlements as
+    swaps (one per order); False ignores settlements.
 
     Returns:
         List of dictionaries with 'type' key ('swap' or 'bridge') and 'data' key containing
@@ -192,10 +196,15 @@ async def get_conversions_from_db(
             tx_traces,
             visualize,
             transaction_input=tx["input"],
+            cow_protocol=cow_protocol_swaps,
         )
     else:
         swap_results = get_swap_from_decoded_logs(
-            decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
+            decoded_log_data,
+            tx_logs_raw_filtered,
+            tx_traces,
+            visualize,
+            cow_protocol=cow_protocol_swaps,
         )
     conversions += swap_results
 

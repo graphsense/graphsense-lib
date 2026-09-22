@@ -15,6 +15,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Added
+- **CoW Protocol settlements are reported as swaps in tx conversions, one per order.** A settlement batches the orders of several owners, which the generic swap detection (one trader, one asset out and one in) cannot express, so settlements used to yield no conversion at all. Each `Trade` event of the GPv2 settlement contract (`0x9008d19f…ab41`) now becomes a `dex_swap` from its owner's transfer into the contract (`sellAmount`, or `sellAmount + feeAmount` for orders whose fee is pulled on top) to the payout of `buyAmount` (an internal call for native ETH). The payout's recipient becomes `to_address`, so for orders with a separate receiver it differs from `from_address` for the first time. Transfers of the solver's AMM interactions are not attributed to any order, and an order whose transfers are not found is skipped. ETH sells placed through CoW's eth-flow contract name that contract as the owner, since the user is only visible in the earlier order placement tx. **Toggle:** `cow_protocol_swaps: false` in the REST config (or `GSREST_COW_PROTOCOL_SWAPS=false`) restores the old behaviour; the library functions take `cow_protocol` / `cow_protocol_swaps`.
 - **`graphsense-cli monitoring check-consistency` validates the last N blocks (default 100) across raw, the Delta Lake and transformed.** It is read-only and exits 92 on any failure, so it can gate a cron job. Without `-c` it checks every configured currency, and `--topic` posts failures to a notification topic. It checks:
   - bookkeeping: a pending WAL record (an interrupted batch waiting for replay), a torn `delta_updater_history`, and transformed not ahead of raw or the lake;
   - interrupted ingests: rows above the highest block in raw (account traces and logs; UTXO `block_transactions` and tx rows past the last tx_id) and in each lake side table. These are reported as WARN, since a running ingest looks the same;
@@ -23,6 +24,11 @@ Use one changelog file, but separate entries by track in each release window.
   - UTXO only: a sampled exact recount of `no_incoming_txs` / `no_outgoing_txs` against `address_transactions` (rows with value > 0 / < 0, Spark's definition). This is the check that catches a batch applied twice.
 
   Account address counters are not recounted: they are compressed per batch and exclude zero-value and reward traces, so they have no row count to match. By default the check holds the transformed keyspace lock (`--no-lock` skips it). It does not lock raw, since ingest only appends above the heights read at the start. `DeltaTableConnector` gains `aggregate_per_block`, `select_columns` and `highest_block` (which reads only the top partition), and `DeltaWal` gains a read-only `pending_header`.
+
+### Web API + Python client
+
+#### Changed
+- `/{currency}/txs/{tx_hash}/conversions` returns one `dex_swap` per order for CoW Protocol settlements (see Library), where it returned none. Off with the new config option `cow_protocol_swaps: false`.
 
 ## [2.16.4] - 2026-09-22
 

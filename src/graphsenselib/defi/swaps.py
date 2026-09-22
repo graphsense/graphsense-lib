@@ -21,6 +21,7 @@ from graphsenselib.defi.swapping.models import (
     ExternalSwap,
     SwapStrategy,
     get_swap_strategy_from_decoded_logs,
+    is_cow_trade,
 )
 from graphsenselib.defi.models import Trace
 from graphsenselib.utils.function_call_parser import (
@@ -546,17 +547,136 @@ def handle_general_swap(
     )
 
 
+def handle_cow_settlement(
+    dlogs: List[Dict[str, Any]],
+    logs_raw: List[Dict[str, Any]],
+    traces: List[Trace],
+) -> List[ExternalSwap]:
+    """One swap per order of a CoW Protocol settlement.
+
+    A settlement batches the orders of several owners. Each order emits a
+    Trade event of the settlement contract (owner, sellToken, buyToken,
+    sellAmount, buyAmount, feeAmount). The owner's sell tokens are pulled
+    into the settlement contract and the buy tokens are sent from it to the
+    order's receiver, which may differ from the owner; native ETH is paid
+    out by an internal call. Everything else in the tx (the solver's
+    interactions with AMMs) is not part of any order.
+
+    An order is matched to the first unused transfer of its sell token from
+    the owner into the contract for sellAmount (or sellAmount + feeAmount,
+    for orders whose fee is pulled on top), and to the first unused payout
+    of buyAmount of its buy token. Orders without both are skipped.
+
+    Orders of ETH sells placed through CoW's eth-flow contract have that
+    contract as owner; the user who sent the ETH is only visible in the
+    earlier order placement tx.
+    """
+    tx_hash = logs_raw[0]["tx_hash"].hex()
+    log_index = {id(dlog): raw["log_index"] for dlog, raw in zip(dlogs, logs_raw)}
+
+    transfers = [
+        dlog
+        for dlog in dlogs
+        if dlog["name"] == "Transfer"
+        and {"from", "to", "value"} <= set(dlog.get("parameters", {}))
+    ]
+    payouts = [trace for trace in traces if trace.is_call and trace.value]
+    used_transfers, used_traces = set(), set()
+
+    def lower(address) -> str:
+        return str(address).lower()
+
+    def take_transfer(token, sender, receiver, amounts):
+        for dlog in transfers:
+            params = dlog["parameters"]
+            if (
+                id(dlog) not in used_transfers
+                and lower(dlog["address"]) == token
+                and lower(params["from"]) == sender
+                and (receiver is None or lower(params["to"]) == receiver)
+                and params["value"] in amounts
+            ):
+                used_transfers.add(id(dlog))
+                return dlog
+        return None
+
+    def take_payout(sender, amount):
+        for trace in payouts:
+            if (
+                trace.trace_index not in used_traces
+                and lower(trace.from_address) == sender
+                and trace.value == amount
+            ):
+                used_traces.add(trace.trace_index)
+                return trace
+        return None
+
+    swaps = []
+    for trade in dlogs:
+        if not is_cow_trade(trade):
+            continue
+        settlement = lower(trade["address"])
+        params = trade["parameters"]
+        owner = lower(params["owner"])
+        sell_token, buy_token = lower(params["sellToken"]), lower(params["buyToken"])
+        sell_amount, buy_amount = params["sellAmount"], params["buyAmount"]
+        fee_amount = params.get("feeAmount") or 0
+
+        sold = take_transfer(
+            sell_token, owner, settlement, {sell_amount, sell_amount + fee_amount}
+        )
+        if buy_token == ETH_PLACEHOLDER_ADDRESS:
+            payout = take_payout(settlement, buy_amount)
+            bought = None
+        else:
+            payout = None
+            bought = take_transfer(buy_token, settlement, None, {buy_amount})
+        if sold is None or (bought is None and payout is None):
+            logger.warning(
+                f"CoW order of {owner} ({sell_token} -> {buy_token}) not matched "
+                f"to its transfers, {tx_hash}"
+            )
+            continue
+
+        if bought is not None:
+            receiver = lower(bought["parameters"]["to"])
+            to_payment = create_payment_identifier(
+                tx_hash, "erc20", log_index[id(bought)]
+            )
+        else:
+            receiver = lower(payout.to_address)
+            to_payment = create_payment_identifier(tx_hash, "trace", payout.trace_index)
+        swaps.append(
+            ExternalSwap(
+                fromAddress=owner,
+                toAddress=receiver,
+                fromAsset=normalize_asset(sell_token),
+                toAsset=normalize_asset(buy_token),
+                fromAmount=sold["parameters"]["value"],
+                toAmount=buy_amount,
+                fromPayment=create_payment_identifier(
+                    tx_hash, "erc20", log_index[id(sold)]
+                ),
+                toPayment=to_payment,
+            )
+        )
+    return swaps
+
+
 def get_swap_from_decoded_logs(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
     visualize: bool = False,
     transaction_input: Optional[bytes] = None,
+    cow_protocol: bool = True,
 ) -> List[ExternalSwap]:
     """
     Main function to extract swap information from decoded logs.
 
     This function has been refactored to use modular components for better maintainability.
+    cow_protocol: detect the orders of CoW Protocol settlements (see
+    handle_cow_settlement); False ignores settlements.
     """
     # Sort dlogs and raw logs
     dlogs_sorted, logs_raw_sorted = zip(
@@ -567,7 +687,9 @@ def get_swap_from_decoded_logs(
 
     # Determine strategy
     parsed_input = parse_function_call(transaction_input, function_signatures)
-    strategy = get_swap_strategy_from_decoded_logs(dlogs, parsed_input)
+    strategy = get_swap_strategy_from_decoded_logs(
+        dlogs, parsed_input, cow_protocol=cow_protocol
+    )
 
     # if strategy == SwapStrategy.IGNORE:
     swaps = []
@@ -576,6 +698,8 @@ def get_swap_from_decoded_logs(
     #    swaps += [handle_order_record_swap(dlogs, logs_raw)]
     if strategy == SwapStrategy.SWAP:
         swaps += [handle_general_swap(dlogs, logs_raw, traces, visualize)]
+    elif strategy == SwapStrategy.COW_SETTLEMENT:
+        swaps += handle_cow_settlement(dlogs, logs_raw, traces)
 
     swaps = [swap for swap in swaps if swap is not None]
     return swaps
