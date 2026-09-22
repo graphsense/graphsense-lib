@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
+## [2.16.4] - 2026-09-22
 
 ### Library
 
@@ -82,6 +82,33 @@ Use one changelog file, but separate entries by track in each release window.
   which is what failed every job on the group's PR -- the tests passed there.
   Adopting it is a separate change, either the autofixes or an explicit
   `lint.select`.
+- **A second round of bumps taken from the open Dependabot PRs: `anyio` 4.13.0
+  -> 4.14.2 (#170), the `uv` build image 0.12.9 -> 0.12.16 (#165) and `arrow`
+  59.3.0 -> 60.0.0 in `rust/gs_clustering` (#164).** All seven open Dependabot
+  PRs are based on `master`, which is 32 commits behind this release window, so
+  none could be merged as it stands: `develop` already carries most of the
+  `uv-minor-patch` group, and the "from" versions in those PR tables are
+  master's, not this branch's. The three above were applied by hand instead, as
+  in 2.16.3, and verified here rather than on the PR — the full Python suite
+  (2397 passed, 1 skipped, containers and `slow` included), `ruff`, `ty` and
+  `cargo test` (22 passed) against the updated locks. `arrow` 60 is a major
+  bump, but confined to the clustering extension: it adds `arrow-cmp`, moves
+  the transitive `atoi` to 3.1.0, and needed no source change in the crate.
+- **Four Dependabot PRs are deliberately left for their own change.** `fastmcp`
+  3.4.2 -> 4.0.3 (#169) is a major carrying `mcp` 1.28.1 -> 2.2.0, and it fails
+  `tests/mcp/test_server_integration.py::test_tool_surface_shape`, where
+  `Tool.inputSchema` is now the deprecated spelling of `input_schema`; it also
+  crosses the DNS-rebinding host check that made `GS_MCP_ALLOWED_HOSTS`
+  necessary in the first place, so it wants a deployment check rather than a
+  same-day bugfix slot. `ruff` 0.16.7 stays held for the reason above. The
+  `clients/python` group (#166) moves the generated client only, which releases
+  on its own `webapi-v*` track and has no entry in this window. The
+  github-actions group (#167) never reaches the artifact, and its red
+  `spark-test` job is a JVM `OutOfMemoryError: Java heap space` in
+  `org.graphsense.utxo.TransformationTest`, unrelated to the action pins it
+  proposes. Left inside #168 for the next group PR: `filelock` 3.32.6, `grpcio`
+  and `grpcio-tools` 1.84.0, `psycopg2-binary` 2.9.13, `build` 1.6.1 and `ty`
+  0.0.81.
 
 #### Fixed
 - **Tagstore: `0x` hex addresses are lowercased on every network, not just
