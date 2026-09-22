@@ -229,6 +229,11 @@ class DeltaWal:
         """True only if a committed (headered) record exists."""
         return self._read_header() is not None
 
+    def pending_header(self) -> Optional[dict]:
+        """Header of the committed record (run_id, code_version, block_lo,
+        block_hi, ...), or None. A single read; safe for read-only callers."""
+        return self._read_header()
+
     def stage(self, record: WalRecord) -> None:
         """Durably persist the record before any of it is applied.
 

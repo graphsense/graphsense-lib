@@ -1,5 +1,5 @@
 import os
-from typing import Iterable, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 try:
     import deltalake
@@ -193,14 +193,26 @@ class DeltaTableConnector:
 
         return data
 
-    def get_items(self, table: str, block_ids: List[int]) -> pd.DataFrame:
-        table_path = self.get_table_path(table)
-        list_str = self.iterable_to_str(block_ids)
-        table_files = self.get_table_files(table_path)
-        auth_query = self.get_auth_query()
-        partitionsize = PARTITIONSIZES[self.network]
-        partitions = [block_id // partitionsize for block_id in block_ids]
-        partition_str = self.iterable_to_str(partitions)
+    def _query_blocks(
+        self,
+        table: str,
+        block_ids: Optional[List[int]],
+        select: str,
+        tail: str = "",
+        partitions: Optional[Iterable[int]] = None,
+    ) -> pd.DataFrame:
+        """Run ``SELECT {select}`` over ``table``, restricted to ``block_ids``
+        (and their partitions) or, when ``block_ids`` is None, to ``partitions``.
+        """
+        table_files = self.get_table_files(self.get_table_path(table))
+        if block_ids is not None:
+            partitionsize = PARTITIONSIZES[self.network]
+            partitions = {block_id // partitionsize for block_id in block_ids}
+        if partitions is None:
+            raise ValueError("Pass block_ids or partitions.")
+        where = f"WHERE partition IN {self.iterable_to_str(sorted(partitions))}"
+        if block_ids is not None:
+            where += f" AND block_id IN {self.iterable_to_str(block_ids)}"
 
         # todo use scan_delta as soon as we get it to run
         # get all active delta_table_files
@@ -208,26 +220,66 @@ class DeltaTableConnector:
         # (i think) aws URL
         # from     delta_scan('{table_path}') WHERE block_id = '{block_id}';
         content_query = f"""
-        SELECT *
+        SELECT {select}
         from     parquet_scan({table_files},HIVE_PARTITIONING=1, union_by_name = true)
-        WHERE partition IN {partition_str}
-        AND block_id IN {list_str};
+        {where}
+        {tail};
         """
-
-        query = auth_query + content_query
 
         with duckdb.connect() as con:
             if self.s3_credentials:
                 self.ensure_httpfs_loaded(con)
-            con.execute(query)
-            data = con.fetchdf()
+            con.execute(self.get_auth_query() + content_query)
+            return con.fetchdf()
 
-            if not data.empty:
-                return self.interpreter.interpret(data, table)
-            else:
-                raise EmptyDeltaTableException(
-                    f"block_ids {block_ids} not found in table {table}"
-                )
+    def get_items(self, table: str, block_ids: List[int]) -> pd.DataFrame:
+        data = self._query_blocks(table, block_ids, "*")
+
+        if not data.empty:
+            return self.interpreter.interpret(data, table)
+        else:
+            raise EmptyDeltaTableException(
+                f"block_ids {block_ids} not found in table {table}"
+            )
+
+    def select_columns(
+        self, table: str, block_ids: List[int], columns: List[str]
+    ) -> pd.DataFrame:
+        """``columns`` of the rows of ``block_ids``, as stored (no binary
+        interpretation); empty if there are none."""
+        return self._query_blocks(table, block_ids, ", ".join(columns))
+
+    def aggregate_per_block(
+        self, table: str, block_ids: List[int], aggregates: Dict[str, str]
+    ) -> Dict[int, Dict[str, int]]:
+        """Per-block aggregates without materializing the rows.
+
+        ``aggregates`` maps an output name to a duckdb aggregate expression,
+        e.g. ``{"n": "count(*)"}``. Blocks without rows are absent from the
+        result.
+        """
+        select = ", ".join(
+            ["block_id"] + [f"{expr} AS {name}" for name, expr in aggregates.items()]
+        )
+        df = self._query_blocks(table, block_ids, select, tail="GROUP BY block_id")
+        return {
+            int(row["block_id"]): {
+                name: int(row[name]) if not pd.isna(row[name]) else 0
+                for name in aggregates
+            }
+            for row in df.to_dict(orient="records")
+        }
+
+    def highest_block(self, table: str = "block") -> Optional[int]:
+        """max(block_id) of ``table``, scanning only its highest partition."""
+        partitions = self.list_partitions(table)
+        if not partitions:
+            return None
+        df = self._query_blocks(
+            table, None, "max(block_id) AS max_block", partitions=[partitions[-1]]
+        )
+        value = df["max_block"].iloc[0] if not df.empty else None
+        return None if value is None or pd.isna(value) else int(value)
 
     def __getitem__(self, kv: Tuple[str, List[int]]):
         table, key = kv

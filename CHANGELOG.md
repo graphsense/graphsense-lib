@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Added
+- **`graphsense-cli monitoring check-consistency` validates the last N blocks (default 100) across raw, the Delta Lake and transformed.** It is read-only and exits 92 on any failure, so it can gate a cron job. Without `-c` it checks every configured currency, and `--topic` posts failures to a notification topic. It checks:
+  - bookkeeping: a pending WAL record (an interrupted batch waiting for replay), a torn `delta_updater_history`, and transformed not ahead of raw or the lake;
+  - interrupted ingests: rows above the highest block in raw (account traces and logs; UTXO `block_transactions` and tx rows past the last tx_id) and in each lake side table. These are reported as WARN, since a running ingest looks the same;
+  - raw vs lake per block: tx counts. For UTXO that is `block.no_transactions`, raw `block_transactions`, raw `transaction` rows over the block's tx_id span, and lake block and transaction rows. For account chains the lake txs of the newest `--raw-tx-blocks` (default 10) blocks are read back from raw by hash, because raw keeps no per-block tx index. Account chains also compare trace counts (lake traces plus ETH withdrawals, which raw stores as traces), log counts, and trx fee rows;
+  - transformed: exchange rates for every block, and account `block_transactions` against the lake txs the updater keeps;
+  - UTXO only: a sampled exact recount of `no_incoming_txs` / `no_outgoing_txs` against `address_transactions` (rows with value > 0 / < 0, Spark's definition). This is the check that catches a batch applied twice.
+
+  Account address counters are not recounted: they are compressed per batch and exclude zero-value and reward traces, so they have no row count to match. By default the check holds the transformed keyspace lock (`--no-lock` skips it). It does not lock raw, since ingest only appends above the heights read at the start. `DeltaTableConnector` gains `aggregate_per_block`, `select_columns` and `highest_block` (which reads only the top partition), and `DeltaWal` gains a read-only `pending_header`.
+
 ## [2.16.4] - 2026-09-22
 
 ### Library
