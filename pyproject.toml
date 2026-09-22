@@ -164,7 +164,7 @@ clustering = [
 
 mcp = [
     "graphsense-lib[web]",
-    "fastmcp>=3.2,<4.0",
+    "fastmcp>=3.2,<5.0",
     "pyyaml>=6.0",
 ]
 
