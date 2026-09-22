@@ -164,7 +164,7 @@ clustering = [
 
 mcp = [
     "graphsense-lib[web]",
-    "fastmcp>=3.2,<4.0",
+    "fastmcp>=4.0,<5.0",
     "pyyaml>=6.0",
 ]
 
@@ -303,6 +303,8 @@ exclude = [
 ]
 
 [tool.ruff.lint]
+# Pin ruff's pre-0.16 default rule set; 0.16 widened the defaults (UP, I, BLE, ...).
+select = ["E4", "E7", "E9", "F"]
 extend-select = ["T201"]
 
 [tool.ty.src]
