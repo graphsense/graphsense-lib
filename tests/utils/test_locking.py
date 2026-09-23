@@ -13,7 +13,19 @@ from graphsenselib.utils.locking import (
     LockConfigurationError,
     create_lock,
 )
+from graphsenselib.utils import locking
 from graphsenselib.utils.locking import delta_ingest_lock_name
+
+
+@pytest.fixture(autouse=True)
+def lock_dir(tmp_path, monkeypatch):
+    """Keep file locks in a per-test directory.
+
+    A shared /tmp breaks as soon as a lock file from another user is left
+    behind: /tmp is sticky, so it can be neither opened nor removed.
+    """
+    monkeypatch.setattr(locking, "LOCK_DIR", str(tmp_path))
+    return tmp_path
 
 
 def _mock_config(use_redis_locks=False, redis_url=None):
@@ -36,18 +48,16 @@ class TestCreateLockDisabled:
 
 
 class TestFileLockBackend:
-    def test_acquires_and_releases_file_lock(self):
-        lock_name = "test_filelock"
-        lockfile = f"/tmp/{lock_name}.lock"
-        with create_lock(lock_name):
-            assert os.path.exists(lockfile)
-        # # After release, file still exists (filelock behavior) but is not held
-        # assert os.path.exists(lockfile)
-        # os.unlink(lockfile)
+    def test_acquires_and_releases_file_lock(self, lock_dir):
+        lockfile = lock_dir / "test_filelock.lock"
+        with create_lock("test_filelock"):
+            assert lockfile.exists()
+        # Released: a fresh non-blocking acquisition succeeds.
+        with create_lock("test_filelock", blocking_timeout=0):
+            pass
 
     def test_contention_raises_lock_acquisition_error(self):
         lock_name = "test_contention"
-        lockfile = f"/tmp/{lock_name}.lock"
         acquired = threading.Event()
         release = threading.Event()
 
@@ -66,16 +76,16 @@ class TestFileLockBackend:
 
         release.set()
         t.join(timeout=5)
-        if os.path.exists(lockfile):
-            os.unlink(lockfile)
 
-    def test_lock_name_determines_file_path(self):
-        lock_name = "unique_name_12345"
-        lockfile = f"/tmp/{lock_name}.lock"
-        with create_lock(lock_name):
-            assert os.path.exists(lockfile)
-        if os.path.exists(lockfile):
-            os.unlink(lockfile)
+    def test_lock_name_determines_file_path(self, lock_dir):
+        with create_lock("unique_name_12345"):
+            assert (lock_dir / "unique_name_12345.lock").exists()
+
+    def test_default_lock_dir_is_fixed(self, monkeypatch):
+        # Contending processes must agree on the path regardless of TMPDIR.
+        monkeypatch.undo()
+        monkeypatch.setenv("TMPDIR", "/somewhere/else")
+        assert locking._lockfile_path("x") == "/tmp/x.lock"
 
 
 class TestRedisLockBackend:
@@ -129,16 +139,12 @@ class TestRedisLockBackend:
                 with create_lock("test"):
                     pass
 
-    def test_config_use_redis_false_uses_file_lock(self):
+    def test_config_use_redis_false_uses_file_lock(self, lock_dir):
         """When use_redis_locks=False, file lock is used regardless of redis_url."""
         cfg = _mock_config(use_redis_locks=False, redis_url="redis://localhost")
-        lock_name = "test_config_false"
-        lockfile = f"/tmp/{lock_name}.lock"
         with patch("graphsenselib.config.get_config", return_value=cfg):
-            with create_lock(lock_name):
-                assert os.path.exists(lockfile)
-        if os.path.exists(lockfile):
-            os.unlink(lockfile)
+            with create_lock("test_config_false"):
+                assert (lock_dir / "test_config_false.lock").exists()
 
 
 KEY = "graphsense:lock:test_stale"

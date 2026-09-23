@@ -6,10 +6,10 @@ pytest.importorskip("yaml_include", reason="PyYAML is required for tagpack tests
 
 from graphsenselib.tagpack import cli as tagpack_cli
 from graphsenselib.tagpack.tagstore import (
-    _perform_address_modifications,
     _get_tag,
     TagStore,
 )
+from graphsenselib.tagpack.utils import normalize_tag_address
 from graphsenselib.tagpack.cli import insert_tagpack, DEFAULT_SCHEMA
 
 from sqlmodel import text
@@ -30,7 +30,7 @@ def test_bch_conversion():
 
     # as per https://bch.btc.com/tools/address-converter
     expected = "3NFvYKuZrxTDJxgqqJSfouNHjT1dAG1Fta"
-    result = _perform_address_modifications(cashaddr, "BCH")
+    result = normalize_tag_address(cashaddr, "BCH")
 
     assert expected == result
 
@@ -38,7 +38,7 @@ def test_bch_conversion():
 def test_bch_conversion_warns_and_keeps_original_for_malformed_cashaddr(caplog):
     cashaddr = "bitcoincash:bitcoincash:qq123"
 
-    result = _perform_address_modifications(cashaddr, "BCH")
+    result = normalize_tag_address(cashaddr, "BCH")
 
     assert cashaddr == result
     log_messages = [
@@ -53,7 +53,7 @@ def test_eth_conversion():
     checksumaddr = "0xC61b9BB3A7a0767E3179713f3A5c7a9aeDCE193C"
 
     expected = "0xc61b9bb3a7a0767e3179713f3a5c7a9aedce193c"
-    result = _perform_address_modifications(checksumaddr, "ETH")
+    result = normalize_tag_address(checksumaddr, "ETH")
 
     assert expected == result
 
@@ -682,3 +682,123 @@ def test_remove_duplicates_keeps_tags_with_different_context(db_setup):
     assert before_count == 2
     assert after_count == 2
     assert contexts == ["source-a", "source-b"]
+
+
+@pytest.mark.asyncio
+async def test_token_tag_with_checksummed_address_is_found_case_insensitively(
+    db_setup, async_tagstore_db, tmp_path
+):
+    """Regression: a token tag without an explicit network gets network=USDT,
+    which used to skip the ETH-only lowercasing, so the checksummed address was
+    stored verbatim and never matched the lowercase addresses the API sends."""
+    checksummed = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    lower = checksummed.lower()
+    tagpack_file = tmp_path / "token_checksummed.yaml"
+    tagpack_file.write_text(
+        f"""
+title: Token Checksummed Address TagPack
+creator: Test Creator
+source: http://example.com/token_checksummed
+confidence: web_crawl
+currency: USDT
+lastmod: 2021-04-21
+tags:
+- address: {checksummed}
+  label: checksummedtoken
+"""
+    )
+
+    m_succ, _ = insert_tagpack(
+        db_setup["db_connection_string"],
+        DEFAULT_SCHEMA,
+        str(tagpack_file.resolve()),
+        batch_size=100,
+        public=True,
+        force=False,
+        add_new=False,
+        no_strict_check=True,
+        no_git=True,
+        n_workers=1,
+        no_validation=True,
+        tag_type_default="actor",
+        config=None,
+        update_flag=False,
+    )
+    assert m_succ == 1
+
+    db = async_tagstore_db
+    groups = ["public"]
+    for subject in (lower, checksummed, f" {checksummed} "):
+        tags = await db.get_tags_by_subjectid(
+            subject, offset=None, page_size=None, groups=groups
+        )
+        assert [(t.identifier, t.network) for t in tags] == [(lower, "USDT")]
+        assert await db.get_labels_by_subjectid(subject, groups) == ["checksummedtoken"]
+        assert await db.get_tag_count_by_subjectid(subject, None, groups) == 1
+
+    by_subject = await db.get_tags_by_subjectids([lower, checksummed], groups)
+    assert {k: [t.label for t in v] for k, v in by_subject.items()} == {
+        lower: ["checksummedtoken"],
+        checksummed: ["checksummedtoken"],
+    }
+    assert await db.get_labels_by_subjectids([checksummed], groups) == {
+        checksummed: ["checksummedtoken"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_user_reported_tag_lowercases_hex_address(async_tagstore_db):
+    db = async_tagstore_db
+    checksummed = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+
+    await db.add_user_reported_tag(
+        UserReportedAddressTag(
+            address=checksummed,
+            network="eth",
+            actor="binance",
+            label="usdtcontract",
+            description="user reported checksummed",
+        )
+    )
+
+    tags = await db.get_tags_by_subjectid(
+        checksummed.lower(), offset=None, page_size=None, groups=["public"]
+    )
+    assert [t.identifier for t in tags] == [checksummed.lower()]
+    actors = await db.get_actors_by_subjectids([checksummed], ["public"])
+    assert [a.id for a in actors[checksummed]] == ["binance"]
+
+
+@pytest.mark.asyncio
+async def test_user_reported_tag_registers_address_for_cluster_mapping(
+    db_setup, async_tagstore_db
+):
+    """The cluster-mapping job maps only rows of `address`; a user-reported
+    tag must add its address there, once, however often it is reported."""
+    db = async_tagstore_db
+    address = "1UserReportedClusterMapTest"
+    for label in ("first report", "second report"):
+        await db.add_user_reported_tag(
+            UserReportedAddressTag(
+                address=address,
+                network="btc",
+                actor="binance",
+                label=label,
+                description="user reported",
+            )
+        )
+    # Duplicate tag still maps to the domain error, address insert included.
+    with pytest.raises(TagAlreadyExistsException):
+        await db.add_user_reported_tag(
+            UserReportedAddressTag(
+                address=address,
+                network="btc",
+                actor="binance",
+                label="second report",
+                description="user reported",
+            )
+        )
+
+    ts = TagStore(db_setup["db_connection_string"], "public")
+    unmapped = list(ts.get_addresses(update_existing=False))
+    assert unmapped.count((address, "BTC")) == 1

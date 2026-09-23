@@ -15,6 +15,39 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Added
+- **CoW Protocol settlements are reported as swaps in tx conversions, one per order.** A settlement batches the orders of several owners, which the generic swap detection (one trader, one asset out and one in) cannot express, so settlements used to yield no conversion at all. Each `Trade` event of the GPv2 settlement contract (`0x9008d19f…ab41`) now becomes a `dex_swap` from its owner's transfer into the contract (`sellAmount`, or `sellAmount + feeAmount` for orders whose fee is pulled on top) to the payout of `buyAmount` (an internal call for native ETH). The payout's recipient becomes `to_address`, so for orders with a separate receiver it differs from `from_address` for the first time. Transfers of the solver's AMM interactions are not attributed to any order, and an order whose transfers are not found is skipped. ETH sells go through CoW's eth-flow contract in two txs: the user places the order with the ETH, a settlement fills it later with the eth-flow contract as owner. The conversions of the **placement tx** now link the two: the order uid is computed from its `OrderPlacement` event (EIP-712 digest of the order ‖ eth-flow contract ‖ validTo), the settlement is found among the eth-flow contract's txs after the placement (one topic-filtered `Trade` log query per block in which it moved funds, at most `SEARCH_MAX_BLOCKS` = 7200 blocks and 5 pages of 100 txs), and the result is a `dex_swap` from the user's ETH payment in the placement tx to the order's payout in the settlement tx. Orders that were not settled (e.g. expired and refunded) yield none. Both eth-flow deployments are recognised. **Toggle:** `cow_protocol_swaps: false` in the REST config (or `GSREST_COW_PROTOCOL_SWAPS=false`) restores the old behaviour (no settlement swaps, no eth-flow links); the library functions take `cow_protocol` / `cow_protocol_swaps`.
+- **`graphsense-cli monitoring check-consistency` validates the last N blocks (default 100) across raw, the Delta Lake and transformed.** It is read-only and exits 92 on any failure, so it can gate a cron job. Without `-c` it checks every configured currency, and `--topic` posts failures to a notification topic. It checks:
+  - bookkeeping: a pending WAL record (an interrupted batch waiting for replay), a torn `delta_updater_history`, and transformed not ahead of raw or the lake;
+  - interrupted ingests: rows above the highest block in raw (account traces and logs; UTXO `block_transactions` and tx rows past the last tx_id) and in each lake side table. These are reported as WARN, since a running ingest looks the same;
+  - raw vs lake per block: tx counts. For UTXO that is `block.no_transactions`, raw `block_transactions`, raw `transaction` rows over the block's tx_id span, and lake block and transaction rows. For account chains the lake txs of the newest `--raw-tx-blocks` (default 10) blocks are read back from raw by hash, because raw keeps no per-block tx index. Account chains also compare trace counts (lake traces plus ETH withdrawals, which raw stores as traces), log counts, and trx fee rows;
+  - transformed: exchange rates for every block, and account `block_transactions` against the lake txs the updater keeps;
+  - UTXO only: a sampled exact recount of `no_incoming_txs` / `no_outgoing_txs` against `address_transactions` (rows with value > 0 / < 0, Spark's definition). This is the check that catches a batch applied twice.
+
+  Account address counters are not recounted: they are compressed per batch and exclude zero-value and reward traces, so they have no row count to match. By default the check holds the transformed keyspace lock (`--no-lock` skips it). It does not lock raw, since ingest only appends above the heights read at the start. `DeltaTableConnector` gains `aggregate_per_block`, `select_columns` and `highest_block` (which reads only the top partition), and `DeltaWal` gains a read-only `pending_header`.
+
+- **`graphsense-cli convert gs-files layout` re-lays out an existing Pathfinder `.gs` file, and the layout now follows the money.** The `.gs` format stores no direction (an agg edge's `a`/`b` are just its two ends), so the old hop-distance layout drew every neighbour of a starting point on its right, inflows included. The command asks the REST API (`--api-url` / `GRAPHSENSE_HOST`, `--api-key` / `GRAPHSENSE_API_KEY`) for each tx's inputs and outputs, then places senders left of their tx and receivers right of it. Labels, colours, starting points, edges and annotations of removed nodes are kept. Without an API URL, with `--no-lookup`, or for a tx the lookup can't find, it falls back to the old layout. `--report` prints layout metrics before and after. The pieces are public:
+  - `apply_hierarchical_layout` switches to the new `directed_layout` when any tx in the spec carries `senders` / `receivers`, and is unchanged otherwise. The new layout sets columns by flow, reduces crossings with barycenter sweeps, and places rows by minimising total squared edge height under ordering and spacing constraints (per-column isotonic regression). Links with a known direction are followed before links without one, so an edge with no tx (e.g. a victim linked straight to an exchange) can't pull a node to the wrong side. A part of the graph no starting point reaches, typically the far side of a cross-chain swap, is laid out from where money enters it and placed right of the rest; the old layout stacked it in a single column. The new layout ignores edge `tx_ids` that aren't listed in `txs`: the Pathfinder UI saves both the base hash and the `_I`/`_T` sub-payment of an account-model edge but draws only the listed one, and the old layout gave the undrawn one a row.
+  - `layout_metrics` scores a laid-out spec: overlaps, cramped rows, crossings, backward flow links and mean edge height.
+  - `spec_from_pathfinder` turns a decoded file back into a spec, the inverse of `builder_from_spec`, which gains an `annotations` key (and `GsBuilder.add_annotation`) for labels of ids that aren't nodes.
+  - Swaps and bridges are laid out the way Pathfinder arranges them on load. The UI draws a conversion as an edge from the input leg's first output address to the output leg's first input address (e.g. THORChain contract → BTC vault), and then moves both legs' addresses into a U-turn, overwriting saved positions: the output leg sits in the input leg's column below it, and the other chain runs right to left. The layout produces that arrangement, with each leg's addresses exactly on the leg's row, so the UI's move changes nothing. Only the output leg runs right to left (and the metrics count it that way); flow beyond its addresses goes right again, on the rows below. A same-chain DEX swap becomes a loop right of the swapper, which is on both legs and stays between their rows. Conversion leg ids match with or without the `0x` prefix the endpoint sometimes adds.
+  - `graphsenselib.pathfinder.annotate_tx_flows` fills in `senders` / `receivers` from any backend with a `tx_sides` method, and `annotate_conversions` adds the spec's `conversions` from `tx_conversions` / `tx_io_order`. `RestBackend` implements all three (conversions via `/{network}/txs/{hash}/conversions`), plus an optional shared `tx_cache`.
+
+  Checked with live lookups on all 22 T6.3 case files against their saved (partly hand-arranged) layouts: backward flow links drop to 0 everywhere (5 files had 1–4), crossings fall from 86 to 13 in total and never increase except in one file (1 → 4, all involving edges without a tx), and there are no overlaps. The tests check rules rather than exact coordinates, on hand-written cases, generated graphs and those three files (`tests/testfiles/gs_files/layout/`, with tx directions stored in `tx_sides.json`).
+
+#### Changed
+- **MCP `build_pathfinder_file` looks up tx direction and conversions before a hierarchical layout**, so agent-built files draw inflows on the left and bridges as Pathfinder arranges them. The verifier reuses the fetched tx bodies. A failed lookup is logged and the old layout is used; it adds no warning, because the warnings tell the agent to fix its spec.
+
+### Web API + Python client
+
+#### Changed
+- `/{currency}/txs/{tx_hash}/conversions` returns one `dex_swap` per order for CoW Protocol settlements (see Library), where it returned none. Off with the new config option `cow_protocol_swaps: false`.
+
+## [2.16.4] - 2026-09-22
+
+### Library
+
+#### Added
+- **ZEC transactions now carry a per-pool breakdown of their shielded value.** `sapling_value_balance`, `orchard_value_balance` and `ironwood_value_balance` are emitted on every transaction record in zatoshi, positive when value left that pool. They exist because the pool is *not* recoverable downstream: every shielded input and output is address-less and identical once emitted, and the bundle that produced it is not stored anywhere, so attributing a shielded row to Sapling, Orchard or Ironwood after the fact would need another node read. Two of three pools would be no use either — the remaining rows would stay ambiguous between Sprout and Sapling — so Sapling is reported alongside the two new ones. Nothing consumes them yet: the parquet sink builds its table with `pa.Table.from_pylist(mapping=data, schema=...)` and logs uncovered fields at debug, and the Cassandra sink prepares its insert from the table's own columns, so both ignore the three keys until the parquet schema declares them. The Cassandra raw schema does not change and the graph output is unaffected.
 - **`spark/build.sbt` is now the single source of truth for the Scala job's
   dependencies.** `DEFAULT_SCALA_JOB_PACKAGES` mirrors its compile-scope
   entries so the `slim` artifact can pass them to `spark-submit --packages`,
@@ -119,8 +152,79 @@ Use one changelog file, but separate entries by track in each release window.
   which is what failed every job on the group's PR -- the tests passed there.
   Adopting it is a separate change, either the autofixes or an explicit
   `lint.select`.
+- **A second round of bumps taken from the open Dependabot PRs: `anyio` 4.13.0
+  -> 4.14.2 (#170), the `uv` build image 0.12.9 -> 0.12.16 (#165) and `arrow`
+  59.3.0 -> 60.0.0 in `rust/gs_clustering` (#164).** All seven open Dependabot
+  PRs are based on `master`, which is 32 commits behind this release window, so
+  none could be merged as it stands: `develop` already carries most of the
+  `uv-minor-patch` group, and the "from" versions in those PR tables are
+  master's, not this branch's. The three above were applied by hand instead, as
+  in 2.16.3, and verified here rather than on the PR — the full Python suite
+  (2397 passed, 1 skipped, containers and `slow` included), `ruff`, `ty` and
+  `cargo test` (22 passed) against the updated locks. `arrow` 60 is a major
+  bump, but confined to the clustering extension: it adds `arrow-cmp`, moves
+  the transitive `atoi` to 3.1.0, and needed no source change in the crate.
+- **The github-actions group (#167) and the `clients/python` group (#166) were
+  applied as well.** #167 pins `docker/setup-buildx-action` to v4.4.0 and
+  `docker/build-push-action` to v7.4.0 across the three image workflows and
+  moves `actions/setup-java` v5 -> v6 in the three Scala ones; both SHAs were
+  re-verified against their tags before pinning. Its red `spark-test` job was
+  **not** the bump: the failure is a JVM `OutOfMemoryError: Java heap space` in
+  `org.graphsense.utxo.TransformationTest`, `spark_tests.yml` is green on every
+  recent `develop` run, the sbt heap options are identical on both branches,
+  and re-running that exact job on that exact commit passed. setup-java v6
+  changes distribution handling, caching and the Zulu/Azul API — nothing that
+  touches heap.
+- **#166 was not a lockfile-only bump, and hid a real bug.** `click` 8.4.2 ->
+  8.5.0 moved `get_text_stream` behind a module-level `__getattr__` that raises
+  a `DeprecationWarning` (removal in Click 9.0), and the CLI resolved its
+  stderr through it on every write. The deprecation hook resolves that stream
+  inside a `try/except Exception`, so under the client's `-W error` suite the
+  warning *became* the exception the hook swallows and every "endpoint is
+  deprecated" message vanished —
+  `test_deprecation_header_triggers_stderr_warning` is what caught it, and no
+  amount of bumping `ty` fixed the matching `call-non-callable` diagnostic,
+  because the annotation really is `-> object`. `graphsense/cli/context.py` now
+  resolves `sys.stderr` directly, which is what the helper returned anyway and
+  what the hook already does for `stream=None`. The client is **not**
+  re-released in this window: on click 8.x the bug is invisible under Python's
+  default warning filters, so the fix rides the next `webapi-v*` release.
+  Verified with the client's own gate — `lint`, `type-check`, `test-ci` (122
+  passed, `-W error`) and `test-compat`.
+- **Two Dependabot PRs are deliberately left for their own change.** `fastmcp`
+  3.4.2 -> 4.0.3 (#169) is a major carrying `mcp` 1.28.1 -> 2.2.0, and it fails
+  `tests/mcp/test_server_integration.py::test_tool_surface_shape`, where
+  `Tool.inputSchema` is now the deprecated spelling of `input_schema`; it also
+  crosses the DNS-rebinding host check that made `GS_MCP_ALLOWED_HOSTS`
+  necessary in the first place, so it wants a deployment check rather than a
+  same-day bugfix slot. `ruff` 0.16.7 stays held for the reason above, and that
+  keeps the rest of #168 with it: `filelock` 3.32.6, `grpcio` and
+  `grpcio-tools` 1.84.0, `psycopg2-binary` 2.9.13, `build` 1.6.1 and `ty`
+  0.0.81.
 
 #### Fixed
+- **User-reported tags now get cluster mappings.** `add_user_reported_tag`
+  wrote only the `tag` row, but the cluster-mapping job maps only addresses
+  listed in `address` (which the tagpack importer fills alongside every tag),
+  so addresses reported via the dashboard never got a cluster mapping and
+  never contributed to cluster-level tags. The address row is now written in
+  the same transaction. Existing tags are backfilled with
+  `INSERT INTO address (network, address) SELECT DISTINCT network, identifier FROM tag t WHERE tag_subject = 'address' AND NOT EXISTS (SELECT 1 FROM address a WHERE a.network = t.network AND a.address = t.identifier) ON CONFLICT DO NOTHING;`
+  followed by a cluster-mapping run and `tagstore refresh-views`.
+- **Tagstore: `0x` hex addresses are lowercased on every network, not just
+  ETH.** A token tag without an explicit `network` (e.g. `currency: USDT`)
+  gets the currency as its network, which skipped the ETH-only lowercasing, so
+  checksummed addresses were stored verbatim and never matched the exact,
+  lowercase lookup the API does. The insert path and the validation
+  duplicate-key check now share one normalizer (`tagpack.utils.
+  normalize_tag_address`), and the tagstore lookups (single and batch
+  subject-id queries, user-reported tags) normalize incoming `0x` ids the same
+  way; batch results stay keyed by the ids the caller passed. Validation now
+  warns when a tag's network is a token rather than a chain. Existing rows are
+  not rewritten; fix them with
+  `UPDATE tag SET identifier = lower(identifier) WHERE identifier ~ '^0x[0-9a-fA-F]+$' AND identifier <> lower(identifier);`
+  after removing rows whose lowercase twin already exists, or by reimporting
+  the affected tagpacks with `--force` (which drops their old rows).
 - **UTXO ingest no longer aborts on transaction versions >= 2^31 from
   Bitcoin Core >= 28.0.** Core 28.0 changed the tx version to `uint32`
   (bitcoin/bitcoin#29325), so its RPC reports the two negative-version txs in
@@ -153,6 +257,12 @@ Use one changelog file, but separate entries by track in each release window.
   cheap) and skip with one reason plus a summary banner when it does not answer.
   On CI (`CI` set) an unreachable daemon stays a hard error -- skipping there
   would turn a broken runner green while covering nothing. (#161)
+- **ZEC Orchard and Ironwood value balances are accounted as shielded inputs and outputs.** The parser recorded shielded flows from Sprout `vjoinsplit` and Sapling `valueBalance` only; the NU5 `orchard` and NU6.3 `ironwood` bundles were blacklisted wholesale, so every transparent↔Orchard and transparent↔Ironwood flow was invisible and `input_value`, `output_value` and `fee` were computed from the transparent, Sprout and Sapling sides alone. One code path now loops over both pools and reads the bundle's **`valueBalanceZat`**, which is already in zatoshi and must not go through `_btc_to_satoshi`; the float `valueBalance` beside it is deliberately not read, because Zebra renders it with a helper named `lossy_zec` that its own documentation says must not be used for consensus-critical calculations (`zebra-rpc/src/methods/types/zec.rs`). The sign convention is Sapling's — positive means value left the pool, so it becomes a shielded input; negative becomes a shielded output of the negated amount. A fully-shielded NU5 transaction makes the size of the old error concrete: `bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517` at height 1,687,194 moves +89,000 zat out of Sapling and −88,000 zat into Orchard for a 1,000 zat fee, where the parser previously saw the Sapling leg alone and reported a fee 89× too large. **This needs a re-ingest from NU5 activation (height 1,687,104) and a re-transform to take effect**, since shielded I/O is synthesized at ingest time and blocks already in the lake keep their old values.
+- Two consequences of that re-transform are worth stating plainly, because neither is a simple value refresh. **Existing relation values shift**: `totalInput` is the denominator in `inValue / totalInput * outValue`, and it is summed over *all* inputs with no address filter (`Transformator.plainAddressRelations`, mirrored by `get_total_input_sum` in the delta updater), so adding a shielded leg lowers `estimatedValue` on the transparent relations of a mixed transaction rather than only adding rows. And **cluster membership can change**: `is_coinjoin` reads `input_count`, `output_count` and the output-value histogram, and shielded I/O is appended before those counts are taken, so a new leg can flip the `coinjoin` flag — which `computeAddressCluster` consumes. Treat the re-transform as a full cluster rebuild with possible attribution shifts. This is the behaviour Sprout and Sapling legs have always had, not a new hazard, but it now applies to far more transactions.
+- A third point is about reading the result rather than producing it: **a positive shielded balance is usually not an unshielding.** Most often it is the fee of a fully-shielded transaction, paid out of the pool. Mapping it to a shielded input is right for value conservation and matches what Sapling has always done, but a `shielded` input must not be read as a z→t transfer.
+- No `spark/` change accompanies this. `computeRegularInputs` and `computeRegularOutputs` filter `size(col("input.address")) === 1`, so address-less shielded I/O never reaches the address graph, while `plainAddressRelations` explodes every input without that filter and therefore picks the new legs up on its own; the delta updater mirrors both. There is no Scala path that reads shielded I/O by type — the Scala tree contains no occurrence of `shielded` at all.
+- **Sapling now reads its integer `valueBalanceZat` too**, so all three pools take the same field rather than leaving one on a float. On values this is a no-op — `round(float * 1e8)` is exact at ZEC supply scale, and 665,685 mainnet transactions sampled across the whole Sapling range agreed on every one — so it cannot disturb existing Sapling data. It was worth confirming rather than assuming, because both Sapling keys are `Option` fields in Zebra's RPC types and a missing one would drop the shielded row silently rather than raise: the two are written from a single construction site in Zebra (both `Some`, or both `None`) and from adjacent `pushKV` calls inside one guard in zcashd, and a scan of 112,958 blocks — eleven contiguous 10,000-block windows from Sapling activation to the tip, plus a stride sweep of the whole range — found the pair present together on 665,685 of 665,685 transactions, across transaction versions 4, 5 and 6, with no case of the float appearing alone. `valueBalance` and `valueBalanceZat` therefore exchange places between `_TX_KNOWN_KEYS` and `_TX_BLACKLIST`.
+- **The bundle is validated strictly rather than read permissively**, so the next pool Zcash adds fails loudly instead of being silently dropped. `validate_rpc_fields` does not recurse, so the bundle, each of its actions and its `flags` object are enumerated at their own level. `orchard` and `ironwood` move into the transaction's known keys as *optional* entries — validation works by set difference, so an absent known key never raises — deliberately **without** a transaction-version gate: Zebra emits `orchard` on every transaction including pre-NU5 v1–v4 ones, where it is present but empty — confirmed on 328,134 NU6.3 transactions and on pre-NU5 transactions of all four versions down to block 1 — while zcashd gates it on `nVersion >= ZIP225` (v5) and has no Ironwood field at all, so any version gate would be wrong against one node or the other. The transaction-level `valueBalanceZat` is read as Sapling's own balance and is separate from the identically-named key inside each bundle, which is read per pool; the two share a name but not a meaning, and the transaction-level float `valueBalance` beside them is blacklisted. `flags` also lists `enableCrossAddress` in advance: ZIP-229 defines that third bit and Zebra already carries it in its consensus types (`zebra-chain/src/orchard/shielded_data.rs`), but its RPC `OrchardFlags` struct exposes only `enableSpends` and `enableOutputs`, so no node emits it today — listing it now keeps the alert for a genuinely unexpected fourth flag while removing a break that would otherwise hit every Ironwood transaction at once the moment Zebra adds the serde field.
 
 #### Removed
 - **`graphsenselib.utils.pipeline`** and its tests. Nothing has imported the

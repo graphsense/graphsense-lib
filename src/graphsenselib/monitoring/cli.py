@@ -1,4 +1,5 @@
 import csv
+import sys
 from io import StringIO
 
 import click
@@ -6,6 +7,7 @@ import click
 from ..cli.common import out_file, require_currency, require_environment
 from ..config import get_config
 from ..utils.console import console
+from .consistency import EXIT_INCONSISTENT, Status, run_consistency_check
 from .monitoring import (
     DbSummaryRecord,
     check_raw_ingest_staleness,
@@ -60,6 +62,124 @@ def monitor_raw_ingest(env, currency, threshold, topic, dry_run):
 
     for net in networks:
         check_raw_ingest_staleness(env, net, threshold, topic=topic, dry_run=dry_run)
+
+
+@monitoring.command(
+    "check-consistency",
+    short_help="Checks raw, delta lake and transformed for inconsistencies "
+    "in the most recent blocks.",
+)
+@require_environment()
+@require_currency(required=False)
+@click.option(
+    "--blocks",
+    "n_blocks",
+    type=int,
+    default=100,
+    show_default=True,
+    help="Size of the window of most recent blocks to check.",
+)
+@click.option(
+    "--sample-addresses",
+    type=int,
+    default=50,
+    show_default=True,
+    help="UTXO only: addresses from the newest synced blocks whose tx counters "
+    "are recounted from address_transactions. 0 disables the recount.",
+)
+@click.option(
+    "--max-address-rows",
+    type=int,
+    default=5000,
+    show_default=True,
+    help="Skip sampled addresses with more txs than this (their rows are read).",
+)
+@click.option(
+    "--raw-tx-blocks",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Account only: newest blocks whose lake txs are read back from raw by "
+    "hash (raw has no per-block tx index; one read per tx). 0 disables.",
+)
+@click.option(
+    "--lock/--no-lock",
+    "use_lock",
+    default=True,
+    show_default=True,
+    help="Hold the transformed keyspace lock during the check, so a delta "
+    "update cannot change the counters under it.",
+)
+@click.option(
+    "--topic",
+    "-t",
+    type=str,
+    default=None,
+    help="If set, send failed checks to this notification topic.",
+)
+def check_consistency(
+    env,
+    currency,
+    n_blocks,
+    sample_addresses,
+    max_address_rows,
+    raw_tx_blocks,
+    use_lock,
+    topic,
+):
+    """Checks raw, delta lake and transformed for inconsistencies in the most
+    recent blocks: pending WAL / torn bookkeeping, height order, rows left
+    above the highest block by an interrupted ingest, per-block
+    tx/trace/log counts across raw and lake (including raw tx rows),
+    transformed exchange rates, account block_transactions vs lake, and (UTXO)
+    a sampled exact recount of address tx counters. Read-only.
+
+    Exits 92 if any check fails, 911 if a lock could not be taken.
+    \f
+    Args:
+        env (str): Env to work on
+        currency (str): currency to work on (optional, default: all configured)
+    """
+    from ..utils.locking import LockAcquisitionError
+
+    config = get_config()
+    if currency is None:
+        networks = config.get_environment(env).get_configured_currencies()
+    else:
+        networks = [currency]
+
+    failed, locked = False, False
+    for net in networks:
+        try:
+            findings = run_consistency_check(
+                env,
+                net,
+                n_blocks,
+                sample_addresses,
+                max_address_rows,
+                raw_tx_blocks,
+                use_lock,
+            )
+        except LockAcquisitionError as e:
+            locked = True
+            console.print(
+                f"{net}: {e} A delta update is probably running; retry later or "
+                "pass --no-lock (counts may then move during the check)."
+            )
+            continue
+        failures = [f for f in findings if f.status == Status.FAIL]
+        if failures:
+            failed = True
+            if topic:
+                send_msg_to_topic(
+                    topic,
+                    f"Consistency check {env}/{net} failed:\n"
+                    + "\n".join(f"- {f.check}: {f.detail}" for f in failures),
+                )
+    if failed:
+        sys.exit(EXIT_INCONSISTENT)
+    if locked:
+        sys.exit(911)
 
 
 @monitoring.command(

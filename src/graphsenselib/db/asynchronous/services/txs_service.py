@@ -593,7 +593,11 @@ class TxsService:
         )
 
     async def get_conversions(
-        self, currency: str, identifier: str, included_bridges: Tuple[str, ...] = ()
+        self,
+        currency: str,
+        identifier: str,
+        included_bridges: Tuple[str, ...] = (),
+        cow_protocol_swaps: bool = True,
     ) -> List[ExternalConversion]:
         """Extract swap/bridge information from a single transaction hash."""
         # UTXO networks are supported for THORChain bridging (via OP_RETURN memo)
@@ -629,7 +633,11 @@ class TxsService:
             raise TransactionNotFoundException(currency, tx_hash)
 
         conversions_gslib = await get_conversions_from_db(
-            currency, self.db, tx, included_bridges=included_bridges
+            currency,
+            self.db,
+            tx,
+            included_bridges=included_bridges,
+            cow_protocol_swaps=cow_protocol_swaps,
         )
 
         # A sub-tx identifier pointing to the root trace of the tx (trace_address == "")

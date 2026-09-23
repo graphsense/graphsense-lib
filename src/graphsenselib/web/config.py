@@ -231,6 +231,11 @@ class GSRestConfig(BaseSettings):
         default_factory=tuple,
         description="Included bridges in tx conversions",
     )
+    cow_protocol_swaps: bool = Field(
+        default=True,
+        description="Report the orders of CoW Protocol settlements as swaps in "
+        "tx conversions (false: settlements yield no conversions)",
+    )
     block_by_date_use_linear_search: bool = Field(
         default=False,
         description="Use linear search for block by date queries",

@@ -15,7 +15,9 @@ Layout policy: pathfinder ``.gs`` files commit coordinates at save time
 layout. By default it uses :func:`apply_hierarchical_layout` whenever the
 spec marks at least one node ``starting_point=true`` (the typical agent
 case — anchors are known), and falls back to the existing columnar
-defaults in :class:`GsBuilder` otherwise.
+defaults in :class:`GsBuilder` otherwise. Before a hierarchical layout
+the tool asks the backend which way money flows through each tx, so
+inflows are drawn left of the address they pay into.
 """
 
 from __future__ import annotations
@@ -43,6 +45,8 @@ from graphsenselib.convert.gs_files import (
 from graphsenselib.mcp.tools.consolidated import _make_client
 from graphsenselib.pathfinder import (
     RestBackend,
+    annotate_conversions,
+    annotate_tx_flows,
     verify_against_backend,
     verify_structural,
 )
@@ -313,10 +317,50 @@ class _PathfinderBuildResult(BaseModel):
     summary: _PathfinderBuildSummary
 
 
+async def _lookup_tx_flows(
+    spec_dict: dict[str, Any],
+    default_network: str,
+    app: FastAPI,
+    tx_cache: dict,
+) -> dict[str, Any]:
+    """Add ``senders`` / ``receivers`` to the spec's txs, so the layout can
+    draw inflows left of the address they pay into, and ``conversions``,
+    so swaps and bridges get the U-turn Pathfinder moves them into.
+
+    Best effort: a failed lookup only costs direction, and the layout
+    falls back to hop distance. Failures are logged, not returned as
+    warnings — the warnings tell the agent to fix its spec, and a
+    backend hiccup here is nothing the spec can fix (a tx that really
+    doesn't exist is reported by the verifier).
+    """
+    client = _make_client(app)
+    try:
+        async with client:
+            backend = RestBackend(client, tx_cache=tx_cache)
+            spec_dict, problems = await annotate_tx_flows(
+                spec_dict, default_network=default_network, backend=backend
+            )
+            spec_dict, more = await annotate_conversions(
+                spec_dict, default_network=default_network, backend=backend
+            )
+            problems += more
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        logger.warning(
+            "build_pathfinder_file: tx direction lookup failed (%s); "
+            "laying out without direction",
+            exc,
+        )
+        return spec_dict
+    for problem in problems:
+        logger.info("build_pathfinder_file: %s", problem)
+    return spec_dict
+
+
 async def _run_verifier(
     spec_dict: dict[str, Any],
     default_network: str,
     app: FastAPI,
+    tx_cache: Optional[dict] = None,
 ) -> list[str]:
     """Backend-aware checks for the build tool. Wraps
     :func:`verify_against_backend` with the existing MCP httpx client
@@ -326,7 +370,7 @@ async def _run_verifier(
     client = _make_client(app)
     try:
         async with client:
-            backend = RestBackend(client)
+            backend = RestBackend(client, tx_cache=tx_cache)
             return await verify_against_backend(
                 spec_dict, default_network=default_network, backend=backend
             )
@@ -479,7 +523,13 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             chosen = "hierarchical" if _should_use_hierarchical(spec) else "columnar"
 
         spec_dict = _spec_to_dict(spec)
+        # Tx bodies fetched for the direction lookup are reused by the
+        # verifier below.
+        tx_cache: dict = {}
         if chosen == "hierarchical":
+            spec_dict = await _lookup_tx_flows(
+                spec_dict, default_network, app, tx_cache
+            )
             spec_dict = apply_hierarchical_layout(spec_dict)
 
         try:
@@ -559,7 +609,9 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         # Chat is the known offender — show the user something usable.
         warnings = verify_structural(spec_dict)
         if verify:
-            warnings.extend(await _run_verifier(spec_dict, default_network, app))
+            warnings.extend(
+                await _run_verifier(spec_dict, default_network, app, tx_cache)
+            )
         if download_url is not None:
             text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
         else:

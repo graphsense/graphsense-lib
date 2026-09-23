@@ -122,7 +122,9 @@ async def test_paging_onward_works_with_the_default(paged_stub_app):
 
     async with Client(mcp) as client:
         tool = next(t for t in await client.list_tools() if t.name == "list_tx_flows")
-        assert tool.inputSchema["properties"]["pagesize"]["default"] == DEFAULT_PAGESIZE
+        assert (
+            tool.input_schema["properties"]["pagesize"]["default"] == DEFAULT_PAGESIZE
+        )
 
         first = await _flows_call(client)
         assert first["seen_pagesize"] == DEFAULT_PAGESIZE

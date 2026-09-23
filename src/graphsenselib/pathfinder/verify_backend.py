@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Iterable, Optional, Protocol, runtime_checkable
 
 import httpx
@@ -30,6 +31,9 @@ import httpx
 from graphsenselib.convert.gs_files import normalize_address_id
 
 logger = logging.getLogger(__name__)
+
+# Account-model sub-payment suffix of a tx id: `<hash>_I3`, `<hash>_T12`.
+_SUB_PAYMENT_RE = re.compile(r"_[IT]\d+$")
 
 # Cap the per-warning identifier list so a pathological spec can't bloat
 # the response. Mirrors the cap used by the structural warnings.
@@ -231,8 +235,17 @@ class RestBackend:
     a separate ``token_tx_id`` query param is needed.
     """
 
-    def __init__(self, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        tx_cache: Optional[dict[tuple[str, str], Optional[dict[str, Any]]]] = None,
+    ) -> None:
         self._client = client
+        # Tx bodies by (network, tx_id), None for a 404. Pass the same
+        # dict to two adapters (e.g. the direction lookup before layout
+        # and the verifier after it) to fetch each tx only once.
+        self._tx_cache = tx_cache if tx_cache is not None else {}
 
     async def address_exists(self, network: str, address: str) -> bool:
         path = f"/{network}/addresses/{address}"
@@ -246,7 +259,14 @@ class RestBackend:
             response.raise_for_status()
         return True
 
-    async def tx_addresses(self, network: str, tx_id: str) -> Optional[frozenset[str]]:
+    async def _get_tx(self, network: str, tx_id: str) -> Optional[dict[str, Any]]:
+        """The tx response body, or None when the backend has no such tx."""
+        key = (network, tx_id)
+        if key not in self._tx_cache:
+            self._tx_cache[key] = await self._fetch_tx(network, tx_id)
+        return self._tx_cache[key]
+
+    async def _fetch_tx(self, network: str, tx_id: str) -> Optional[dict[str, Any]]:
         path = f"/{network}/txs/{tx_id}"
         # `include_io` / `include_nonstandard_io` are load-bearing for
         # UTXO chains: the response model has `inputs` / `outputs`
@@ -266,8 +286,39 @@ class RestBackend:
             return None
         if response.status_code >= 400:
             response.raise_for_status()
+        return response.json()
+
+    async def tx_addresses(self, network: str, tx_id: str) -> Optional[frozenset[str]]:
+        body = await self._get_tx(network, tx_id)
+        return None if body is None else _addresses_from_tx_body(body)
+
+    async def tx_sides(
+        self, network: str, tx_id: str
+    ) -> Optional[tuple[frozenset[str], frozenset[str]]]:
+        body = await self._get_tx(network, tx_id)
+        return None if body is None else tx_sides_from_body(body)
+
+    async def tx_io_order(
+        self, network: str, tx_id: str
+    ) -> Optional[tuple[list[str], list[str]]]:
+        body = await self._get_tx(network, tx_id)
+        return None if body is None else tx_io_order_from_body(body)
+
+    async def tx_conversions(self, network: str, tx_id: str) -> list[dict[str, Any]]:
+        """Swaps and bridge txs the tx takes part in, as the REST API lists
+        them (``/{network}/txs/{hash}/conversions``); empty when none.
+
+        The endpoint takes the plain tx hash, so an account-model
+        sub-payment suffix (``_I…`` / ``_T…``) is dropped.
+        """
+        tx_hash = _SUB_PAYMENT_RE.sub("", tx_id)
+        response = await self._client.get(f"/{network}/txs/{tx_hash}/conversions")
+        if response.status_code == 404:
+            return []
+        if response.status_code >= 400:
+            response.raise_for_status()
         body = response.json()
-        return _addresses_from_tx_body(body)
+        return body if isinstance(body, list) else []
 
 
 def _addresses_from_tx_body(body: dict[str, Any]) -> frozenset[str]:
@@ -279,16 +330,59 @@ def _addresses_from_tx_body(body: dict[str, Any]) -> frozenset[str]:
     strings. We accept both shapes; any superset of addresses is fine
     — the verifier only does set-membership checks.
     """
-    addrs: set[str] = set()
-    for side in ("inputs", "outputs"):
-        for entry in body.get(side) or []:
+    senders, receivers = tx_sides_from_body(body)
+    return senders | receivers
+
+
+def tx_io_order_from_body(body: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Input and output addresses of a tx response body, in tx order and
+    without repeats. The Pathfinder UI anchors a conversion edge on the
+    *first* of these, so order matters here (unlike :func:`tx_sides_from_body`).
+    """
+
+    def ordered(entries: Any, extra: tuple[str, ...]) -> list[str]:
+        out: list[str] = []
+        for entry in entries or []:
             value = entry.get("address") if isinstance(entry, dict) else None
-            if isinstance(value, list):
-                addrs.update(str(v) for v in value if v)
-            elif isinstance(value, str):
-                addrs.add(value)
-    for key in ("from_address", "to_address", "sender", "receiver"):
+            values = value if isinstance(value, list) else [value]
+            out.extend(str(v) for v in values if isinstance(v, str) and v)
+        out.extend(body[k] for k in extra if isinstance(body.get(k), str) and body[k])
+        return list(dict.fromkeys(out))
+
+    return (
+        ordered(body.get("inputs"), ("from_address", "sender")),
+        ordered(body.get("outputs"), ("to_address", "receiver")),
+    )
+
+
+def _side_addresses(entries: Any) -> set[str]:
+    addrs: set[str] = set()
+    for entry in entries or []:
+        value = entry.get("address") if isinstance(entry, dict) else None
+        if isinstance(value, list):
+            addrs.update(str(v) for v in value if v)
+        elif isinstance(value, str) and value:
+            addrs.add(value)
+    return addrs
+
+
+def tx_sides_from_body(body: dict[str, Any]) -> tuple[frozenset[str], frozenset[str]]:
+    """``(senders, receivers)`` of a tx response body.
+
+    UTXO: the addresses of ``inputs`` and ``outputs``. Account model:
+    ``from_address`` / ``to_address`` (and ``sender`` / ``receiver``
+    where a body uses those). An address can be on both sides — change
+    back to a spender.
+    """
+    senders = _side_addresses(body.get("inputs"))
+    receivers = _side_addresses(body.get("outputs"))
+    for key, side in (
+        ("from_address", senders),
+        ("sender", senders),
+        ("to_address", receivers),
+        ("receiver", receivers),
+    ):
         value = body.get(key)
         if isinstance(value, str) and value:
-            addrs.add(value)
-    return frozenset(addrs)
+            side.add(value)
+    return frozenset(senders), frozenset(receivers)

@@ -10,12 +10,14 @@ from typing import Dict, List, Optional, Set
 from pydantic import BaseModel, computed_field
 from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from graphsenselib.config.tagstore_config import get_use_label_search_view
+from graphsenselib.utils.accountmodel import normalize_hex_identifier
 from graphsenselib.utils.constants import (
     FRESH_CLUSTER_ID_OFFSET,
     is_fresh_cluster_id,
@@ -27,6 +29,7 @@ from .database import get_db_engine_async
 from .errors import TagAlreadyExistsException
 from .models import (
     Actor,
+    Address,
     AddressClusterMapping,
     AddressClusterMappingV2,
     BestClusterTagView,
@@ -284,6 +287,27 @@ class UserReportedAddressTag(BaseModel):
     label: str
     description: str
     user: Optional[str] = None
+
+
+def _normalize_subject_id(subject_id: str) -> str:
+    # Must match what the tagpack insert stores (tagpack.utils.
+    # normalize_tag_address), otherwise checksummed 0x ids never match.
+    return normalize_hex_identifier(subject_id.strip())
+
+
+def _normalize_subject_ids(subject_ids: List[str]) -> Dict[str, List[str]]:
+    """Map each normalized id to the caller's (stripped) spellings of it.
+
+    Batch results are keyed by the stored identifier; this lets callers keep
+    looking them up by the ids they passed in.
+    """
+    by_norm: Dict[str, List[str]] = {}
+    for sid in subject_ids:
+        cleaned = sid.strip()
+        spellings = by_norm.setdefault(normalize_hex_identifier(cleaned), [])
+        if cleaned not in spellings:
+            spellings.append(cleaned)
+    return by_norm
 
 
 # Statements
@@ -896,7 +920,7 @@ class TagstoreDbAsync:
         session=None,
     ) -> List[TagPublic]:
         results = await self._get_tags_by_subjectid(
-            subject_id.strip(),
+            _normalize_subject_id(subject_id),
             offset,
             page_size,
             groups,
@@ -917,15 +941,19 @@ class TagstoreDbAsync:
         # pattern that amplified the 2026-05-04 pool-exhaustion incident.
         if not subject_ids:
             return {}
-        cleaned = [sid.strip() for sid in subject_ids]
+        by_norm = _normalize_subject_ids(subject_ids)
         results = (
             await session.exec(
-                _get_tags_by_subjectids_stmt(cleaned, groups, network=network)
+                _get_tags_by_subjectids_stmt(list(by_norm), groups, network=network)
             )
         ).unique()
-        grouped: Dict[str, List[TagPublic]] = {sid: [] for sid in cleaned}
+        grouped: Dict[str, List[TagPublic]] = {
+            sid: [] for spellings in by_norm.values() for sid in spellings
+        }
         for t, tp, _ in results:
-            grouped.setdefault(t.identifier, []).append(TagPublic.fromDB(t, tp))
+            tag = TagPublic.fromDB(t, tp)
+            for sid in by_norm.get(t.identifier, [t.identifier]):
+                grouped.setdefault(sid, []).append(tag)
         return grouped
 
     @_inject_session
@@ -933,7 +961,7 @@ class TagstoreDbAsync:
         self, subject_id: str, groups: List[str], session=None
     ) -> List[HumanReadableId]:
         results = await session.exec(
-            _get_actors_for_subject_stmt(subject_id.strip(), groups)
+            _get_actors_for_subject_stmt(_normalize_subject_id(subject_id), groups)
         )
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
 
@@ -946,13 +974,15 @@ class TagstoreDbAsync:
         # 2026-05-04 pool-exhaustion incident.
         if not subject_ids:
             return {}
-        cleaned = [sid.strip() for sid in subject_ids]
+        by_norm = _normalize_subject_ids(subject_ids)
         results = await session.exec(
-            _get_actors_for_subjects_batch_stmt(cleaned, groups)
+            _get_actors_for_subjects_batch_stmt(list(by_norm), groups)
         )
         out: Dict[str, List[HumanReadableId]] = {}
-        for sid, idt, lbl in results:
-            out.setdefault(sid, []).append(HumanReadableId(id=idt, label=lbl))
+        for identifier, idt, lbl in results:
+            actor = HumanReadableId(id=idt, label=lbl)
+            for sid in by_norm.get(identifier, [identifier]):
+                out.setdefault(sid, []).append(actor)
         return out
 
     @_inject_session
@@ -960,7 +990,7 @@ class TagstoreDbAsync:
         self, subject_id: str, groups: List[str], session=None
     ) -> List[str]:
         results = await session.exec(
-            _get_labels_by_subjectid_stmt(subject_id.strip(), groups)
+            _get_labels_by_subjectid_stmt(_normalize_subject_id(subject_id), groups)
         )
         return [x for x in results]
 
@@ -970,11 +1000,14 @@ class TagstoreDbAsync:
     ) -> Dict[str, List[str]]:
         if not subject_ids:
             return {}
-        cleaned = [sid.strip() for sid in subject_ids]
-        results = await session.exec(_get_labels_by_subjectids_stmt(cleaned, groups))
+        by_norm = _normalize_subject_ids(subject_ids)
+        results = await session.exec(
+            _get_labels_by_subjectids_stmt(list(by_norm), groups)
+        )
         out: Dict[str, List[str]] = {}
-        for sid, lbl in results:
-            out.setdefault(sid, []).append(lbl)
+        for identifier, lbl in results:
+            for sid in by_norm.get(identifier, [identifier]):
+                out.setdefault(sid, []).append(lbl)
         return out
 
     @_inject_session
@@ -982,7 +1015,9 @@ class TagstoreDbAsync:
         self, subject_id: str, network: Optional[str], groups: List[str], session=None
     ) -> int:
         results = await session.exec(
-            _get_tag_count_by_subjectid_stmt(subject_id, network, groups)
+            _get_tag_count_by_subjectid_stmt(
+                _normalize_subject_id(subject_id), network, groups
+            )
         )
 
         return sum(x for x in results)
@@ -1465,10 +1500,13 @@ class TagstoreDbAsync:
 
         context = {"user": tag.user, "uuid": unique_id}
 
+        identifier = _normalize_subject_id(tag.address)
+        network = tag.network.upper()
+
         tagN = Tag(
             label=tag.label,
-            identifier=tag.address,
-            network=tag.network.upper(),
+            identifier=identifier,
+            network=network,
             tag_subject_id="address",
             tag_type_id="actor",
             confidence_id="unknown",
@@ -1482,6 +1520,16 @@ class TagstoreDbAsync:
             tagN.actor_id = actor.id
             tagN.concepts = [TagConcept(concept_id=c) for c in actor.concepts]
 
+        # The cluster-mapping job only maps what is in `address` (the tagpack
+        # importer writes it alongside every tag); without this row a
+        # user-reported address never gets a cluster mapping. Executed before
+        # adding the tag so the autoflush cannot raise a duplicate-tag error
+        # outside the handler below; both commit (or roll back) together.
+        await session.exec(
+            pg_insert(Address)
+            .values(network=network, address=identifier)
+            .on_conflict_do_nothing()
+        )
         session.add(tagN)
 
         try:

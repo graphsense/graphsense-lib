@@ -6,6 +6,7 @@ class SwapStrategy(Enum):
     """Enum for different swap detection strategies."""
 
     ORDER_RECORD = "order_record"
+    COW_SETTLEMENT = "cow_settlement"
     IGNORE = "ignore"
     SWAP = "swap"
     UNKNOWN = "unknown"
@@ -26,10 +27,27 @@ class ExternalSwap:
         return asdict(self)
 
 
+# GPv2Settlement, deployed at the same address on every chain CoW supports
+COW_SETTLEMENT_ADDRESSES = frozenset({"0x9008d19f58aabd9ed0d60971565aa8510560ab41"})
+
+
+def is_cow_trade(dlog: dict) -> bool:
+    """A Trade event of the CoW Protocol settlement contract."""
+    return (
+        dlog["name"] == "Trade"
+        and "cow-protocol" in dlog["log_def"]["tags"]
+        and str(dlog.get("address", "")).lower() in COW_SETTLEMENT_ADDRESSES
+    )
+
+
 def get_swap_strategy_from_decoded_logs(
-    dlogs: list, parsed_input: dict | None = None
+    dlogs: list, parsed_input: dict | None = None, cow_protocol: bool = True
 ) -> SwapStrategy:
-    """Determine the swap detection strategy from decoded logs."""
+    """Determine the swap detection strategy from decoded logs.
+
+    cow_protocol: detect the orders of CoW Protocol settlements (one
+    conversion per order); False ignores settlements as before.
+    """
     if not dlogs:
         return SwapStrategy.UNKNOWN
 
@@ -46,6 +64,9 @@ def get_swap_strategy_from_decoded_logs(
     # Lets be conservative
     # if "OrderRecord" == names[-1]:
     #    return SwapStrategy.ORDER_RECORD
+    if cow_protocol and "cross-chain" not in tags and any(map(is_cow_trade, dlogs)):
+        # a batch of orders, possibly of several owners
+        return SwapStrategy.COW_SETTLEMENT
     if (
         "settlement" in final_log_tags and "cow-protocol" in final_log_tags
     ) or "cross-chain" in tags:

@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
-from .parser import lzw_pack
+from .parser import PathfinderData, lzw_pack
 
 Color = tuple[float, float, float, float]
 
@@ -213,6 +213,10 @@ class GsBuilder:
         self._addr_index: dict[tuple[str, str], _Item] = {}
         self._tx_index: dict[tuple[str, str], _Tx] = {}
         self._edge_index: dict[tuple[str, str, str, str], _AggEdge] = {}
+        # Annotations for ids that are not nodes of this graph. The UI
+        # keeps a label after its node is removed from the graph, and
+        # re-shows it if the node comes back.
+        self._annotations: dict[tuple[str, str], tuple[str, Optional[Color]]] = {}
 
     def _addr_column(self, side: Optional[str]) -> tuple[str, float]:
         """Map an address ``side`` to its (column name, column x)."""
@@ -336,6 +340,22 @@ class GsBuilder:
                 edge.tx_ids.append(pair)
         return self
 
+    def add_annotation(
+        self,
+        item_id: str,
+        *,
+        network: Optional[str] = None,
+        label: str = "",
+        color: Optional[Color] = None,
+    ) -> "GsBuilder":
+        """Keep a label/color for an id that is not (or not yet) a node.
+
+        A node's own ``label``/``color`` takes precedence over this.
+        """
+        net = network or self.default_network
+        self._annotations[(net, item_id)] = (label, color)
+        return self
+
     def to_payload(self) -> list:
         """Materialize the raw JSON payload (the inner shape before
         json.dumps + base64 + LZW + uint32 packing)."""
@@ -357,6 +377,13 @@ class GsBuilder:
                     item.label or "",
                     list(item.color) if item.color is not None else None,
                 ]
+            )
+        noted = {(a[0][0], a[0][1]) for a in annotations}
+        for (net, item_id), (label, color) in self._annotations.items():
+            if (net, item_id) in noted:
+                continue
+            annotations.append(
+                [[net, item_id], label, list(color) if color is not None else None]
             )
         agg_edges = [
             [
@@ -411,8 +438,16 @@ def builder_from_spec(
           ],
           "agg_edges": [
             {"a": "bc1q...", "b": "bc1q...other", "tx_ids": ["abcd..."]}
+          ],
+          "annotations": [
+            {"id": "bc1q...removed", "network": "btc", "label": "...",
+             "color": [...]}
           ]
         }
+
+    ``annotations`` is for labels of ids that are not nodes — a saved
+    file keeps them for nodes the user removed. Label a node through its
+    own ``label`` instead.
     """
     b = GsBuilder(name=name, default_network=default_network)
     for a in spec.get("addresses", []):
@@ -443,6 +478,13 @@ def builder_from_spec(
                 x=t.get("x"),
                 y=t.get("y"),
             )
+    for n in spec.get("annotations", []):
+        b.add_annotation(
+            n["id"],
+            network=n.get("network"),
+            label=n.get("label") or "",
+            color=_normalize_color(n.get("color")),
+        )
     for e in spec.get("agg_edges", []):
         b.add_agg_edge(
             e["a"],
@@ -469,6 +511,68 @@ _HIER_X_STEP = 4.0
 _HIER_Y_STEP = 2.5
 
 
+def spec_from_pathfinder(data: PathfinderData, *, keep_positions: bool = True) -> dict:
+    """Turn a decoded pathfinder file back into a spec — the inverse of
+    :func:`builder_from_spec`.
+
+    Annotations become ``label`` / ``color`` on the node they belong to;
+    those of ids that are not nodes are kept under ``annotations``. Each
+    node keeps its network. With ``keep_positions=False`` the
+    ``x`` / ``y`` are dropped, so a layout pass places every node afresh.
+    """
+    notes = {(n.id.currency, n.id.id): n for n in data.annotations}
+
+    def _node(thing, extra: dict) -> dict:
+        item: dict = {
+            "id": thing.id.id,
+            "network": thing.id.currency,
+            "starting_point": thing.is_starting_point,
+            **extra,
+        }
+        note = notes.get((thing.id.currency, thing.id.id))
+        if note is not None:
+            if note.label:
+                item["label"] = note.label
+            if note.color is not None:
+                c = note.color
+                item["color"] = [c.r, c.g, c.b, c.a]
+        if keep_positions:
+            item["x"] = thing.x
+            item["y"] = thing.y
+        return item
+
+    edges = []
+    for e in data.agg_edges:
+        edge: dict = {
+            "a": e.a.id,
+            "b": e.b.id,
+            "a_network": e.a.currency,
+            "b_network": e.b.currency,
+            "tx_ids": [t.id for t in e.txs],
+        }
+        if e.txs:
+            edge["network"] = e.txs[0].currency
+        edges.append(edge)
+
+    nodes = {(n.id.currency, n.id.id) for n in (*data.addresses, *data.txs)}
+    orphans = []
+    for (net, item_id), note in notes.items():
+        if (net, item_id) in nodes:
+            continue
+        orphan: dict = {"id": item_id, "network": net, "label": note.label}
+        if note.color is not None:
+            c = note.color
+            orphan["color"] = [c.r, c.g, c.b, c.a]
+        orphans.append(orphan)
+
+    return {
+        "addresses": [_node(a, {}) for a in data.addresses],
+        "txs": [_node(t, {"index": t.index}) for t in data.txs],
+        "agg_edges": edges,
+        "annotations": orphans,
+    }
+
+
 def _spec_item_to_dict(item: object) -> dict:
     if isinstance(item, str):
         return {"id": item}
@@ -487,7 +591,9 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     Reingold-Tilford) places leaves on consecutive rows and centres
     every internal node on the midpoint of its first and last child —
     so a node's descendants stay clustered in its vertical
-    neighbourhood instead of spreading across the whole column. Sibling
+    neighbourhood instead of spreading across the whole column. Leaf
+    txs (whose other endpoint was discovered elsewhere) take no row;
+    their y is overwritten by the snap step anyway. Sibling
     order follows spec order, so listing the most relevant nodes first
     puts them near the top of their column.
 
@@ -523,7 +629,22 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     addresses of its agg edge); plain ``a``↔``b`` adjacency is added
     too. Nodes are keyed by ``(kind, id)`` so an address and a tx that
     happen to share a string id don't collide.
+
+    Everything above is the *undirected* layout: hop distance says
+    nothing about which way money moved, so an inflow to a starting
+    point is drawn on its right like an outflow. When any tx in the spec
+    names its ``senders`` / ``receivers`` (address id lists, e.g. from
+    :func:`graphsenselib.pathfinder.annotate_tx_flows`), the
+    direction-aware :func:`.layout.directed_layout` runs instead: senders
+    left of their tx, receivers right of it, fewer crossings, straighter
+    edges. Without that information this function behaves as described.
     """
+    # Local import: .layout builds on this module's helpers.
+    from .layout import directed_layout, has_flow_info
+
+    if has_flow_info(spec):
+        return directed_layout(spec)
+
     addresses = [_spec_item_to_dict(a) for a in spec.get("addresses", [])]
     txs = [_spec_item_to_dict(t) for t in spec.get("txs", [])]
     edges = list(spec.get("agg_edges", []))
@@ -610,6 +731,16 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # internal nodes sit at the midpoint of their first and last child.
     # Iterative post-order traversal (explicit stack) so a deep chain —
     # e.g. a long peel trace — can't blow Python's recursion limit.
+    #
+    # A non-start tx that discovered no address (a leaf tx: its other
+    # endpoint was already reached via a sibling tx or another path) is
+    # skipped entirely. Its y is overwritten by the snap-to-endpoints
+    # step below, so spending a row on it only pushes the parent's
+    # midpoint away from the real children. Typical case: N txs between
+    # one address pair. Without the skip, the first tx (which discovered
+    # the destination) shares its row and the other N-1 each take one,
+    # centring the source over N rows while the destination sits on the
+    # first, so the two addresses drift apart vertically.
     row: dict[tuple[str, str], float] = {}
     next_row = 0
     for s in starts:
@@ -617,15 +748,19 @@ def apply_hierarchical_layout(spec: dict) -> dict:
         while stack:
             node, processed = stack.pop()
             kids = children.get(node, [])
-            if not kids:
-                row[node] = float(next_row)
-                next_row += 1
-            elif processed:
-                row[node] = (row[kids[0]] + row[kids[-1]]) / 2.0
-            else:
+            if kids and not processed:
                 stack.append((node, True))
                 for k in reversed(kids):
                     stack.append((k, False))
+                continue
+            if not kids and node[0] == "tx" and parent.get(node) is not None:
+                continue
+            rowed = [row[k] for k in kids if k in row]
+            if rowed:
+                row[node] = (rowed[0] + rowed[-1]) / 2.0
+            else:
+                row[node] = float(next_row)
+                next_row += 1
         next_row += 1  # blank row between independent starting trees
 
     # Labels widen the global row step so the tallest label still clears
@@ -650,11 +785,14 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # starting trees, and disconnected nodes below, trail downward.
     shift_row: float = row[starts[0]] if starts else 0.0
 
+    # Skipped leaf txs have no row; they get a placeholder y that the
+    # snap step below replaces (every non-start tx in the tree entered
+    # it through an agg edge, so it always has endpoints to snap to).
     coords: dict[tuple[str, str], tuple[float, float]] = {}
     for key in level:
         coords[key] = (
             float(level[key]) * _HIER_X_STEP,
-            (row[key] - shift_row) * y_step,
+            (row.get(key, shift_row) - shift_row) * y_step,
         )
 
     disconnected = [n for n in nodes if n not in level]

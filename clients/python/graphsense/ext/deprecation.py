@@ -33,7 +33,7 @@ def install(
       * None — write to `sys.stderr` at call time
       * a callable — invoked each write to resolve the current stream (useful
         when a test harness captures stderr with a stream the caller can only
-        obtain lazily, e.g. click.get_text_stream('stderr'))
+        obtain lazily, e.g. `lambda: sys.stderr` under click's CliRunner)
       * a file-like object — used directly
 
     Safe to call twice on the same client — the second call is a no-op.

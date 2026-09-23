@@ -930,6 +930,75 @@ def test_validate_warns_for_malformed_bch_cashaddr(schema, taxonomies, caplog):
     assert "Cash address contains more than one colon character" in log_text
 
 
+def _token_tagpack(schema, taxonomies, tags, **header):
+    return TagPack(
+        "http://example.com",
+        {
+            "title": "Token TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/tokens",
+            "confidence": "web_crawl",
+            "currency": "USDT",
+            "lastmod": date.fromisoformat("2021-04-21"),
+            **header,
+            "tags": tags,
+        },
+        schema,
+        taxonomies,
+    )
+
+
+def test_validate_detects_hex_case_collision_on_non_eth_network(schema, taxonomies):
+    # Different currencies survive get_unique_tags, but both rows map to the
+    # same (identifier, network, label, source) once the insert lowercases the
+    # hex address -- which it now does on every network, not just ETH.
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [
+            {"label": "dup", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
+            {
+                "label": "dup",
+                "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "currency": "USDC",
+                "network": "BSC",
+            },
+        ],
+        network="BSC",
+    )
+
+    with pytest.raises(ValidationError, match="Duplicate tags would violate"):
+        tagpack.validate()
+
+
+def test_validate_warns_when_network_is_a_token(schema, taxonomies, caplog):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+    )
+
+    assert tagpack.validate()
+
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any(
+        "have network USDT, which is a token" in m and "ETH" in m for m in warnings
+    ), warnings
+
+
+def test_validate_no_token_warning_with_explicit_network(schema, taxonomies, caplog):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+        network="ETH",
+    )
+
+    assert tagpack.validate()
+
+    assert not any("which is a token" in r.message for r in caplog.records)
+
+
 def test_conf_level_mandatory_if_not_set_default(tagpack):
     # tag without confidence validates
     tagpack.validate()
