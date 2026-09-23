@@ -15,6 +15,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Added
+- **CoW Protocol settlements are reported as swaps in tx conversions, one per order.** A settlement batches the orders of several owners, which the generic swap detection (one trader, one asset out and one in) cannot express, so settlements used to yield no conversion at all. Each `Trade` event of the GPv2 settlement contract (`0x9008d19f…ab41`) now becomes a `dex_swap` from its owner's transfer into the contract (`sellAmount`, or `sellAmount + feeAmount` for orders whose fee is pulled on top) to the payout of `buyAmount` (an internal call for native ETH). The payout's recipient becomes `to_address`, so for orders with a separate receiver it differs from `from_address` for the first time. Transfers of the solver's AMM interactions are not attributed to any order, and an order whose transfers are not found is skipped. ETH sells go through CoW's eth-flow contract in two txs: the user places the order with the ETH, a settlement fills it later with the eth-flow contract as owner. The conversions of the **placement tx** now link the two: the order uid is computed from its `OrderPlacement` event (EIP-712 digest of the order ‖ eth-flow contract ‖ validTo), the settlement is found among the eth-flow contract's txs after the placement (one topic-filtered `Trade` log query per block in which it moved funds, at most `SEARCH_MAX_BLOCKS` = 7200 blocks and 5 pages of 100 txs), and the result is a `dex_swap` from the user's ETH payment in the placement tx to the order's payout in the settlement tx. Orders that were not settled (e.g. expired and refunded) yield none. Both eth-flow deployments are recognised. **Toggle:** `cow_protocol_swaps: false` in the REST config (or `GSREST_COW_PROTOCOL_SWAPS=false`) restores the old behaviour (no settlement swaps, no eth-flow links); the library functions take `cow_protocol` / `cow_protocol_swaps`.
 - **`graphsense-cli monitoring check-consistency` validates the last N blocks (default 100) across raw, the Delta Lake and transformed.** It is read-only and exits 92 on any failure, so it can gate a cron job. Without `-c` it checks every configured currency, and `--topic` posts failures to a notification topic. It checks:
   - bookkeeping: a pending WAL record (an interrupted batch waiting for replay), a torn `delta_updater_history`, and transformed not ahead of raw or the lake;
   - interrupted ingests: rows above the highest block in raw (account traces and logs; UTXO `block_transactions` and tx rows past the last tx_id) and in each lake side table. These are reported as WARN, since a running ingest looks the same;
@@ -35,6 +36,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Changed
 - **MCP `build_pathfinder_file` looks up tx direction and conversions before a hierarchical layout**, so agent-built files draw inflows on the left and bridges as Pathfinder arranges them. The verifier reuses the fetched tx bodies. A failed lookup is logged and the old layout is used; it adds no warning, because the warnings tell the agent to fix its spec.
+
+### Web API + Python client
+
+#### Changed
+- `/{currency}/txs/{tx_hash}/conversions` returns one `dex_swap` per order for CoW Protocol settlements (see Library), where it returned none. Off with the new config option `cow_protocol_swaps: false`.
 
 ## [2.16.4] - 2026-09-22
 
