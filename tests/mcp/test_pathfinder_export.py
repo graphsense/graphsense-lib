@@ -957,3 +957,51 @@ async def test_extra_field_in_spec_rejected_by_pydantic() -> None:
                 },
             },
         )
+
+
+_INFLOW_SPEC = {
+    "addresses": [{"id": "anchor", "starting_point": True}, {"id": "payer"}],
+    "txs": [{"id": "txin"}],
+    # a/b say nothing about direction; the backend does.
+    "agg_edges": [{"a": "anchor", "b": "payer", "tx_ids": ["txin"]}],
+}
+
+
+async def test_hierarchical_layout_draws_backend_inflows_on_the_left(
+    monkeypatch,
+) -> None:
+    async def fake_annotate(spec, *, default_network, backend):
+        txs = [
+            {**t, "senders": ["payer"], "receivers": ["anchor"]} for t in spec["txs"]
+        ]
+        return {**spec, "txs": txs}, []
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.annotate_tx_flows", fake_annotate
+    )
+    call_result = await _call(
+        _mcp(), {"name": "inflow", "default_network": "btc", "spec": _INFLOW_SPEC}
+    )
+    data = _decode(call_result)
+    x = {n.id.id: n.x for n in (*data.addresses, *data.txs)}
+    assert x["payer"] < x["txin"] < x["anchor"] == 0.0
+    assert _structured(call_result)["summary"]["warnings"] == []
+
+
+async def test_failed_direction_lookup_falls_back_silently(monkeypatch) -> None:
+    import httpx as _httpx
+
+    async def boom(*args, **kwargs):
+        raise _httpx.ConnectError("backend down")
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.annotate_tx_flows", boom
+    )
+    call_result = await _call(
+        _mcp(), {"name": "inflow", "default_network": "btc", "spec": _INFLOW_SPEC}
+    )
+    data = _decode(call_result)
+    x = {n.id.id: n.x for n in (*data.addresses, *data.txs)}
+    # Undirected layout: every neighbour of the anchor goes right.
+    assert x["payer"] == 2 * _HIER_X_STEP
+    assert _structured(call_result)["summary"]["warnings"] == []
