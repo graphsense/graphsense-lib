@@ -7,6 +7,8 @@ routers and an httpx MockTransport stands in for the backend.
 """
 
 import json
+import logging
+from contextlib import contextmanager
 
 import httpx
 from fastapi import FastAPI, Request
@@ -19,9 +21,33 @@ from graphsenselib.web.config import (
 )
 from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware.external_backends import (
+    DECLINED_HEADER,
     SERVED_BY_HEADER,
+    SERVED_BY_VALUE,
     ExternalBackendMiddleware,
 )
+
+
+@contextmanager
+def caplog_at_warning():
+    """caplog is a fixture, and two of these tests want the records without
+    taking it as an argument alongside the client they build."""
+    records = []
+
+    class Sink(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("graphsenselib.web.middleware.external_backends")
+    handler = Sink(level=logging.WARNING)
+    logger.addHandler(handler)
+    previous, logger.level = logger.level, logging.WARNING
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.level = previous
+
 
 BACKEND_URL = "https://backend.test"
 
@@ -99,6 +125,7 @@ def make_client(
     gated=None,
     with_role_gate=False,
     refuse_status=None,
+    refuse_headers=None,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
@@ -158,7 +185,9 @@ def make_client(
     def backend(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         if refuse_status is not None:
-            return httpx.Response(refuse_status, json={"detail": "refused"})
+            return httpx.Response(
+                refuse_status, json={"detail": "refused"}, headers=refuse_headers or {}
+            )
         if request.url.path == "/stats":
             return httpx.Response(200, json=backend_stats)
         if request.url.path == "/capabilities":
@@ -717,11 +746,20 @@ def test_no_roles_config_is_unchanged_behaviour():
 
 
 def test_stats_and_capabilities_and_twins_skip_too():
-    for path in ("/stats", "/capabilities", "/bnb/addresses/0xabc/related_addresses"):
+    """The twin path here must be a LOCALLY served network.
+
+    It used to be /bnb/..., which the role gate 403s before this middleware
+    ever runs, so the assertion held whatever the fan-out did — verified
+    2026-09-24 by deleting the entitlement check from _merge_related_addresses
+    and watching the whole file still pass. Rule 5 asks the backends about an
+    address on a network the core owns, so /eth/... is the path that actually
+    reaches the merge."""
+    for path in ("/stats", "/capabilities", "/eth/addresses/0xsame/related_addresses"):
         client, seen = make_client(
             roles_config=ROLES, gated={"bnb"}, with_role_gate=True
         )
-        client.get(path, headers={"X-User-Roles": "currency-eth"})
+        response = client.get(path, headers={"X-User-Roles": "currency-eth"})
+        assert response.status_code == 200, path  # reached the merge, not a 403
         assert seen == [], path
 
 
@@ -851,3 +889,80 @@ def test_a_proxied_429_reaches_the_client_untouched():
     client, _ = make_client(refuse_status=429)
     response = client.get("/bnb/blocks/1", headers={"X-Username": "heavy"})
     assert response.status_code == 429
+
+
+# --- a swallowed 429 is a PARTIAL answer and must not be silent -----------
+#
+# The backend charges every provider call to the caller's own bucket AND the
+# account-wide one, so a 429 can equally mean "you are over your share" or
+# "somebody else saturated the account". Either way the lite rows are missing
+# from a response shaped exactly like a complete one.
+
+
+def test_a_declined_backend_is_named_on_the_response():
+    client, _ = make_client(refuse_status=429)
+    for url in ("/stats", "/capabilities", "/search?q=0x"):
+        response = client.get(url, headers={"X-Username": "heavy"})
+        assert response.status_code == 200, url
+        assert response.headers.get(DECLINED_HEADER) == BACKEND_URL, url
+
+
+def test_a_declined_twin_lookup_is_named_too():
+    client, _ = make_client(refuse_status=429)
+    response = client.get("/eth/addresses/0xsame/related_addresses")
+    assert response.status_code == 200
+    assert response.headers.get(DECLINED_HEADER) == BACKEND_URL
+
+
+def test_nothing_declined_asserts_nothing():
+    """An empty header on every response would claim the backends all answered,
+    which this middleware cannot know about one it never called."""
+    client, _ = make_client()
+    response = client.get("/stats")
+    assert DECLINED_HEADER not in response.headers
+
+
+def test_a_declined_backend_is_logged_with_the_caller(caplog):
+    client, _ = make_client(refuse_status=429)
+    with caplog.at_level(
+        logging.WARNING, logger="graphsenselib.web.middleware.external_backends"
+    ):
+        client.get("/search?q=0x", headers={"X-Username": "heavy"})
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "heavy" in message and BACKEND_URL in message and "/search" in message
+
+
+def test_an_anonymous_decline_is_logged_as_anonymous():
+    """Not as a caller literally named "None"."""
+    client, _ = make_client(refuse_status=429)
+    with caplog_at_warning() as records:
+        client.get("/stats")
+    assert "<anonymous>" in records[0].getMessage()
+
+
+# --- a proxied 429 has to say when to come back --------------------------
+
+
+def test_a_proxied_429_carries_retry_after():
+    """Without it the client is told to back off but not for how long, which
+    is barely better than a 500."""
+    client, _ = make_client(refuse_status=429, refuse_headers={"Retry-After": "17"})
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "17"
+
+
+def test_a_proxy_response_without_retry_after_invents_none():
+    client, _ = make_client(refuse_status=429)
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 429
+    assert "retry-after" not in {k.lower() for k in response.headers}
+
+
+def test_a_normal_proxy_response_is_unchanged():
+    client, _ = make_client()
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 200
+    assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
+    assert "retry-after" not in {k.lower() for k in response.headers}

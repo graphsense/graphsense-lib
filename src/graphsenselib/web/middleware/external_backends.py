@@ -63,12 +63,27 @@ of them gets the core's own answer (404, unknown network).
 
 Backend transport errors propagate — a broken backend must be loud (500 via
 the generic exception handler), not silently shaped as an empty answer. A 429
-is the exception: that is the backend's own per-user pacing declining the
-call, not a fault, and it only ever reaches a MERGE (rules 2-5), where a
-backend that cannot answer already contributes nothing (404, 501). Failing the
-whole request there would let a caller's own lite-network budget take out its
-btc/eth results. On a PROXY (rule 1, rule 3 with a currency filter) the 429 is
-the answer and is passed through with its Retry-After.
+is the exception: it is pacing declining the call, not a fault, and failing the
+whole request over it would let the lite networks take out the btc/eth results
+the core served itself.
+
+Be precise about whose pacing, because the answer is NOT always "this
+caller's". The backend charges every provider call to two buckets: the
+caller's own share AND the account-wide budget everyone shares. Either can
+refuse. So a 429 on a merge means "the lite networks could not be asked right
+now" — possibly because THIS caller is over its share, possibly because the
+whole account is saturated by somebody else, and, for a request that arrives
+without an identity, because the shared host-keyed bucket is full.
+
+A swallowed 429 is therefore a PARTIAL ANSWER, not an empty one, and it must
+not be silent: it is logged, and the merged response names the backends that
+declined in ``X-Ikn-Backends-Declined``. Without that a user refreshing
+Pathfinder mid-investigation just sees the lite currencies disappear, and an
+investigator reading a twin list sees "no cross-chain twin" for an address
+that has one.
+
+On a PROXY (rule 1, rule 3 with a currency filter) the 429 IS the answer and
+reaches the client with its ``Retry-After``.
 
 The middleware must sit INSIDE the CORS middleware (added before it in
 ``create_app``) so short-circuited proxy responses still receive CORS
@@ -83,8 +98,9 @@ own address, charged to nobody and subtracted from everybody.
 """
 
 import json
+import logging
 import re
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import httpx
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -107,8 +123,19 @@ from graphsenselib.web.middleware.currency_roles import parse_roles
 OPT_OUT_HEADER = "x-ikn-currency-opt-out"
 OPT_OUT_VALUES = frozenset({"all-light", "all"})
 
+logger = logging.getLogger(__name__)
+
 SERVED_BY_HEADER = "x-served-by"
 SERVED_BY_VALUE = "external-backend"
+
+# Names the backends whose rows are MISSING from an otherwise-200 merge because
+# they declined (429). A partial answer that looks complete is the failure mode
+# this exists to prevent.
+DECLINED_HEADER = "X-Ikn-Backends-Declined"
+
+# the one backend response header worth carrying to the client on a proxied
+# 429: without it a paced caller is told to come back but not when
+RETRY_AFTER_HEADER = "retry-after"
 
 # address tag routes stay local (rule 1): TagStore data keyed by real chain
 # addresses, owned by this deployment regardless of who serves the chain data
@@ -261,9 +288,14 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         merged = dict(local_doc)
         merged[list_field] = list(local_doc.get(list_field, []))
         query = ("?" + str(request.url.query)) if request.url.query else ""
+        declined: List[str] = []
         for base_url, networks in self._backends_by_url(request).items():
             backend_doc = await self._fetch_json(
-                request, base_url, path + query, tolerate_404=(path == "/capabilities")
+                request,
+                base_url,
+                path + query,
+                declined=declined,
+                tolerate_404=(path == "/capabilities"),
             )
             if backend_doc is None:
                 continue
@@ -278,7 +310,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             elif path == "/capabilities":
                 entries = [_without_tags_disabled(entry) for entry in entries]
             merged[list_field] = _merge_keyed_lists(merged[list_field], entries, key)
-        return JSONResponse(merged, status_code=200)
+        return JSONResponse(merged, status_code=200, headers=_declined_header(declined))
 
     async def _merge_related_addresses(self, request: Request, body: bytes) -> Response:
         """Rule 5: append the backends' twins of a locally served address.
@@ -292,11 +324,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         rows = list(local_doc.get("related_addresses", []))
         present = {(row.get("currency"), row.get("address")) for row in rows}
         query = ("?" + str(request.url.query)) if request.url.query else ""
+        declined: List[str] = []
         for base_url, networks in self._backends_by_url(request).items():
             backend_doc = await self._fetch_json(
                 request,
                 base_url,
                 request.url.path + query,
+                declined=declined,
                 tolerate_404=True,
                 tolerate_501=True,
             )
@@ -307,7 +341,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 if row.get("currency") in networks and marker not in present:
                     rows.append(row)
                     present.add(marker)
-        return JSONResponse({**local_doc, "related_addresses": rows}, status_code=200)
+        return JSONResponse(
+            {**local_doc, "related_addresses": rows},
+            status_code=200,
+            headers=_declined_header(declined),
+        )
 
     async def _overlay_tag_counts(self, request: Request, entries: list) -> list:
         """Overwrite a backend stats entry's tag counts with the local
@@ -376,15 +414,20 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         request: Request,
         base_url: str,
         path_and_query: str,
+        declined: Optional[List[str]] = None,
         tolerate_404: bool = False,
         tolerate_501: bool = False,
     ) -> Optional[dict]:
         """One merge fan-out call. Returns None when the backend declines.
 
         429 is always tolerated, which is why this takes the request at all:
-        relaying the caller's identity means the backend paces THIS caller
-        rather than one shared bucket, and a paced caller must get its local
-        btc/eth answer instead of a 500 (see the module docstring)."""
+        relaying the caller's identity means the backend paces per caller
+        rather than lumping everyone into one bucket, and a paced request must
+        still get its local btc/eth answer instead of a 500.
+
+        It appends to `declined` and logs, because the result is a PARTIAL
+        answer that is otherwise shaped exactly like a complete one — see the
+        module docstring on whose pacing a 429 actually represents."""
         headers = {"Accept": "application/json"}
         api_key = self._api_key_for_url(base_url)
         if api_key:
@@ -396,6 +439,16 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             base_url.rstrip("/") + path_and_query, headers=headers
         )
         if response.status_code == 429:
+            if declined is not None and base_url not in declined:
+                declined.append(base_url)
+            logger.warning(
+                "external backend %s declined %s for consumer %s (429, retry after %s)"
+                " — those networks are MISSING from an otherwise-200 answer",
+                base_url,
+                path_and_query,
+                consumer or "<anonymous>",
+                response.headers.get(RETRY_AFTER_HEADER, "unspecified"),
+            )
             return None
         if tolerate_404 and response.status_code == 404:
             return None
@@ -424,12 +477,25 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         backend_response = await self.client.request(
             request.method, url, headers=headers, content=body
         )
+        headers = {SERVED_BY_HEADER: SERVED_BY_VALUE}
+        # a 429 that does not say when to come back is barely better than a
+        # 500; this is the only backend header the proxy carries through
+        retry_after = backend_response.headers.get(RETRY_AFTER_HEADER)
+        if retry_after:
+            headers[RETRY_AFTER_HEADER] = retry_after
         return Response(
             content=backend_response.content,
             status_code=backend_response.status_code,
             media_type=backend_response.headers.get("content-type"),
-            headers={SERVED_BY_HEADER: SERVED_BY_VALUE},
+            headers=headers,
         )
+
+
+def _declined_header(declined: List[str]) -> dict:
+    """Name the backends whose rows are missing, or say nothing when none are.
+    An empty header would assert "nothing declined" on every response, which is
+    a claim this middleware cannot make about a backend it never called."""
+    return {DECLINED_HEADER: ", ".join(declined)} if declined else {}
 
 
 def _strip_legacy_capabilities(entry: dict) -> dict:
