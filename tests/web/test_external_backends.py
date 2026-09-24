@@ -966,3 +966,78 @@ def test_a_normal_proxy_response_is_unchanged():
     assert response.status_code == 200
     assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
     assert "retry-after" not in {k.lower() for k in response.headers}
+
+
+# --- partial entitlement: narrowed rows, NOT a narrowed request ----------
+#
+# All lite networks share one backend URL, so a caller entitled to one of them
+# still triggers that backend's full multi-network query. Only the rows come
+# back narrowed. Asserting it so the day someone adds a per-network filter,
+# this test is what tells them the contract changed.
+
+
+def _two_network_client(roles_config=None, gated=None, with_role_gate=False):
+    app = FastAPI()
+
+    @app.get("/search")
+    async def search():
+        return {
+            "currencies": [{"currency": "btc", "addresses": ["1local"], "txs": []}],
+            "labels": [],
+            "actors": [],
+        }
+
+    seen: list[httpx.Request] = []
+
+    def backend(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "currencies": [
+                    {"currency": "bnb", "addresses": ["0xbnb"], "txs": []},
+                    {"currency": "arb", "addresses": ["0xarb"], "txs": []},
+                ],
+                "labels": [],
+                "actors": [],
+            },
+        )
+
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=ExternalBackendsConfig(
+            enabled=True,
+            networks={"bnb": {"url": BACKEND_URL}, "arb": {"url": BACKEND_URL}},
+        ),
+        roles_config=roles_config,
+        gated=gated,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+    )
+    if with_role_gate:
+        app.add_middleware(
+            CurrencyRoleMiddleware, config=roles_config, gated=set(gated or ())
+        )
+    return TestClient(app), seen
+
+
+def test_one_role_out_of_two_still_calls_the_backend_once_unnarrowed():
+    client, seen = _two_network_client(roles_config=ROLES, gated={"bnb", "arb"})
+    response = client.get("/search?q=0x", headers={"X-User-Roles": "currency-bnb"})
+    assert response.status_code == 200
+    assert len(seen) == 1
+    # the request itself carries no network filter -- the backend is asked for
+    # everything it serves and answers for both networks
+    assert "arb" not in str(seen[0].url) and "bnb" not in str(seen[0].url)
+
+
+def test_one_role_out_of_two_keeps_only_the_entitled_rows():
+    client, _ = _two_network_client(roles_config=ROLES, gated={"bnb", "arb"})
+    response = client.get("/search?q=0x", headers={"X-User-Roles": "currency-bnb"})
+    assert [c["currency"] for c in response.json()["currencies"]] == ["btc", "bnb"]
+
+
+def test_no_entitlement_to_either_skips_the_backend_entirely():
+    client, seen = _two_network_client(roles_config=ROLES, gated={"bnb", "arb"})
+    response = client.get("/search?q=0x", headers={"X-User-Roles": "currency-eth"})
+    assert seen == []
+    assert [c["currency"] for c in response.json()["currencies"]] == ["btc"]

@@ -375,11 +375,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
     def _backends_by_url(self, request: Optional[Request] = None) -> Dict[str, set]:
         """Group configured networks by backend URL — one call per backend.
 
-        With a request, only the networks this caller is entitled to see: a
-        backend left with none of them is dropped, so it is never called at
-        all. That is the whole saving -- a caller without any lite-currency
-        role used to trigger the full fan-out and then have every row of it
-        deleted by the role gate wrapping this middleware."""
+        With a request, only the networks this caller is entitled to see.
+
+        Read that precisely: it narrows which BACKENDS are called and which of
+        their rows are kept, NOT what each backend is asked for. A backend
+        left with no entitled network is dropped and never called at all --
+        that is the whole saving, since a caller with no lite-currency role
+        used to trigger the full fan-out and then have every row deleted by
+        the role gate wrapping this middleware. But all lite networks share
+        one backend URL today, so a caller entitled to ONE of them still
+        triggers that backend's full multi-network query; only the rows it
+        returns are narrowed. Cutting that would need the backend to accept a
+        network filter on the listing endpoints."""
         grouped: Dict[str, set] = {}
         for network, backend in self.config.networks.items():
             grouped.setdefault(backend.url, set()).add(network)

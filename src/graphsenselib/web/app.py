@@ -1048,9 +1048,20 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
         roles_config=roles_config,
         gated=gated,
     )
+    # The posture, not just the fact. Whether the fan-out is role-gated and
+    # whether the caller's identity reaches the backend are the two things
+    # that decide who pays for lite-network provider spend, and both are
+    # config-driven -- so a deployment must be able to state them from its own
+    # startup log rather than by re-reading the config.
     logger.info(
-        "External backends enabled for networks: %s",
+        "External backends enabled for networks: %s (fan-out: %s; caller identity: %s)",
         ", ".join(sorted(eb_config.networks)),
+        f"skipped for currencies without a {roles_config.currency_role_prefix}* role"
+        if gated
+        else "not role-gated, every caller fans out",
+        f"relayed from {eb_config.consumer_header} as X-Consumer-Username"
+        if eb_config.consumer_header
+        else "NOT relayed, so the backend paces every caller as one",
     )
 
 
@@ -1565,6 +1576,10 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     app.state.config = config
 
     _setup_external_backends_middleware(app, config)
+    # wired here too: the backends middleware skips fetching what the gate is
+    # about to delete, so an app with the skip and no gate would filter rows
+    # that nothing else in that app would have filtered
+    _setup_currency_roles_middleware(app, config)
     _setup_cors_middleware(app, config)
     app.add_middleware(PluginMiddleware)
     app.add_middleware(
