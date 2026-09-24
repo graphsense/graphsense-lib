@@ -39,6 +39,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **`tagpack/init.sh` grants `INSERT` on `address` to the `userinsertedtags` role.** Since user-reported tags also write their `address` row, a tagstore set up by this script rejected every report with a permission error and the tag was not saved. The script only runs on a fresh database; existing ones need `GRANT INSERT ON TABLE public.address TO userinsertedtags;` applied by hand.
+- **A malformed `GRAPHSENSE_SLACK_TOPICS` is now logged at REST startup.** The config loader reported the parse error only in its return value, which the app ignored, so all Slack notifications went off without a trace. The app also logs at startup whether the `exceptions` and `info` (user-reported tag) topics are configured.
 
 ### Web API + Python client
 

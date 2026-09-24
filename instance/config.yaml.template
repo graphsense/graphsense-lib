@@ -70,3 +70,9 @@ gs-tagstore:
 #   exceptions:
 #     hooks:
 #       - "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+#   # user-reported tags (POST /tags/report-tag); no topic, no notification
+#   info:
+#     hooks:
+#       - "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+# (if absent here, topics come from the gslib config or the
+#  GRAPHSENSE_SLACK_TOPICS env var, a JSON object of the same shape)

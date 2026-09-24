@@ -482,22 +482,28 @@ def setup_logging(
     app_logger.addHandler(handler)
 
 
-def log_slack_exception_notification_status(
-    slack_exception_hook, default_environment: Optional[str]
+def log_slack_notification_status(
+    topic: str, what: str, slack_hook, default_environment: Optional[str]
 ):
-    """Log whether Slack exception notifications are configured at startup."""
-    hooks = slack_exception_hook.hooks if slack_exception_hook is not None else []
+    """Log whether the Slack notifications for `topic` are configured at startup.
+
+    A missing hook otherwise only shows as notifications that never arrive.
+    """
+    hooks = slack_hook.hooks if slack_hook is not None else []
     environment = default_environment or "unknown"
 
     if hooks:
         logger.info(
-            "Slack exception notifications enabled (hooks=%d, environment=%s)",
+            "Slack %s notifications enabled (hooks=%d, environment=%s)",
+            what,
             len(hooks),
             environment,
         )
     else:
         logger.info(
-            "Slack exception notifications disabled (no 'exceptions' slack hooks configured, environment=%s)",
+            "Slack %s notifications disabled (no '%s' slack hooks configured, environment=%s)",
+            what,
+            topic,
             environment,
         )
 
@@ -1089,7 +1095,9 @@ def create_app(
     """
     # Load gslib config (always needed for slack hooks)
     gslib_config = AppConfig()
-    gslib_config.load_partial()
+    # load_partial keeps defaults for unparseable keys (e.g. a malformed
+    # GRAPHSENSE_SLACK_TOPICS) and only reports them in its return value
+    _, gslib_config_errors = gslib_config.load_partial()
 
     config = resolve_rest_config(config_file, config, gslib_config)
 
@@ -1103,7 +1111,14 @@ def create_app(
     config.slack_info_hook = slack_info_hook
 
     setup_logging(logger, slack_exception_hook, default_environment, config.logging)
-    log_slack_exception_notification_status(slack_exception_hook, default_environment)
+    for error in gslib_config_errors:
+        logger.warning("Ignoring invalid gslib config setting: %s", error)
+    log_slack_notification_status(
+        "exceptions", "exception", slack_exception_hook, default_environment
+    )
+    log_slack_notification_status(
+        "info", "user-reported tag", slack_info_hook, default_environment
+    )
 
     app = FastAPI(
         title="GraphSense API",
