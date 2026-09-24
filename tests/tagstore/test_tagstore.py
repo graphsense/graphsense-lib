@@ -327,10 +327,12 @@ async def test_insert_user_tag(async_tagstore_db):
         description="this is helpfuld",
     )
 
-    await db.add_user_reported_tag(tag2)
+    report_id2 = await db.add_user_reported_tag(tag2)
 
-    with pytest.raises(TagAlreadyExistsException):
+    with pytest.raises(TagAlreadyExistsException) as exc_info:
         await db.add_user_reported_tag(tag2)
+
+    assert exc_info.value.existing_id == report_id2
 
     tagsAfter2 = await db.get_tags_by_subjectid(
         address, offset=None, page_size=None, groups=["public"]

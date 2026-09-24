@@ -37,10 +37,16 @@ Use one changelog file, but separate entries by track in each release window.
 #### Changed
 - **MCP `build_pathfinder_file` looks up tx direction and conversions before a hierarchical layout**, so agent-built files draw inflows on the left and bridges as Pathfinder arranges them. The verifier reuses the fetched tx bodies. A failed lookup is logged and the old layout is used; it adds no warning, because the warnings tell the agent to fix its spec.
 
+#### Fixed
+- **`tagpack/init.sh` grants `INSERT` on `address` to the `userinsertedtags` role.** Since user-reported tags also write their `address` row, a tagstore set up by this script rejected every report with a permission error and the tag was not saved. The script only runs on a fresh database; existing ones need `GRANT INSERT ON TABLE public.address TO userinsertedtags;` applied by hand.
+
 ### Web API + Python client
 
 #### Changed
 - `/{currency}/txs/{tx_hash}/conversions` returns one `dex_swap` per order for CoW Protocol settlements (see Library), where it returned none. Off with the new config option `cow_protocol_swaps: false`.
+
+#### Fixed
+- `POST /tags/report-tag` for a tag that already exists returns the id of the existing report instead of a 500 (the response model requires an `id`, and a duplicate returned none). A duplicate no longer sends a Slack notification.
 
 ## [2.16.4] - 2026-09-22
 
