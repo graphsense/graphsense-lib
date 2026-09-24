@@ -62,15 +62,24 @@ served networks then simply do not appear in ``/stats``, ``/search``,
 of them gets the core's own answer (404, unknown network).
 
 Backend transport errors propagate — a broken backend must be loud (500 via
-the generic exception handler), not silently shaped as an empty answer.
+the generic exception handler), not silently shaped as an empty answer. A 429
+is the exception: that is the backend's own per-user pacing declining the
+call, not a fault, and it only ever reaches a MERGE (rules 2-5), where a
+backend that cannot answer already contributes nothing (404, 501). Failing the
+whole request there would let a caller's own lite-network budget take out its
+btc/eth results. On a PROXY (rule 1, rule 3 with a currency filter) the 429 is
+the answer and is passed through with its Retry-After.
 
 The middleware must sit INSIDE the CORS middleware (added before it in
 ``create_app``) so short-circuited proxy responses still receive CORS
 headers. Authentication is not a concern here: API keys are validated by the
 gateway in front, never by this app (see ``security.get_api_key``). The
 gateway's identity header (``consumer_header``, default ``X-Username``) IS
-relayed to the backends as ``X-Consumer-Username``: they pace provider
-spend per user, and without it every user would share one bucket.
+relayed to the backends as ``X-Consumer-Username`` — on the proxy path AND on
+every merge fan-out: they pace provider spend per user, and without it every
+user would share one bucket. A merge used to send no identity at all, so all
+of ``/search``'s provider spend landed on one bucket named after this app's
+own address, charged to nobody and subtracted from everybody.
 """
 
 import json
@@ -254,7 +263,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         query = ("?" + str(request.url.query)) if request.url.query else ""
         for base_url, networks in self._backends_by_url(request).items():
             backend_doc = await self._fetch_json(
-                base_url, path + query, tolerate_404=(path == "/capabilities")
+                request, base_url, path + query, tolerate_404=(path == "/capabilities")
             )
             if backend_doc is None:
                 continue
@@ -285,7 +294,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         query = ("?" + str(request.url.query)) if request.url.query else ""
         for base_url, networks in self._backends_by_url(request).items():
             backend_doc = await self._fetch_json(
-                base_url, request.url.path + query, tolerate_404=True, tolerate_501=True
+                request,
+                base_url,
+                request.url.path + query,
+                tolerate_404=True,
+                tolerate_501=True,
             )
             if backend_doc is None:
                 continue
@@ -347,20 +360,43 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 return backend.api_key
         return None
 
+    def _consumer_of(self, request: Request) -> Optional[str]:
+        """The caller's identity for the backend's per-user pacing.
+
+        The gateway strips and re-asserts ``consumer_header``, so its value is
+        trustworthy here. Used by BOTH the proxy and the merge fan-out: the
+        backend keys a provider-spend bucket on it, and two paths disagreeing
+        about who the caller is would give one user two buckets."""
+        if not self.config.consumer_header:
+            return None
+        return request.headers.get(self.config.consumer_header)
+
     async def _fetch_json(
         self,
+        request: Request,
         base_url: str,
         path_and_query: str,
         tolerate_404: bool = False,
         tolerate_501: bool = False,
     ) -> Optional[dict]:
+        """One merge fan-out call. Returns None when the backend declines.
+
+        429 is always tolerated, which is why this takes the request at all:
+        relaying the caller's identity means the backend paces THIS caller
+        rather than one shared bucket, and a paced caller must get its local
+        btc/eth answer instead of a 500 (see the module docstring)."""
         headers = {"Accept": "application/json"}
         api_key = self._api_key_for_url(base_url)
         if api_key:
             headers["Authorization"] = api_key
+        consumer = self._consumer_of(request)
+        if consumer:
+            headers["X-Consumer-Username"] = consumer
         response = await self.client.get(
             base_url.rstrip("/") + path_and_query, headers=headers
         )
+        if response.status_code == 429:
+            return None
         if tolerate_404 and response.status_code == 404:
             return None
         if tolerate_501 and response.status_code == 501:
@@ -377,13 +413,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         headers = {"Accept": request.headers.get("accept", "application/json")}
         if backend.api_key:
             headers["Authorization"] = backend.api_key
-        # the gateway strips and re-asserts the identity header, so its value
-        # is trustworthy here; the backend keys per-user pacing on it
-        consumer = (
-            request.headers.get(self.config.consumer_header)
-            if self.config.consumer_header
-            else None
-        )
+        consumer = self._consumer_of(request)
         if consumer:
             headers["X-Consumer-Username"] = consumer
         body = await request.body() if request.method not in ("GET", "HEAD") else None

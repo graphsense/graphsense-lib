@@ -98,6 +98,7 @@ def make_client(
     roles_config=None,
     gated=None,
     with_role_gate=False,
+    refuse_status=None,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
@@ -156,6 +157,8 @@ def make_client(
 
     def backend(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if refuse_status is not None:
+            return httpx.Response(refuse_status, json={"detail": "refused"})
         if request.url.path == "/stats":
             return httpx.Response(200, json=backend_stats)
         if request.url.path == "/capabilities":
@@ -726,3 +729,125 @@ def test_an_ungated_network_is_never_skipped():
     client, seen = make_client(roles_config=ROLES, gated=set())
     assert client.get("/search?q=0xdeadbeef").status_code == 200
     assert [request.url.path for request in seen] == ["/search"]
+
+
+# --- the gateway's identity, relayed so the backend paces the real caller ---
+#
+# The merge fan-out used to build its headers from scratch, so every /search,
+# /stats, /capabilities and twin lookup reached the backend anonymous. The
+# backend then bucketed all of them together under this app's own address:
+# nobody's spend was charged to them, and that one phantom bucket's share came
+# out of every real caller's.
+
+MERGE_REQUESTS = [
+    ("/stats", "/stats"),
+    ("/capabilities", "/capabilities"),
+    ("/search?q=0x", "/search"),
+    (
+        "/eth/addresses/0xsame/related_addresses",
+        "/eth/addresses/0xsame/related_addresses",
+    ),
+]
+
+
+def test_every_merge_fan_out_relays_the_caller():
+    for url, backend_path in MERGE_REQUESTS:
+        client, seen = make_client()
+        response = client.get(url, headers={"X-Username": "alice"})
+        assert response.status_code == 200, url
+        sent = [r for r in seen if r.url.path == backend_path]
+        assert sent, url
+        assert sent[0].headers.get("X-Consumer-Username") == "alice", url
+
+
+def test_the_proxy_path_relays_the_same_caller():
+    client, seen = make_client()
+    client.get("/bnb/blocks/1", headers={"X-Username": "alice"})
+    assert seen[0].headers.get("X-Consumer-Username") == "alice"
+
+
+def test_no_identity_header_sends_no_identity():
+    """Not an empty name: an absent one. A blank X-Consumer-Username would be
+    a caller named "" rather than no caller at all."""
+    client, seen = make_client()
+    client.get("/search?q=0x")
+    assert "X-Consumer-Username" not in seen[0].headers
+
+
+def test_an_empty_consumer_header_config_switches_the_relay_off():
+    app = FastAPI()
+
+    @app.get("/search")
+    async def search():
+        return {"currencies": [], "labels": [], "actors": []}
+
+    sent: list[httpx.Request] = []
+
+    def backend(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json=BACKEND_SEARCH)
+
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=ExternalBackendsConfig(
+            enabled=True,
+            networks={"bnb": {"url": BACKEND_URL}},
+            consumer_header="",
+        ),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+    )
+    TestClient(app).get("/search?q=0x", headers={"X-Username": "alice"})
+    assert sent and "X-Consumer-Username" not in sent[0].headers
+
+
+# --- a paced caller keeps its local answer -------------------------------
+#
+# Relaying the identity means the backend now paces THIS caller. Its 429 is
+# backpressure on the lite networks, so it must not take out the btc/eth
+# results the core served itself.
+
+
+def test_a_paced_backend_does_not_fail_the_merged_search():
+    client, _ = make_client(refuse_status=429)
+    response = client.get("/search?q=0x", headers={"X-Username": "heavy"})
+    assert response.status_code == 200
+    # local hits survive; the backend contributed nothing
+    assert response.json()["currencies"] == [
+        {"currency": "btc", "addresses": ["1local"], "txs": []}
+    ]
+
+
+def test_a_paced_backend_does_not_fail_stats_or_capabilities_or_twins():
+    for url, field, local in (
+        ("/stats", "currencies", [{"name": "btc", "no_blocks": 1}]),
+        ("/capabilities", "networks", [{"network": "btc", "disabled": []}]),
+        (
+            "/eth/addresses/0xsame/related_addresses",
+            "related_addresses",
+            LOCAL_RELATED_ADDRESSES["related_addresses"],
+        ),
+    ):
+        client, _ = make_client(refuse_status=429)
+        response = client.get(url, headers={"X-Username": "heavy"})
+        assert response.status_code == 200, url
+        assert response.json()[field] == local, url
+
+
+def test_a_broken_backend_is_still_loud_on_a_merge():
+    """Only 429 is tolerated. A 500 is a fault and must not be shaped into a
+    silently short answer."""
+    client, _ = make_client(refuse_status=500)
+    for url, _ in MERGE_REQUESTS:
+        try:
+            response = client.get(url)
+        except httpx.HTTPStatusError:
+            continue
+        assert response.status_code >= 500, url
+
+
+def test_a_proxied_429_reaches_the_client_untouched():
+    """On the proxy path the 429 IS the answer -- swallowing it would turn
+    backpressure into a silent wrong result."""
+    client, _ = make_client(refuse_status=429)
+    response = client.get("/bnb/blocks/1", headers={"X-Username": "heavy"})
+    assert response.status_code == 429
