@@ -996,20 +996,8 @@ def _setup_currency_roles_middleware(app: FastAPI, config: GSRestConfig):
     related_addresses answers. No-op when the gate is switched off or nothing
     is gated (no external backends and no explicit list).
     """
-    roles_config = config.auth or CurrencyRolesConfig()
-    if not roles_config.enforce_currency_roles:
-        logger.info("Currency role gating disabled (auth.enforce_currency_roles)")
-        return
-    if roles_config.gated_currencies is not None:
-        gated = set(roles_config.gated_currencies)
-    else:
-        eb_config = config.external_backends
-        gated = (
-            set(eb_config.networks)
-            if eb_config is not None and eb_config.enabled
-            else set()
-        )
-    if not gated:
+    roles_config, gated = _currency_role_gate(config)
+    if roles_config is None or not gated:
         return
     app.add_middleware(CurrencyRoleMiddleware, config=roles_config, gated=gated)
     logger.info(
@@ -1018,6 +1006,26 @@ def _setup_currency_roles_middleware(app: FastAPI, config: GSRestConfig):
         roles_config.roles_header,
         roles_config.currency_role_prefix,
     )
+
+
+def _currency_role_gate(config: GSRestConfig):
+    """The role gate both middlewares must agree on: the config and the set of
+    currencies it covers, or (None, empty) when the gate is switched off.
+
+    Defined once because two middlewares consult it -- CurrencyRoleMiddleware
+    to filter the answer, ExternalBackendMiddleware to skip fetching what is
+    about to be filtered. If they gated on different sets, the second would
+    drop rows the first would have kept.
+    """
+    roles_config = config.auth or CurrencyRolesConfig()
+    if not roles_config.enforce_currency_roles:
+        return None, set()
+    if roles_config.gated_currencies is not None:
+        return roles_config, set(roles_config.gated_currencies)
+    eb_config = config.external_backends
+    if eb_config is not None and eb_config.enabled:
+        return roles_config, set(eb_config.networks)
+    return roles_config, set()
 
 
 def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
@@ -1032,7 +1040,14 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
         return
     client = httpx.AsyncClient(timeout=httpx.Timeout(eb_config.timeout_s))
     app.state.external_backends_client = client
-    app.add_middleware(ExternalBackendMiddleware, config=eb_config, client=client)
+    roles_config, gated = _currency_role_gate(config)
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=eb_config,
+        client=client,
+        roles_config=roles_config,
+        gated=gated,
+    )
     logger.info(
         "External backends enabled for networks: %s",
         ", ".join(sorted(eb_config.networks)),

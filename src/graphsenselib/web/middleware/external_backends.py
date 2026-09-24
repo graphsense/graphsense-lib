@@ -75,7 +75,7 @@ spend per user, and without it every user would share one bucket.
 
 import json
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import httpx
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -83,7 +83,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-from graphsenselib.web.config import ExternalBackendConfig, ExternalBackendsConfig
+from graphsenselib.web.config import (
+    CurrencyRolesConfig,
+    ExternalBackendConfig,
+    ExternalBackendsConfig,
+)
+from graphsenselib.web.middleware.currency_roles import parse_roles
 
 # Client opt-out header, the same one the gateway understands: behind APISIX
 # the ikn-auth-validator consumes ``X-Ikn-Currency-Opt-Out`` and strips the
@@ -126,12 +131,42 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         app: ASGIApp,
         config: ExternalBackendsConfig,
         client: Optional[httpx.AsyncClient] = None,
+        roles_config: Optional[CurrencyRolesConfig] = None,
+        gated: Optional[Set[str]] = None,
     ):
         super().__init__(app)
         self.config = config
+        # The SAME role set CurrencyRoleMiddleware gates on. It wraps this
+        # middleware, so on a listing path it deletes the gated entries the
+        # caller lacks the role for AFTER they have been fetched -- the
+        # backend has already paid provider CU for rows nobody will see. Both
+        # read the gateway's header off the request, so nothing is plumbed
+        # between them; None here means no gate and every network is fetched.
+        self.roles_config = roles_config
+        self.gated = {code.lower() for code in (gated or ())}
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(config.timeout_s)
         )
+
+    def _entitled(self, request: Request, networks: Set[str]) -> Set[str]:
+        """The subset of `networks` this caller may actually be shown.
+
+        Exactly CurrencyRoleMiddleware's rule (``<prefix><code>`` in the
+        gateway's roles header), applied BEFORE the fetch instead of after:
+        the answer is identical either way, the difference is whether the
+        backend was asked for rows that are about to be dropped. An ungated
+        network is always kept, and no roles config means no gate at all."""
+        if self.roles_config is None or not self.roles_config.enforce_currency_roles:
+            return networks
+        if not self.gated:
+            return networks
+        roles = parse_roles(request.headers.get(self.roles_config.roles_header))
+        prefix = self.roles_config.currency_role_prefix
+        return {
+            code
+            for code in networks
+            if code.lower() not in self.gated or f"{prefix}{code.lower()}" in roles
+        }
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if not (self.config.enabled and self.config.networks):
@@ -217,7 +252,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         merged = dict(local_doc)
         merged[list_field] = list(local_doc.get(list_field, []))
         query = ("?" + str(request.url.query)) if request.url.query else ""
-        for base_url, networks in self._backends_by_url().items():
+        for base_url, networks in self._backends_by_url(request).items():
             backend_doc = await self._fetch_json(
                 base_url, path + query, tolerate_404=(path == "/capabilities")
             )
@@ -248,7 +283,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         rows = list(local_doc.get("related_addresses", []))
         present = {(row.get("currency"), row.get("address")) for row in rows}
         query = ("?" + str(request.url.query)) if request.url.query else ""
-        for base_url, networks in self._backends_by_url().items():
+        for base_url, networks in self._backends_by_url(request).items():
             backend_doc = await self._fetch_json(
                 base_url, request.url.path + query, tolerate_404=True, tolerate_501=True
             )
@@ -286,12 +321,25 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
         return overlaid
 
-    def _backends_by_url(self) -> Dict[str, set]:
-        """Group configured networks by backend URL — one call per backend."""
+    def _backends_by_url(self, request: Optional[Request] = None) -> Dict[str, set]:
+        """Group configured networks by backend URL — one call per backend.
+
+        With a request, only the networks this caller is entitled to see: a
+        backend left with none of them is dropped, so it is never called at
+        all. That is the whole saving -- a caller without any lite-currency
+        role used to trigger the full fan-out and then have every row of it
+        deleted by the role gate wrapping this middleware."""
         grouped: Dict[str, set] = {}
         for network, backend in self.config.networks.items():
             grouped.setdefault(backend.url, set()).add(network)
-        return grouped
+        if request is None:
+            return grouped
+        entitled = {}
+        for url, networks in grouped.items():
+            kept = self._entitled(request, networks)
+            if kept:
+                entitled[url] = kept
+        return entitled
 
     def _api_key_for_url(self, base_url: str) -> Optional[str]:
         for backend in self.config.networks.values():

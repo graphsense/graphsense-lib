@@ -12,7 +12,12 @@ import httpx
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
-from graphsenselib.web.config import ExternalBackendsConfig, GSRestConfig
+from graphsenselib.web.config import (
+    CurrencyRolesConfig,
+    ExternalBackendsConfig,
+    GSRestConfig,
+)
+from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware.external_backends import (
     SERVED_BY_HEADER,
     ExternalBackendMiddleware,
@@ -90,6 +95,9 @@ def make_client(
     backend_capabilities=BACKEND_CAPABILITIES,
     backend_related_addresses=BACKEND_RELATED_ADDRESSES,
     merge_related_addresses=True,
+    roles_config=None,
+    gated=None,
+    with_role_gate=False,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
@@ -173,7 +181,15 @@ def make_client(
         ExternalBackendMiddleware,
         config=config,
         client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+        roles_config=roles_config,
+        gated=gated,
     )
+    # added after, so it WRAPS the backends middleware exactly as create_app
+    # stacks them -- the filter must see the merged answer
+    if with_role_gate:
+        app.add_middleware(
+            CurrencyRoleMiddleware, config=roles_config, gated=set(gated or ())
+        )
     return TestClient(app), seen
 
 
@@ -632,3 +648,81 @@ def test_opt_out_header_value_is_case_insensitive_and_other_values_are_ignored()
     doc = client.get("/stats", headers={"X-Ikn-Currency-Opt-Out": "bnb"}).json()
     assert "bnb" in [c["name"] for c in doc["currencies"]]
     assert seen != []
+
+
+# --- the fan-out must not be paid for rows the role gate will delete -------
+#
+# CurrencyRoleMiddleware wraps this middleware, so on a listing path it filters
+# the MERGED answer: without these, a caller with no lite-currency role still
+# triggered the whole fan-out and then had every row of it deleted. Measured on
+# the test stack 2026-09-24: one such /search cost 2,160 provider CU and
+# returned the caller nothing.
+
+ROLES = CurrencyRolesConfig()
+
+
+def test_search_does_not_reach_the_backend_without_the_role():
+    client, seen = make_client(roles_config=ROLES, gated={"bnb"}, with_role_gate=True)
+    response = client.get(
+        "/search?q=0xdeadbeef", headers={"X-User-Roles": "currency-eth"}
+    )
+    assert response.status_code == 200
+    assert seen == []
+    # and the caller sees exactly what the role gate would have left them
+    assert all(
+        entry.get("currency") != "bnb"
+        for entry in response.json().get("currencies", [])
+    )
+
+
+def test_search_reaches_the_backend_with_the_role():
+    client, seen = make_client(roles_config=ROLES, gated={"bnb"}, with_role_gate=True)
+    response = client.get(
+        "/search?q=0xdeadbeef", headers={"X-User-Roles": "currency-bnb"}
+    )
+    assert response.status_code == 200
+    assert [request.url.path for request in seen] == ["/search"]
+    assert any(
+        entry.get("currency") == "bnb"
+        for entry in response.json().get("currencies", [])
+    )
+
+
+def test_no_roles_header_at_all_skips_the_fan_out():
+    """A direct API client that sends no roles header has no roles, so the gate
+    would delete every gated row anyway."""
+    client, seen = make_client(roles_config=ROLES, gated={"bnb"}, with_role_gate=True)
+    assert client.get("/search?q=0xdeadbeef").status_code == 200
+    assert seen == []
+
+
+def test_the_gate_switched_off_still_fans_out():
+    """auth.enforce_currency_roles=false means no gate: nothing is filtered
+    afterwards, so nothing may be skipped before."""
+    client, seen = make_client(
+        roles_config=CurrencyRolesConfig(enforce_currency_roles=False), gated={"bnb"}
+    )
+    assert client.get("/search?q=0xdeadbeef").status_code == 200
+    assert [request.url.path for request in seen] == ["/search"]
+
+
+def test_no_roles_config_is_unchanged_behaviour():
+    """Nothing passed (an app built without the gate) fans out as before."""
+    client, seen = make_client()
+    assert client.get("/search?q=0xdeadbeef").status_code == 200
+    assert [request.url.path for request in seen] == ["/search"]
+
+
+def test_stats_and_capabilities_and_twins_skip_too():
+    for path in ("/stats", "/capabilities", "/bnb/addresses/0xabc/related_addresses"):
+        client, seen = make_client(
+            roles_config=ROLES, gated={"bnb"}, with_role_gate=True
+        )
+        client.get(path, headers={"X-User-Roles": "currency-eth"})
+        assert seen == [], path
+
+
+def test_an_ungated_network_is_never_skipped():
+    client, seen = make_client(roles_config=ROLES, gated=set())
+    assert client.get("/search?q=0xdeadbeef").status_code == 200
+    assert [request.url.path for request in seen] == ["/search"]
