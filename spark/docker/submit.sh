@@ -41,12 +41,21 @@ fi
 
 FOO="${CASSANDRA_HOST:=localhost}"
 
+# Optional Cassandra credentials, for clusters running PasswordAuthenticator.
+# Left unset, the connector connects anonymously (the previous behaviour).
+CASSANDRA_AUTH_CONF=()
+if [ -n "$CASSANDRA_USERNAME" ]; then
+  CASSANDRA_AUTH_CONF+=(--conf spark.cassandra.auth.username="$CASSANDRA_USERNAME")
+  CASSANDRA_AUTH_CONF+=(--conf spark.cassandra.auth.password="$CASSANDRA_PASSWORD")
+fi
+
 echo -en "Starting Spark job ...\n" \
          "Config:\n" \
          "- Spark master:        $SPARK_MASTER\n" \
          "- Spark driver:        $SPARK_DRIVER_HOST:$SPARK_DRIVER_PORT\n" \
          "- Spark local dir:     $SPARK_LOCAL_DIR\n" \
          "- Cassandra host:      $CASSANDRA_HOST\n" \
+         "- Cassandra user:      ${CASSANDRA_USERNAME:-(none, anonymous)}\n" \
          "- Writer:              $GS_SPARK_WRITER\n" \
          "- Cassandra output MB/s: $SPARK_CASSANDRA_OUTPUT_THROUGHPUT_MB_PER_SEC (0 = no throttling)\n" \
          "- Cassandra input MB/s:  $SPARK_CASSANDRA_INPUT_THROUGHPUT_MB_PER_SEC (0 = no throttling)\n" \
@@ -73,6 +82,7 @@ time "$SPARK_HOME"/bin/spark-submit \
   --conf spark.blockManager.port="$SPARK_BLOCKMGR_PORT" \
   --conf spark.executor.memory="$SPARK_EXECUTOR_MEMORY" \
   --conf spark.cassandra.connection.host="$CASSANDRA_HOST" \
+  "${CASSANDRA_AUTH_CONF[@]}" \
   --conf spark.cassandra.output.throughputMBPerSec="$SPARK_CASSANDRA_OUTPUT_THROUGHPUT_MB_PER_SEC" \
   --conf spark.cassandra.input.throughputMBPerSec="$SPARK_CASSANDRA_INPUT_THROUGHPUT_MB_PER_SEC" \
   --conf spark.cassandra.connection.timeoutMS="$SPARK_CASSANDRA_CONNECTION_TIMEOUT_MS" \

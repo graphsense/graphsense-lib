@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 - scalatest 3.2.12 -> 3.2.19 (test scope).
+- `docker/submit.sh` takes optional `CASSANDRA_USERNAME` / `CASSANDRA_PASSWORD`
+  and forwards them as `spark.cassandra.auth.*`, so the Docker transformation
+  job works against a cluster with `PasswordAuthenticator` enabled. Unset, it
+  connects anonymously as before.
 - **`scalacOptions += "-release:8"`.** Scala 2.12 always emitted Java 8
   bytecode, so the artifact never varied by build JDK — but the source was
   checked against whichever class library the builder had, so a Java 9+ stdlib
