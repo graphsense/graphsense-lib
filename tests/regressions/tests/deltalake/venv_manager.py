@@ -121,6 +121,37 @@ def get_or_create_reference_venv(ref_version: str, gslib_repo_url: str = "https:
     return venv_dir
 
 
+def reference_source_dir(ref_version: str) -> Path:
+    """The checkout of *ref_version* that get_or_create_reference_venv cloned."""
+    return VENV_CACHE_DIR / f"ref-src-{_venv_hash(ref_version)}"
+
+
+def ensure_gs_clustering(venv_dir: Path, gslib_path: Path) -> bool:
+    """Build the Rust ``gs_clustering`` extension of the checkout at
+    *gslib_path* into *venv_dir*, unless it already imports there.
+
+    The delta updater maintains the fresh_* clustering tables only when the
+    extension imports and skips them silently otherwise, so every side of a
+    clustering comparison needs it. Returns False when the checkout predates
+    the extension.
+    """
+    python_bin = venv_dir / "bin" / "python"
+    check = subprocess.run(
+        [str(python_bin), "-c", "import gs_clustering"], capture_output=True
+    )
+    if check.returncode == 0:
+        return True
+    rust_dir = gslib_path / "rust" / "gs_clustering"
+    if not rust_dir.exists():
+        return False
+    _run(
+        ["uv", "pip", "install", str(rust_dir), "--python", str(python_bin)],
+        timeout=900,
+    )
+    _run([str(python_bin), "-c", "import gs_clustering"])
+    return True
+
+
 def get_or_create_current_venv(gslib_path: Path) -> Path:
     """Create (or reuse cached) venv with the *current* local graphsense-lib.
 

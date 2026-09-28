@@ -7,12 +7,15 @@ install.
 
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tests.deltalake.venv_manager import (
+    ensure_gs_clustering,
     get_or_create_current_venv,
     get_or_create_reference_venv,
+    reference_source_dir,
 )
 from tests.lib.conftest_helpers import (
     get_cassandra_coords as _get_cassandra_coords,
@@ -79,22 +82,40 @@ def current_venv():
     gslib_path = configs[0].gslib_path if configs else None
     if gslib_path is None:
         pytest.skip("No delta_update configs available")
-    return get_or_create_current_venv(gslib_path)
+    venv_dir = get_or_create_current_venv(gslib_path)
+    if not ensure_gs_clustering(venv_dir, gslib_path):
+        pytest.fail(f"rust/gs_clustering not found in {gslib_path}")
+    return venv_dir
 
 
 @pytest.fixture(scope="session")
 def baseline_venv():
-    """Reference graphsense-lib release used for the regression comparison.
+    """Reference graphsense-lib used for the regression comparison.
 
-    Override the version via ``DELTA_UPDATE_REF_VERSION`` env var (default
-    ``v2.12.3``).
+    ``DELTA_UPDATE_REF_PATH`` names a local checkout to compare against,
+    e.g. a worktree at the commit before the change under test; otherwise
+    the ``DELTA_UPDATE_REF_VERSION`` release tag (default ``v2.12.3``).
     """
+    ref_path = os.environ.get("DELTA_UPDATE_REF_PATH")
+    if ref_path:
+        venv_dir = get_or_create_current_venv(Path(ref_path))
+        ensure_gs_clustering(venv_dir, Path(ref_path))
+        return venv_dir
     ref_version = os.environ.get("DELTA_UPDATE_REF_VERSION", DEFAULT_REF_VERSION)
-    return get_or_create_reference_venv(ref_version)
+    venv_dir = get_or_create_reference_venv(ref_version)
+    ensure_gs_clustering(venv_dir, reference_source_dir(ref_version))
+    return venv_dir
 
 
 @pytest.fixture(scope="session")
 def baseline_version() -> str:
+    ref_path = os.environ.get("DELTA_UPDATE_REF_PATH")
+    if ref_path:
+        sha = subprocess.run(
+            ["git", "-C", ref_path, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return f"local@{sha}"
     return os.environ.get("DELTA_UPDATE_REF_VERSION", DEFAULT_REF_VERSION)
 
 
