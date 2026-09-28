@@ -1,0 +1,36 @@
+{
+  "name": "graphsense",
+  "description": "GraphSense blockchain analytics: the hosted MCP connector plus investigation skills.",
+  "author": {
+    "name": "Iknaio Cryptoasset Analytics GmbH",
+    "email": "contact@iknaio.com"
+  },
+  "homepage": "https://www.iknaio.com/",
+  "repository": "https://github.com/graphsense/graphsense-lib",
+  "license": "MIT",
+  "skills": "./",
+  "userConfig": {
+    "mcp_url": {
+      "type": "string",
+      "title": "GraphSense MCP URL",
+      "description": "Full URL of the GraphSense MCP endpoint, including the trailing slash",
+      "default": "https://api.iknaio.com/mcp/",
+      "required": true
+    },
+    "api_key": {
+      "type": "string",
+      "title": "GraphSense API key",
+      "description": "Sent as the Authorization header, same as for the REST API",
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "graphsense": {
+      "type": "http",
+      "url": "${user_config.mcp_url}",
+      "headers": {
+        "Authorization": "${user_config.api_key}"
+      }
+    }
+  }
+}

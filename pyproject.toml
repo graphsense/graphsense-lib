@@ -200,6 +200,8 @@ package-dir = {"" = "src"}
 # resources, breaking taxonomy + schema loading at runtime.
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.csv", "*.sql", "*.proto", "*.template", "*.json"]
+# The skills the MCP server serves are markdown.
+"graphsenselib.mcp" = ["skills/**/*.md"]
 # Require a min/specific Python version (comma-separated conditions)
 # Add here dependencies of your project (line-separated), e.g. requests>=2.2,<3.0.
 # Version specifiers like >=2.2,<3.0 avoid problems due to API changes in
