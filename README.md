@@ -160,6 +160,76 @@ uv run graphsense-cli mcp validate-curation
 
 The tool surface is strictly curated — **not** every REST endpoint becomes a tool. Consolidations merge endpoints that LLMs always chain (e.g. one `lookup_address` replaces four address-level calls). See [`src/graphsenselib/mcp/README.md`](src/graphsenselib/mcp/README.md) for the design principles, the full tool catalog, how to add or modify tools, deployment details (transport, lifespan composition), and the proprietary `search_neighbors` forward.
 
+#### Using the GraphSense skills in Claude
+
+The MCP ships agent skills that teach Claude how to run an investigation with
+the GraphSense tools: three investigators, which differ only in how far they
+go beyond the question, and three shared skills they load.
+
+| Skill | What it does |
+| --- | --- |
+| `investigate-strict` | Answers exactly what was asked. No suggestions, no extra leads, no unrequested exports. |
+| `investigate-advisor` | The default. Answers, then suggests one next step or a Pathfinder export. |
+| `investigate-autonomous` | Follows the obvious leads itself, one or two hops beyond the finding, and ends with findings instead of suggestions. |
+| `identifier-integrity` | Shared: never write an address, hash or link from memory or complete a truncated one. |
+| `trace-funds` | Shared: which tools to use and how to follow funds hop by hop without closing a trace on a guess. |
+| `investigation-reporting` | Shared: provenance per fact, High/Medium/Low confidence, no legal judgment, AI-generated disclaimer. |
+
+**Claude Code.** Install the `graphsense` plugin from this repository. It
+brings the skills and registers the GraphSense MCP, so no separate
+`claude mcp add` is needed:
+
+```bash
+claude plugin marketplace add graphsense/graphsense-lib
+claude plugin install graphsense@graphsense
+```
+
+On install, Claude Code asks for the MCP URL (default
+`https://api.iknaio.com/mcp/`, the hosted Iknaio endpoint) and your API key,
+which is sent as the `Authorization` header like for the REST API. Then either
+call an investigator directly:
+
+```text
+/graphsense:investigate-advisor bc1q... where did the funds go after March 2024?
+/graphsense:investigate-strict 0x... is this address tagged?
+```
+
+or just ask ("trace the funds from bc1q..."): Claude picks the investigator
+from the skill descriptions, `investigate-advisor` unless you ask for no more
+than an answer or for Claude to keep going on its own. Pull updates with
+`claude plugin marketplace update graphsense`.
+
+**Claude app (claude.ai, Desktop).** Add GraphSense as a connector, then
+upload the skills: zip each skill folder and upload the zips under
+*Settings → Capabilities → Skills* (organization admins can provision them for
+everyone). Upload all six; the investigators load the shared ones by name.
+
+```bash
+cd src/graphsenselib/mcp/skills
+mkdir -p /tmp/gs-skills
+for d in */; do zip -qr "/tmp/gs-skills/${d%/}.zip" "$d"; done
+```
+
+**Other MCP clients.** The skills are also MCP resources
+(`skill://<name>/SKILL.md`), so any client can read them, or sync them to a
+skills directory with FastMCP:
+
+```python
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.utilities.skills import sync_skills
+
+transport = StreamableHttpTransport(
+    "https://api.iknaio.com/mcp/",
+    headers={"Authorization": API_KEY},  # the bare key, no "Bearer"
+)
+async with Client(transport) as client:
+    await sync_skills(client, "~/.claude/skills")
+```
+
+See [`src/graphsenselib/mcp/README.md`](src/graphsenselib/mcp/README.md#skills)
+for how the skills are built and tested.
+
 ### REST API evolution and deprecation policy
 
 The REST API follows semantic versioning via `info.version` in the OpenAPI spec

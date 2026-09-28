@@ -22,8 +22,10 @@ the whole investigation:
 - `graphsense:investigation-reporting` - perspective, provenance,
   confidence, disclaimer, Pathfinder export
 
-In Claude Code, load each with the Skill tool. In other clients, read
-`skill://<name>/SKILL.md` from the GraphSense MCP server.
+Load each with the Skill tool. Installed as the Claude Code plugin they are
+named `graphsense:<name>`; installed on their own (e.g. uploaded to the
+Claude app) they have no `graphsense:` prefix. In clients without skills,
+read `skill://<name>/SKILL.md` from the GraphSense MCP server instead.
 
 ## Automation level: advisor
 
