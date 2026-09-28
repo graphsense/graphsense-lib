@@ -37,6 +37,9 @@ Use one changelog file, but separate entries by track in each release window.
 #### Changed
 - **MCP `build_pathfinder_file` looks up tx direction and conversions before a hierarchical layout**, so agent-built files draw inflows on the left and bridges as Pathfinder arranges them. The verifier reuses the fetched tx bodies. A failed lookup is logged and the old layout is used; it adds no warning, because the warnings tell the agent to fix its spec.
 
+#### Fixed
+- **The delta updater writes a batch in reference order, so REST no longer reaches a row whose target is not written yet.** A non-atomic apply sent all of a batch's rows concurrently, so for a moment an address could be findable while its cluster row was missing (`/addresses/{address}/cluster` answered HTTP 500), a relation could point at a neighbour not written yet, or a cluster at its root address. Batch writes (`--write-batch-size` above 1, the worker pool, WAL replay) now go out in phases, each acknowledged in full before the next starts: entity rows, then the prefix rows that make new addresses and txs findable, then relations, memberships and tx lists, then deletes, then the checkpoint (`summary_statistics`, `delta_updater_history`), which the single-process path used to send together with the data. TX mode (one logged batch per tx) is unchanged, and the rows written are the same, so the Spark pipeline needs no change. A table without a phase stops the batch before its first write. (`deltaupdate/update/utxo/update.py`)
+
 ### Web API + Python client
 
 #### Changed

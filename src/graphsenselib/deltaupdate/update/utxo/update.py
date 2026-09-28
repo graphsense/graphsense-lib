@@ -3,6 +3,7 @@ import sys
 import time
 from collections import defaultdict
 from datetime import datetime
+from enum import IntEnum
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from cassandra import InvalidRequest
@@ -1642,6 +1643,97 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 raise Exception(f"Have not found validation rule for {change}.")
 
 
+class WritePhase(IntEnum):
+    """Order in which a non-atomic apply writes a batch's changes.
+
+    REST follows ids from row to row: address string -> prefix row ->
+    address row -> cluster row -> root address row, relation -> neighbor,
+    tx list -> the tx's input/output addresses by string. Written
+    concurrently in one go, a reader can land on a row whose target is not
+    written yet (an address whose cluster row is missing ->
+    DBInconsistencyException -> HTTP 500). A row a reader can reach only
+    points at rows of an earlier phase, and each phase is acknowledged in
+    full before the next one starts, so every reference a reader can follow
+    resolves at every moment of the write.
+    """
+
+    # The rows a reference ends at. A new object's records are unreachable
+    # while they are written: nothing published points at the object yet.
+    RECORDS = 1
+    # Lookup rows that make a new address or tx findable by its string.
+    PUBLISH = 2
+    # Rows pointing from one object to another. Tx lists come after PUBLISH
+    # because REST resolves a listed tx's input/output addresses by string.
+    EDGES = 3
+    # Deletes, once the edges replacing them are written: an absorbed fresh
+    # cluster goes only after its members point at the survivor.
+    UNLINKS = 4
+    # The checkpoint, so a partially written batch never looks complete.
+    BOOKKEEPING = 5
+
+
+_WRITE_PHASE_BY_TABLE = {
+    "address": WritePhase.RECORDS,
+    "cluster": WritePhase.RECORDS,
+    "fresh_cluster_stats": WritePhase.RECORDS,
+    "balance": WritePhase.RECORDS,
+    "token_exchange_rates": WritePhase.RECORDS,
+    "transaction_ids_by_transaction_id_group": WritePhase.RECORDS,
+    "address_ids_by_address_prefix": WritePhase.PUBLISH,
+    "transaction_ids_by_transaction_prefix": WritePhase.PUBLISH,
+    "address_incoming_relations": WritePhase.EDGES,
+    "address_outgoing_relations": WritePhase.EDGES,
+    "cluster_incoming_relations": WritePhase.EDGES,
+    "cluster_outgoing_relations": WritePhase.EDGES,
+    "cluster_addresses": WritePhase.EDGES,
+    "fresh_address_cluster": WritePhase.EDGES,
+    "fresh_cluster_addresses": WritePhase.EDGES,
+    "address_transactions": WritePhase.EDGES,
+    "cluster_transactions": WritePhase.EDGES,
+    "block_transactions": WritePhase.EDGES,
+    "address_transactions_secondary_ids": WritePhase.EDGES,
+    "address_incoming_relations_secondary_ids": WritePhase.EDGES,
+    "address_outgoing_relations_secondary_ids": WritePhase.EDGES,
+    "summary_statistics": WritePhase.BOOKKEEPING,
+    TABLE_NAME_DELTA_HISTORY: WritePhase.BOOKKEEPING,
+}
+
+
+def write_phase(change: DbChange) -> WritePhase:
+    phase = _WRITE_PHASE_BY_TABLE.get(change.table)
+    if phase is None:
+        raise ValueError(
+            f"Table {change.table} has no WritePhase. Add it to "
+            "_WRITE_PHASE_BY_TABLE, after the tables its rows point at."
+        )
+    if phase != WritePhase.BOOKKEEPING and change.action in (
+        DbChangeType.DELETE,
+        DbChangeType.TRUNCATE,
+    ):
+        return WritePhase.UNLINKS
+    return phase
+
+
+def split_into_write_phases(changes: List[DbChange]) -> List[List[DbChange]]:
+    """Changes grouped by WritePhase in phase order, empty phases left out.
+    Raises on a table without a phase, before anything is written."""
+    by_phase = defaultdict(list)
+    for change in changes:
+        by_phase[write_phase(change)].append(change)
+    return [by_phase[phase] for phase in sorted(by_phase)]
+
+
+def _apply_write_phases(
+    db: AnalyticsDb, phases: List[List[DbChange]]
+) -> List[ApplyChangesResult]:
+    # AnalyticsDb.apply_changes returns only after every statement of the
+    # phase is acknowledged, so the next phase starts on a complete one.
+    return [
+        db.transformed.apply_changes(phase_changes, atomic=False)
+        for phase_changes in phases
+    ]
+
+
 def _notify_db_retries(result: ApplyChangesResult, num_changes: int) -> None:
     """Send retry warning notification using the monitoring topic."""
     msg = (
@@ -1661,8 +1753,10 @@ def apply_changes(
     try_atomic_writes: bool,
     pool=None,
 ):
-    """Apply a list of db-changes to the database. Changes are applied
-    atomically and in order.
+    """Apply a list of db-changes to the database. With try_atomic_writes
+    they go out as one logged batch; otherwise (and when that batch is too
+    large) phase by phase in WritePhase order, each phase acknowledged in
+    full before the next one starts.
 
     Args:
         db (AnalyticsDb): Database instance
@@ -1670,10 +1764,10 @@ def apply_changes(
         pedantic (bool): Validate changes before applying
         try_atomic_writes (bool): Attempt atomic batch writes first
         pool (ParallelDbPool): When given (and try_atomic_writes is False),
-            shard the upserts across worker processes instead of writing
-            from this process. Safe because every change targets a distinct
-            row (guaranteed by the upstream delta compression) and each
-            worker reuses the same retry logic.
+            shard each phase's upserts across worker processes instead of
+            writing from this process. Safe because every change targets a
+            distinct row (guaranteed by the upstream delta compression) and
+            each worker reuses the same retry logic.
     Returns:
         None: Nothing
 
@@ -1715,11 +1809,16 @@ def apply_changes(
         )
         logger.info(short_summary)
 
+    phases = split_into_write_phases(changes)
+
     if pool is not None and not try_atomic_writes:
         with LoggerScope.debug(logger, "Applying changes via worker pool") as _:
-            for result in pool.map_chunked(worker_apply_changes, changes):
-                if result.warning_text is not None:
-                    _notify_db_retries(result, len(changes))
+            for phase_changes in phases:
+                # map_chunked returns only once every worker has acknowledged
+                # its shard: the barrier between two phases.
+                for result in pool.map_chunked(worker_apply_changes, phase_changes):
+                    if result.warning_text is not None:
+                        _notify_db_retries(result, len(changes))
         return
 
     with LoggerScope.debug(logger, "Applying changes") as _:
@@ -1727,7 +1826,7 @@ def apply_changes(
             if try_atomic_writes:
                 # try to apply the changes atomic and in-order
                 try:
-                    result = db.transformed.apply_changes(changes, atomic=True)
+                    results = [db.transformed.apply_changes(changes, atomic=True)]
                 except InvalidRequest as e:
                     atomic = False
                     msg = getattr(e, "message", repr(e)).lower()
@@ -1736,12 +1835,12 @@ def apply_changes(
                             "Batch to large: Retrying to apply changes "
                             "without atomic write."
                         )
-                        result = db.transformed.apply_changes(changes, atomic=False)
+                        results = _apply_write_phases(db, phases)
                     else:
                         raise e
             else:
                 atomic = False
-                result = db.transformed.apply_changes(changes, atomic=False)
+                results = _apply_write_phases(db, phases)
 
         except Exception as e:
             atomicity_msg = (
@@ -1752,8 +1851,9 @@ def apply_changes(
             logger.error(f"Failed to apply {len(changes)} changes.{atomicity_msg}")
             raise e
 
-        if result.warning_text is not None:
-            _notify_db_retries(result, len(changes))
+        for result in results:
+            if result.warning_text is not None:
+                _notify_db_retries(result, len(changes))
 
 
 class UpdateStrategyUtxo(UpdateStrategy):
