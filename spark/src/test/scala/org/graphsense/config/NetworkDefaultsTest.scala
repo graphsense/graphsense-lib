@@ -53,8 +53,8 @@ class NetworkDefaultsTest extends AnyFunSuite {
     assert(conf.blockBucketSizeAddressTxs() == 450000)
   }
 
-  test("a network without layout defaults fails loudly") {
-    val conf = new UtxoConf(base("doge"))
-    assertThrows[IllegalArgumentException](conf.bucketSize())
+  test("a network without layout defaults fails at argument parsing") {
+    // Scallop resolves defaults in verify(), so the job fails at startup.
+    assertThrows[IllegalArgumentException](new UtxoConf(base("doge")))
   }
 }
