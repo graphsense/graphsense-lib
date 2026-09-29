@@ -114,7 +114,11 @@ conversions = [
 ]
 
 tagstore = [
-    "sqlmodel>=0.0.22",
+    # <0.0.45: 0.0.45 maps plain `datetime` fields to timestamptz and rejects
+    # naive values, but the tagstore models and existing databases are naive
+    # (`lastmod` comparisons in tagpack/tagstore.py fail on upgrade). Lifting
+    # the cap needs a tagstore column migration, not just a lock bump.
+    "sqlmodel>=0.0.22,<0.0.45",
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.3",
     "colorama>=0.4.6",
