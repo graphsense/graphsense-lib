@@ -1,6 +1,6 @@
 package org.graphsense.utxo.config
 
-import org.graphsense.config.WriterConfig
+import org.graphsense.config.{NetworkDefaults, UtxoLayout, WriterConfig}
 import org.rogach.scallop._
 
 class UtxoConf(arguments: Seq[String])
@@ -10,6 +10,10 @@ class UtxoConf(arguments: Seq[String])
     required = true,
     descr = "Cryptocurrency (e.g. BTC, BCH, LTC, ZEC)"
   )
+  // Layout options default per network (see NetworkDefaults). Scallop
+  // evaluates `default` lazily, after --network is parsed.
+  private def layout[A](f: UtxoLayout => A): Option[A] =
+    network.toOption.map(n => f(NetworkDefaults.utxoFor(n)))
   val rawKeyspace: ScallopOption[String] =
     opt[String](
       "raw-keyspace",
@@ -26,20 +30,20 @@ class UtxoConf(arguments: Seq[String])
   val bucketSize: ScallopOption[Int] = opt[Int](
     "bucket-size",
     required = false,
-    default = Some(25000),
+    default = layout(_.bucketSize),
     noshort = true,
     descr = "Bucket size for Cassandra partitions"
   )
   val addressPrefixLength: ScallopOption[Int] = opt[Int](
     "address-prefix-length",
     required = false,
-    default = Some(4),
+    default = layout(_.addressPrefixLength),
     noshort = true,
     descr = "Prefix length of address hashes for Cassandra partitioning keys"
   )
   val coinjoinFilter: ScallopOption[Boolean] = toggle(
     "coinjoin-filtering",
-    default = Some(true),
+    default = layout(_.coinjoinFiltering),
     noshort = true,
     prefix = "no-",
     descrYes = "Exclude coinJoin transactions from clustering",
@@ -48,10 +52,10 @@ class UtxoConf(arguments: Seq[String])
   val bech32Prefix: ScallopOption[String] =
     opt[String](
       "bech32-prefix",
-      default = Some(""),
+      default = layout(_.bech32Prefix),
       noshort = true,
       descr =
-        "Bech32 address prefix (e.g. 'bc1' for Bitcoin or 'ltc1' for Litecoin)"
+        "Bech32 address prefix stripped before taking the address prefix (e.g. 'bc' for Bitcoin, 'ltc1' for Litecoin)"
     )
   val checkpointDir: ScallopOption[String] = opt[String](
     "checkpoint-dir",

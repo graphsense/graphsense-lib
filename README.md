@@ -423,8 +423,8 @@ full_transform_args:
   artifact: fat # "fat" (self-contained assembly, default) or "slim" (+ Maven packages)
   spark_profile: # selects a spark_config profile per currency
     btc: utxo
-  jar_args: # optional, per-currency extra job args
-    btc: ["--bech32-prefix", "bc", "--bucket-size", "5000"]
+  jar_args: # optional, per-currency extra job args (override data_configuration)
+    btc: ["--checkpoint-dir", "file:///data/spark-checkpoint"]
   # Optional Cassandra Sidecar bulk-write path
   sidecar:
     enabled: false
@@ -438,6 +438,21 @@ profile; Cassandra coordinates (host/port/credentials) are taken from the
 environment config. The command is backend-neutral (`backend: scala` today,
 `pyspark` reserved) so a future native implementation can be selected without
 changing how it is invoked.
+
+The layout of the transformed keyspace (`bucket_size`, `address_prefix_length`,
+`bech_32_prefix` and `coinjoin_filtering` for UTXO chains; `tx_prefix_length`,
+`block_bucket_size_address_txs` and `addressrelations_ids_nbuckets` for account
+chains) comes from `keyspace_setup_config.transformed.data_configuration` and is
+passed to the job as `--bucket-size`, `--bech32-prefix`, etc. Keys left out are
+filled from graphsense-lib's per-currency defaults, which are the production
+layout. Passing them explicitly keeps older job releases, whose built-in
+defaults differ, on the same layout. An option set in `jar_args` or after `--`
+takes precedence.
+
+Earlier versions ignored `data_configuration`. So that a stale or mistaken
+value there cannot change the layout unnoticed, the command fails before
+creating the keyspace if a value differs from the default, and lists the
+values that do. Pass `--override-defaults` to use them anyway.
 
 #### Java runtime when submitting from the Docker image
 
