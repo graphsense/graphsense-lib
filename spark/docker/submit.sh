@@ -18,7 +18,6 @@ FOO="${SPARK_CASSANDRA_RECONNECTION_DELAY_MAX_MS:=10000}"
 FOO="${SPARK_CASSANDRA_OUTPUT_CONCURRENT_WRITES:=2}"
 
 # FOO="${TRANSFORM_VERSION:=v1.5.1}"
-FOO="${TRANSFORM_BUCKET_SIZE:=10000}"
 FOO="${NETWORK:=ETH}"
 
 FOO="${SPARK_PACKAGES:=com.datastax.spark:spark-cassandra-connector_2.12:3.5.1,org.rogach:scallop_2.12:4.1.0,joda-time:joda-time:2.10.10,org.web3j:core:4.8.7,org.web3j:abi:4.8.7,graphframes:graphframes:0.8.3-spark3.5-s_2.12}"
@@ -37,6 +36,13 @@ if [ "$GS_SPARK_WRITER" = "sidecar" ]; then
   GS_SPARK_ARGS="$GS_SPARK_ARGS --sidecar-contact-points $GS_SPARK_SIDECAR_CONTACT_POINTS"
   GS_SPARK_ARGS="$GS_SPARK_ARGS --sidecar-local-dc $GS_SPARK_SIDECAR_LOCAL_DC"
   GS_SPARK_ARGS="$GS_SPARK_ARGS --sidecar-consistency-level ${GS_SPARK_SIDECAR_CONSISTENCY_LEVEL:-LOCAL_QUORUM}"
+fi
+
+# Keyspace layout. Left unset, the job uses its per-network defaults (the
+# production layout, see NetworkDefaults.scala); set to override.
+LAYOUT_ARGS=()
+if [ -n "$TRANSFORM_BUCKET_SIZE" ]; then
+  LAYOUT_ARGS+=(--bucket-size "$TRANSFORM_BUCKET_SIZE")
 fi
 
 FOO="${CASSANDRA_HOST:=localhost}"
@@ -70,7 +76,7 @@ echo -en "Starting Spark job ...\n" \
          "Arguments:\n" \
          "- Raw keyspace:        $RAW_KEYSPACE\n" \
          "- Target keyspace:     $TGT_KEYSPACE\n" \
-         "- Bucket Size:         $TRANSFORM_BUCKET_SIZE\n"
+         "- Bucket Size:         ${TRANSFORM_BUCKET_SIZE:-(network default)}\n"
 
 time "$SPARK_HOME"/bin/spark-submit \
   --class "org.graphsense.TransformationJob" \
@@ -106,8 +112,8 @@ time "$SPARK_HOME"/bin/spark-submit \
   --network "$NETWORK" \
   --raw-keyspace "$RAW_KEYSPACE" \
   --target-keyspace "$TGT_KEYSPACE" \
+  "${LAYOUT_ARGS[@]}" \
   $GS_SPARK_ARGS \
   # --gs-cache-dir file:///tmp/spark/ \
-  # --bucket-size $TRANSFORM_BUCKET_SIZE \
 
 exit $?

@@ -11,6 +11,7 @@ from graphsenselib.cli.common import (
     spark_profile_option,
 )
 from graphsenselib.config import supported_fiat_currencies
+from graphsenselib.config.config import get_default_data_configuration
 from graphsenselib.schema import GraphsenseSchemas
 from graphsenselib.utils.cassandra import split_nodes_and_port
 
@@ -1332,6 +1333,95 @@ def _expected_transformed_ks(currency, suffix, no_date):
     return name
 
 
+# data_configuration key -> (graphsense-spark job option, expected type), per
+# schema type. Only options the job's Config.scala accepts for that schema are
+# listed.
+_DATA_CONFIG_JAR_OPTIONS = {
+    "utxo": {
+        "bucket_size": ("--bucket-size", int),
+        "address_prefix_length": ("--address-prefix-length", int),
+        "bech_32_prefix": ("--bech32-prefix", str),
+        "coinjoin_filtering": ("--coinjoin-filtering", bool),
+    },
+    "account": {
+        "bucket_size": ("--bucket-size", int),
+        "address_prefix_length": ("--address-prefix-length", int),
+        "tx_prefix_length": ("--tx-prefix-length", int),
+        "block_bucket_size_address_txs": ("--block-bucket-size-address-txs", int),
+        "addressrelations_ids_nbuckets": ("--addressrelations-ids-nbuckets", int),
+    },
+}
+
+
+def _given_jar_options(args):
+    """Option names present in ``args``, accepting ``--opt v`` and ``--opt=v``.
+
+    The token after a value-taking data_configuration option is its value, not
+    an option, and is skipped.
+    """
+    value_options = {
+        opt
+        for options in _DATA_CONFIG_JAR_OPTIONS.values()
+        for opt, typ in options.values()
+        if typ is not bool
+    }
+    given = set()
+    tokens = iter(args)
+    for token in tokens:
+        if not token.startswith("--"):
+            continue
+        name, has_value, _ = token.partition("=")
+        given.add(name)
+        if not has_value and name in value_options:
+            next(tokens, None)
+    return given
+
+
+def _data_config_jar_args(currency, schema_type, data_configuration, explicit_args):
+    """Job args derived from the transformed keyspace's data_configuration.
+
+    The job overwrites the seeded configuration row, and releases before
+    per-network defaults (NetworkDefaults.scala) fell back to bucket size
+    25000 and no bech32 prefix for UTXO, and a block bucket size of 150000 for
+    trx. So every setting is passed explicitly, with keys missing from
+    ``data_configuration`` filled from graphsense-lib's defaults, the
+    production layout. Options already present in
+    ``explicit_args`` (jar_args / CLI passthrough) win; Scallop rejects an
+    option given twice, so they are skipped here rather than repeated.
+
+    Returns ``(args, deviations)``, where ``deviations`` lists
+    ``(key, value, default)`` for derived values that differ from
+    graphsense-lib's default.
+    """
+    options = _DATA_CONFIG_JAR_OPTIONS.get(
+        "account" if schema_type.startswith("account") else schema_type, {}
+    )
+    defaults = get_default_data_configuration(currency, "transformed")
+    given = _given_jar_options(explicit_args)
+
+    args, deviations = [], []
+    for key, (opt, typ) in options.items():
+        if opt in given or (typ is bool and f"--no-{opt[2:]}" in given):
+            continue
+        value = data_configuration.get(key, defaults.get(key))
+        if value is None:
+            continue
+        # bool is an int subclass; reject it (and "false" strings) explicitly.
+        if not isinstance(value, typ) or (typ is int and isinstance(value, bool)):
+            raise click.ClickException(
+                f"data_configuration.{key} must be of type {typ.__name__}, "
+                f"got {value!r}."
+            )
+        if key in defaults and value != defaults[key]:
+            deviations.append((key, value, defaults[key]))
+        if typ is bool:
+            args.append(opt if value else f"--no-{opt[2:]}")
+        elif value != "":
+            # The job's --bech32-prefix default is already "".
+            args += [opt, str(value)]
+    return args, deviations
+
+
 @transformation.command(
     "raw-to-transformed",
     short_help="[ALPHA] Transform the Cassandra raw keyspace into a transformed keyspace (raw → transformed, graphsense-spark job).",
@@ -1407,6 +1497,17 @@ def _expected_transformed_ks(currency, suffix, no_date):
     is_flag=True,
     help="Print the spark-submit command and exit; creates no keyspace.",
 )
+@click.option(
+    "--override-defaults",
+    is_flag=True,
+    help=(
+        "Allow the transformed data_configuration to set a layout value "
+        "(bucket sizes, prefix lengths, bech32 prefix, coinjoin filtering) "
+        "that differs from graphsense-lib's per-currency defaults, which are "
+        "the production layout. "
+        "Without it such a configuration fails the command."
+    ),
+)
 @click.argument("extra_jar_args", nargs=-1, type=click.UNPROCESSED)
 @spark_profile_option
 def run_full_transform(
@@ -1423,6 +1524,7 @@ def run_full_transform(
     spark_home,
     local,
     dry_run,
+    override_defaults,
     extra_jar_args,
     spark_profile,
 ):
@@ -1459,6 +1561,30 @@ def run_full_transform(
         raise click.UsageError(
             f"Backend '{backend}' is not implemented yet; only 'scala' "
             f"(external graphsense-spark job) is currently available."
+        )
+
+    # 0. Job args from the transformed data_configuration. Checked before the
+    #    keyspace is created: earlier versions ignored data_configuration, so a
+    #    value that deviates from the defaults may be a stale entry that would
+    #    now change the output layout, and must be opted into.
+    explicit_jar_args = [*fta.jar_args.get(currency, []), *extra_jar_args]
+    transformed_setup = ks_config.keyspace_setup_config.get("transformed")
+    data_config_args, deviations = _data_config_jar_args(
+        currency,
+        ks_config.schema_type,
+        transformed_setup.data_configuration if transformed_setup else {},
+        explicit_jar_args,
+    )
+    if deviations and not override_defaults:
+        details = "\n".join(
+            f"  {key}: {value!r} (default {default!r})"
+            for key, value, default in deviations
+        )
+        raise click.ClickException(
+            "The transformed data_configuration differs from graphsense-lib's "
+            f"defaults for {currency}:\n{details}\n"
+            "Earlier versions ignored these values. Pass --override-defaults "
+            "to use them, or remove them from data_configuration."
         )
 
     schemas = GraphsenseSchemas()
@@ -1523,7 +1649,8 @@ def run_full_transform(
     artifact = artifact or fta.artifact
     packages = [] if artifact == "fat" else list(fta.packages)
 
-    # 4. Job args: base + per-currency extras + CLI passthrough.
+    # 4. Job args: base + transformed data_configuration + per-currency extras
+    #    + CLI passthrough (the latter two override data_configuration).
     jar_args = [
         "--network",
         currency,
@@ -1531,8 +1658,8 @@ def run_full_transform(
         raw_keyspace,
         "--target-keyspace",
         target_keyspace,
-        *fta.jar_args.get(currency, []),
-        *extra_jar_args,
+        *data_config_args,
+        *explicit_jar_args,
     ]
 
     # 5. Optional sidecar bulk-write path (config flag or --writer sidecar).

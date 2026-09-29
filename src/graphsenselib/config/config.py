@@ -105,6 +105,10 @@ def get_default_data_configuration(
     # into dated keyspaces (e.g. zec_raw_20260423), producing two configuration
     # rows after the first real ingest.
 
+    # The transformed defaults are the production layout (the configuration
+    # rows of the prod keyspaces); `transformation raw-to-transformed` passes
+    # them to the graphsense-spark job, whose own defaults differ.
+
     # Configuration for account-based currencies (eth, trx)
     if currency == "eth":
         if keyspace_type == "raw":
@@ -117,6 +121,8 @@ def get_default_data_configuration(
                 "address_prefix_length": 5,
                 "bucket_size": 25000,
                 "tx_prefix_length": 5,
+                "block_bucket_size_address_txs": 150000,
+                "addressrelations_ids_nbuckets": 100,
                 "fiat_currencies": ["EUR", "USD"],
             }
     elif currency == "trx":
@@ -128,8 +134,10 @@ def get_default_data_configuration(
         else:  # transformed
             return {
                 "address_prefix_length": 5,
-                "bucket_size": 10000,
+                "bucket_size": 25000,
                 "tx_prefix_length": 5,
+                "block_bucket_size_address_txs": 50000,
+                "addressrelations_ids_nbuckets": 100,
                 "fiat_currencies": ["EUR", "USD"],
             }
 
