@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [v26.09.0] 2026-09-29
 ### Security
 - **`org.web3j:core` dropped from the build.** Nothing imported it — the whole
   web3j surface is four calls in `Tokens.scala` (`EventEncoder`,
