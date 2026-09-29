@@ -1,4 +1,4 @@
-RELEASE := 'v26.08.2'
+RELEASE := 'v26.09.0'
 
 all: format lint build
 
@@ -62,9 +62,11 @@ run-docker-bch-transform-local: build-docker
 run-docker-trx-transform-local: build-docker
 	${RUNTRANSFORM} trx
 
+# Left over from the standalone repo: it tagged a bare v$(RELEASE), which in the
+# monorepo is the *library* track's tag shape and set off the library release
+# workflows. Spark releases are tagged spark-vX.Y.Z from the repository root.
 tag-version:
-	#-git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
-	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
+	@echo "Spark releases are tagged from the repository root: make tag-spark-version (creates spark-v$(RELEASE:'v%'=%))"; exit 1
 
 
 .PHONY: all test lint format build tag-version start-local-cassandra stop-local-cassandra run-local-transform build-docker test-account test-utxo test-common

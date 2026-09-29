@@ -86,6 +86,11 @@ Check the running job using the local Spark UI at http://localhost:4040/jobs.
 
 Detailed information about how to submit a job and how to install the necessary infrastructure we point you to the Dockerfile and the submit script in ```docker/submit.sh```.
 
+If the Cassandra cluster requires authentication, set `CASSANDRA_USERNAME` and
+`CASSANDRA_PASSWORD` for `docker/submit.sh`; they are forwarded as
+`spark.cassandra.auth.username` / `spark.cassandra.auth.password`. Both are
+optional; without them the job connects anonymously.
+
 ## Writing transformed data to Cassandra
 
 The transformation job can write its output tables to Cassandra in two ways,

@@ -30,11 +30,22 @@ trait SparkSessionTestWrapper {
       .appName("Transformation Test")
       .config("spark.sql.shuffle.partitions", "3")
       .config("spark.sql.session.timeZone", "UTC")
+      // Cap the plan text Spark renders. On every AQE re-plan,
+      // AdaptiveSparkPlanExec.onUpdatePlan builds the full explainString for
+      // the SQL listener, and an InMemoryTableScan prints its cached plan in
+      // full each time it is referenced. utxo.TransformationTest stacks
+      // persisted datasets on top of persisted datasets, so the shared DAG is
+      // unrolled into a tree and the string grows multiplicatively. The
+      // default cap is ~2 GB. The StringBuilder copy of that string
+      // intermittently exhausted the 8 GB fork heap on CI, with the same
+      // stack every time: OutOfMemoryError in QueryExecution.explainString
+      // under onUpdatePlan. Nothing in the tests reads plan text, and a
+      // truncated plan still ends in "... N more characters".
+      .config("spark.sql.maxPlanStringLength", "1m")
       // Every suite shares this session in one forked JVM, and the status
-      // store keeps finished executions (with their full plan text) and tasks
-      // by default — 1000 executions, 100k tasks. That heap only grows over
-      // the run, and on CI runners it intermittently ended in an OOM inside
-      // AdaptiveSparkPlanExec.onUpdatePlan. Nothing in the tests reads it.
+      // store keeps finished executions (with their plan text) and tasks by
+      // default — 1000 executions, 100k tasks. Nothing in the tests reads it,
+      // so keep it small too. This alone did not stop the OOM above.
       .config("spark.ui.enabled", "false")
       .config("spark.sql.ui.retainedExecutions", "10")
       .config("spark.ui.retainedJobs", "10")

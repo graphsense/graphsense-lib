@@ -17,11 +17,14 @@ TY := $(shell $(ROOT_DEV_EXPORT) | grep '^ty==')
 # Rootless podman (Fedora ships `docker` as a podman shim) maps the
 # container UID to a host *subuid*, so a plain `--user $(id -u):$(id -g)`
 # runs as a uid that cannot write the host-owned bind-mounted output tree
-# (AccessDenied on every generated file). `--userns=keep-id` maps the host
-# UID through unchanged so writes land as the invoking user. Real Docker
-# neither accepts nor needs this flag, so only add it for podman.
+# (AccessDenied on every generated file). Under podman, run as container root
+# instead: rootless, that *is* the invoking host user, so writes land as them.
+# (`--userns=keep-id` would do too, but a docker CLI rejects it client-side.)
+# Detect podman from the *engine* (`version` lists "Podman Engine"), not the
+# client: a real docker CLI pointed at a podman socket via DOCKER_HOST reports
+# plain Docker from `--version`. Real Docker keeps `--user`.
 DOCKER ?= docker
-USERNS_FLAG := $(shell $(DOCKER) --version 2>/dev/null | grep -qi podman && echo --userns=keep-id)
+CONTAINER_USER := $(shell $(DOCKER) version 2>/dev/null | grep -qi podman || echo --user $$(id -u):$$(id -g))
 
 
 # v7 generator with backward compatibility patches (offline - no server needed)
@@ -35,8 +38,7 @@ generate-openapi-client:
 	@API_VERSION=$$(jq -r '.info.version' openapi.json.30.tmp) && \
 	echo "Generating client with $(GENERATOR_VERSION) (API version: $$API_VERSION, package version: $$API_VERSION)..." && \
 	$(DOCKER) run --rm \
-		--user $$(id -u):$$(id -g) \
-		$(USERNS_FLAG) \
+		$(CONTAINER_USER) \
 		--security-opt label=disable \
 		-v "${PWD}:/build" \
 		-v "${PWD}/$(TEMPLATES_DIR):/templates" \

@@ -18,7 +18,6 @@ FOO="${SPARK_CASSANDRA_RECONNECTION_DELAY_MAX_MS:=10000}"
 FOO="${SPARK_CASSANDRA_OUTPUT_CONCURRENT_WRITES:=2}"
 
 # FOO="${TRANSFORM_VERSION:=v1.5.1}"
-FOO="${TRANSFORM_BUCKET_SIZE:=10000}"
 FOO="${NETWORK:=ETH}"
 
 FOO="${SPARK_PACKAGES:=com.datastax.spark:spark-cassandra-connector_2.12:3.5.1,org.rogach:scallop_2.12:4.1.0,joda-time:joda-time:2.10.10,org.web3j:core:4.8.7,org.web3j:abi:4.8.7,graphframes:graphframes:0.8.3-spark3.5-s_2.12}"
@@ -39,7 +38,22 @@ if [ "$GS_SPARK_WRITER" = "sidecar" ]; then
   GS_SPARK_ARGS="$GS_SPARK_ARGS --sidecar-consistency-level ${GS_SPARK_SIDECAR_CONSISTENCY_LEVEL:-LOCAL_QUORUM}"
 fi
 
+# Keyspace layout. Left unset, the job uses its per-network defaults (the
+# production layout, see NetworkDefaults.scala); set to override.
+LAYOUT_ARGS=()
+if [ -n "$TRANSFORM_BUCKET_SIZE" ]; then
+  LAYOUT_ARGS+=(--bucket-size "$TRANSFORM_BUCKET_SIZE")
+fi
+
 FOO="${CASSANDRA_HOST:=localhost}"
+
+# Optional Cassandra credentials, for clusters running PasswordAuthenticator.
+# Left unset, the connector connects anonymously (the previous behaviour).
+CASSANDRA_AUTH_CONF=()
+if [ -n "$CASSANDRA_USERNAME" ]; then
+  CASSANDRA_AUTH_CONF+=(--conf spark.cassandra.auth.username="$CASSANDRA_USERNAME")
+  CASSANDRA_AUTH_CONF+=(--conf spark.cassandra.auth.password="$CASSANDRA_PASSWORD")
+fi
 
 echo -en "Starting Spark job ...\n" \
          "Config:\n" \
@@ -47,6 +61,7 @@ echo -en "Starting Spark job ...\n" \
          "- Spark driver:        $SPARK_DRIVER_HOST:$SPARK_DRIVER_PORT\n" \
          "- Spark local dir:     $SPARK_LOCAL_DIR\n" \
          "- Cassandra host:      $CASSANDRA_HOST\n" \
+         "- Cassandra user:      ${CASSANDRA_USERNAME:-(none, anonymous)}\n" \
          "- Writer:              $GS_SPARK_WRITER\n" \
          "- Cassandra output MB/s: $SPARK_CASSANDRA_OUTPUT_THROUGHPUT_MB_PER_SEC (0 = no throttling)\n" \
          "- Cassandra input MB/s:  $SPARK_CASSANDRA_INPUT_THROUGHPUT_MB_PER_SEC (0 = no throttling)\n" \
@@ -61,7 +76,7 @@ echo -en "Starting Spark job ...\n" \
          "Arguments:\n" \
          "- Raw keyspace:        $RAW_KEYSPACE\n" \
          "- Target keyspace:     $TGT_KEYSPACE\n" \
-         "- Bucket Size:         $TRANSFORM_BUCKET_SIZE\n"
+         "- Bucket Size:         ${TRANSFORM_BUCKET_SIZE:-(network default)}\n"
 
 time "$SPARK_HOME"/bin/spark-submit \
   --class "org.graphsense.TransformationJob" \
@@ -73,6 +88,7 @@ time "$SPARK_HOME"/bin/spark-submit \
   --conf spark.blockManager.port="$SPARK_BLOCKMGR_PORT" \
   --conf spark.executor.memory="$SPARK_EXECUTOR_MEMORY" \
   --conf spark.cassandra.connection.host="$CASSANDRA_HOST" \
+  "${CASSANDRA_AUTH_CONF[@]}" \
   --conf spark.cassandra.output.throughputMBPerSec="$SPARK_CASSANDRA_OUTPUT_THROUGHPUT_MB_PER_SEC" \
   --conf spark.cassandra.input.throughputMBPerSec="$SPARK_CASSANDRA_INPUT_THROUGHPUT_MB_PER_SEC" \
   --conf spark.cassandra.connection.timeoutMS="$SPARK_CASSANDRA_CONNECTION_TIMEOUT_MS" \
@@ -96,8 +112,8 @@ time "$SPARK_HOME"/bin/spark-submit \
   --network "$NETWORK" \
   --raw-keyspace "$RAW_KEYSPACE" \
   --target-keyspace "$TGT_KEYSPACE" \
+  "${LAYOUT_ARGS[@]}" \
   $GS_SPARK_ARGS \
   # --gs-cache-dir file:///tmp/spark/ \
-  # --bucket-size $TRANSFORM_BUCKET_SIZE \
 
 exit $?

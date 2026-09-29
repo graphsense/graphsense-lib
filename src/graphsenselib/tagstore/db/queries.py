@@ -1542,8 +1542,40 @@ class TagstoreDbAsync:
             ):
                 # 23505 is UNIQUE KEY VIOLATION
                 # https://stackoverflow.com/questions/58740043/how-do-i-catch-a-psycopg2-errors-uniqueviolation-error-in-a-python-flask-app
-                raise TagAlreadyExistsException()
+                await session.rollback()
+                raise TagAlreadyExistsException(
+                    await self._get_user_reported_tag_id(
+                        identifier,
+                        network,
+                        tag.label,
+                        IDUserReportedTagpack,
+                        tag.description,
+                        session,
+                    )
+                )
             else:
                 raise e
 
         return unique_id
+
+    async def _get_user_reported_tag_id(
+        self, identifier, network, label, tagpack_id, source, session
+    ) -> Optional[str]:
+        """Report id (context uuid) of the stored tag with these `unique_tag`
+        constraint columns; its row id if the context carries no uuid."""
+        q = select(Tag.id, Tag.context).where(
+            Tag.identifier == identifier,
+            Tag.network == network,
+            Tag.label == label,
+            Tag.tagpack_id == tagpack_id,
+            Tag.source == source,
+        )
+        row = (await session.exec(q)).first()
+        if row is None:
+            return None
+        tag_id, context = row
+        try:
+            report_id = json.loads(context).get("uuid") if context else None
+        except (JSONDecodeError, AttributeError):
+            report_id = None
+        return report_id or str(tag_id)

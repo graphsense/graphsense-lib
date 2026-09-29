@@ -187,6 +187,45 @@ def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
     ]
 
 
+def _create_app_logs(monkeypatch, caplog, slack_topics_env):
+    monkeypatch.setenv("GRAPHSENSE_SLACK_TOPICS", slack_topics_env)
+    monkeypatch.setattr("graphsenselib.web.app.setup_logging", lambda *args: None)
+    cfg = GSRestConfig.from_dict({"database": {"nodes": ["localhost"]}})
+
+    with caplog.at_level("INFO", logger="graphsenselib.web.app"):
+        create_app(config=cfg)
+
+    return [r.getMessage() for r in caplog.records]
+
+
+def test_create_app_logs_slack_notification_status(monkeypatch, caplog):
+    messages = _create_app_logs(
+        monkeypatch, caplog, '{"info": {"hooks": ["https://hooks.slack.com/x"]}}'
+    )
+
+    assert any(
+        m.startswith("Slack user-reported tag notifications enabled (hooks=1")
+        for m in messages
+    )
+    assert any(
+        m.startswith("Slack exception notifications disabled (no 'exceptions'")
+        for m in messages
+    )
+
+
+def test_create_app_warns_about_malformed_slack_topics_env(monkeypatch, caplog):
+    # used to be dropped silently, leaving every Slack notification off
+    messages = _create_app_logs(monkeypatch, caplog, "{not json")
+
+    assert any(
+        m.startswith("Ignoring invalid gslib config setting: GRAPHSENSE_SLACK_TOPICS")
+        for m in messages
+    )
+    assert any(
+        m.startswith("Slack user-reported tag notifications disabled") for m in messages
+    )
+
+
 def test_report_tag_does_not_expose_internal_username_header_in_openapi():
     app = create_spec_app()
     with TestClient(app) as client:

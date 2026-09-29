@@ -129,7 +129,10 @@ account model wraps it behind Source/Sink traits; the UTXO model calls it direct
 `scallop` parses args. `account/Config.scala` (`AccountConfig`) and `utxo/Config.scala`
 (`UtxoConf`) define the option sets — bucket sizes, prefix lengths, min/max block,
 cache dir, etc. Bucket sizes and prefix lengths control Cassandra partitioning and
-must match the schema created by `graphsense-lib`.
+must match the schema created by `graphsense-lib`. Their defaults are per network
+(`config/NetworkDefaults.scala`, the production layout) and must equal graphsense-lib's
+`get_default_data_configuration`; `tests/transformation/test_spark_layout_defaults_parity.py`
+fails if they drift, so change both together.
 
 ## Tests
 
