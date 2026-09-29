@@ -262,6 +262,41 @@ re-enable later.
 2. If consolidated, delete the `register_*` function too.
 3. Run the validator.
 
+## Skills
+
+`skills/` holds agent skills (one `<name>/SKILL.md` folder each) that
+teach a client how to *use* the tool surface. They compose: three shared
+skills - `identifier-integrity`, `trace-funds`, `investigation-reporting` -
+carry the rules, and three thin investigators - `investigate-strict`,
+`investigate-advisor` (the default), `investigate-autonomous` - load them
+and add only how far to go beyond the asked task. The three automation
+levels follow the ones AI-Tracer offers. The directory is published two
+ways from one source:
+
+- **MCP resources.** FastMCP's `SkillsDirectoryProvider` serves each skill
+  as `skill://<name>/SKILL.md` plus a `_manifest` listing its supporting
+  files. No client loads these as skills on its own; they are readable
+  like any resource, or synced to disk with
+  `fastmcp.utilities.skills.sync_skills`. Disable with
+  `GS_MCP_SKILLS_ENABLED=false`; override the directory with
+  `GS_MCP_SKILLS_DIR`.
+- **Claude Code plugin.** The directory is also the plugin root
+  (`.claude-plugin/plugin.json`, `"skills": "./"`), listed by the repo-root
+  `.claude-plugin/marketplace.json`. The plugin also registers the
+  GraphSense MCP, prompting for its URL (default: prod) and API key on
+  install:
+
+  ```bash
+  claude plugin marketplace add graphsense/graphsense-lib
+  claude plugin install graphsense@graphsense
+  ```
+
+A skill lists the tools it relies on in its frontmatter
+(`metadata.graphsense-tools`); `tests/mcp/test_skills.py` fails when one of
+them leaves the curated surface, so renaming a tool means updating the
+skills in the same change. Skills are public - served to every MCP client
+and shipped in the wheel - so keep them free of anything internal.
+
 ## Context cost
 
 All 18 tool schemas (19 when `search_neighbors` is configured) fit in roughly
