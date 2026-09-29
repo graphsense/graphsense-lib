@@ -142,6 +142,23 @@ class GSMCPConfig(BaseSettings):
             "curation/instructions.md)"
         ),
     )
+    skills_enabled: bool = Field(
+        default=True,
+        description=(
+            "Serve the bundled agent skills as MCP resources "
+            "(`skill://<name>/SKILL.md` plus a `_manifest`), via FastMCP's "
+            "skills provider. Clients do not load these as skills on their "
+            "own; they read them like any resource or sync them with "
+            "`fastmcp.utilities.skills.sync_skills`."
+        ),
+    )
+    skills_dir: Optional[Path] = Field(
+        default=None,
+        description=(
+            "Override the directory scanned for skills (defaults to the "
+            "bundled mcp/skills, which is also the Claude Code plugin root)"
+        ),
+    )
     pathfinder_base_url: str = Field(
         default="https://app.iknaio.com",
         description=(
@@ -253,6 +270,12 @@ class GSMCPConfig(BaseSettings):
 
     def bundled_instructions_path(self) -> Path:
         return Path(__file__).parent / "curation" / "instructions.md"
+
+    def bundled_skills_dir(self) -> Path:
+        return Path(__file__).parent / "skills"
+
+    def resolved_skills_dir(self) -> Path:
+        return self.skills_dir or self.bundled_skills_dir()
 
     def resolved_instructions(self) -> Optional[str]:
         """Resolve the MCP 'instructions' text. Precedence: explicit

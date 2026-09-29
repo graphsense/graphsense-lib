@@ -4,6 +4,7 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastmcp import FastMCP
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
 from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 from mcp.types import Icon
@@ -108,6 +109,12 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         if config.pathfinder_open_url_enabled
         else None
     )
+
+    # The skills directory doubles as the Claude Code plugin root
+    # (.claude-plugin/plugin.json); the provider only picks up subdirectories
+    # holding a SKILL.md, so the manifest is not served.
+    if config.skills_enabled:
+        mcp.add_provider(SkillsDirectoryProvider(roots=config.resolved_skills_dir()))
 
     stack = AsyncExitStack()
     register_custom_tools(mcp, app, curation, config, stack)
