@@ -453,7 +453,7 @@ launches the job.
 graphsense-cli transformation raw-to-transformed --help
 
 # Run against a pinned release, creating a fresh dated transformed keyspace
-graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.08.1
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.09.1
 
 # Use the latest stable release (also the default when no version is configured)
 graphsense-cli transformation raw-to-transformed -e prod -c btc --version latest
@@ -487,9 +487,9 @@ full_transform_args:
   release_tag_prefix: spark-
   # Release tag to run. Omit or set to "latest" to resolve the newest stable
   # (non-prerelease) release of that track from the GitHub API at run time.
-  version: spark-v26.08.1
+  version: spark-v26.09.1
   version_overrides: # optional, per-currency
-    eth: spark-v26.08.1
+    eth: spark-v26.09.1
   artifact: fat # "fat" (self-contained assembly, default) or "slim" (+ Maven packages)
   spark_profile: # selects a spark_config profile per currency
     btc: utxo
