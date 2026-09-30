@@ -10,51 +10,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
+## [2.17.0] - Unreleased
+
+### Upgrade notes
+- **Full transforms now honour `data_configuration`.** `transformation raw-to-transformed` passes the keyspace layout to the Spark job instead of letting the job use its own defaults. A configured value that differs from graphsense-lib's defaults now fails the command unless `--override-defaults` is given. Use Spark pipeline `spark-v26.09.0` or later.
+- **Tagstore:** existing databases need `GRANT INSERT ON TABLE public.address TO userinsertedtags;` (new databases get it from `tagpack/init.sh`). To give already-reported tags cluster mappings, run `scripts/one-off-fixes/backfill_tag_addresses.py apply`, then a cluster-mapping run and `tagstore refresh-views`.
+- **REST with external backends:** currency role gating is on by default for externally served networks. Deployments without a gateway that sets the roles header must set `auth.enforce_currency_roles: false`.
+- **Dependencies:** fastmcp `>=4.0`; sqlmodel is capped `<0.0.45`.
 
 ### Library
 
 #### Added
-- **CoW Protocol settlements are reported as swaps in tx conversions, one per order.** A settlement batches the orders of several owners, which the generic swap detection (one trader, one asset out and one in) cannot express, so settlements used to yield no conversion at all. Each `Trade` event of the GPv2 settlement contract (`0x9008d19f…ab41`) now becomes a `dex_swap` from its owner's transfer into the contract (`sellAmount`, or `sellAmount + feeAmount` for orders whose fee is pulled on top) to the payout of `buyAmount` (an internal call for native ETH). The payout's recipient becomes `to_address`, so for orders with a separate receiver it differs from `from_address` for the first time. Transfers of the solver's AMM interactions are not attributed to any order, and an order whose transfers are not found is skipped. ETH sells go through CoW's eth-flow contract in two txs: the user places the order with the ETH, a settlement fills it later with the eth-flow contract as owner. The conversions of the **placement tx** now link the two: the order uid is computed from its `OrderPlacement` event (EIP-712 digest of the order ‖ eth-flow contract ‖ validTo), the settlement is found among the eth-flow contract's txs after the placement (one topic-filtered `Trade` log query per block in which it moved funds, at most `SEARCH_MAX_BLOCKS` = 7200 blocks and 5 pages of 100 txs), and the result is a `dex_swap` from the user's ETH payment in the placement tx to the order's payout in the settlement tx. Orders that were not settled (e.g. expired and refunded) yield none. Both eth-flow deployments are recognised. **Toggle:** `cow_protocol_swaps: false` in the REST config (or `GSREST_COW_PROTOCOL_SWAPS=false`) restores the old behaviour (no settlement swaps, no eth-flow links); the library functions take `cow_protocol` / `cow_protocol_swaps`.
-- **`graphsense-cli monitoring check-consistency` validates the last N blocks (default 100) across raw, the Delta Lake and transformed.** It is read-only and exits 92 on any failure, so it can gate a cron job. Without `-c` it checks every configured currency, and `--topic` posts failures to a notification topic. It checks:
-  - bookkeeping: a pending WAL record (an interrupted batch waiting for replay), a torn `delta_updater_history`, and transformed not ahead of raw or the lake;
-  - interrupted ingests: rows above the highest block in raw (account traces and logs; UTXO `block_transactions` and tx rows past the last tx_id) and in each lake side table. These are reported as WARN, since a running ingest looks the same;
-  - raw vs lake per block: tx counts. For UTXO that is `block.no_transactions`, raw `block_transactions`, raw `transaction` rows over the block's tx_id span, and lake block and transaction rows. For account chains the lake txs of the newest `--raw-tx-blocks` (default 10) blocks are read back from raw by hash, because raw keeps no per-block tx index. Account chains also compare trace counts (lake traces plus ETH withdrawals, which raw stores as traces), log counts, and trx fee rows;
-  - transformed: exchange rates for every block, and account `block_transactions` against the lake txs the updater keeps;
-  - UTXO only: a sampled exact recount of `no_incoming_txs` / `no_outgoing_txs` against `address_transactions` (rows with value > 0 / < 0, Spark's definition). This is the check that catches a batch applied twice.
-
-  Account address counters are not recounted: they are compressed per batch and exclude zero-value and reward traces, so they have no row count to match. By default the check holds the transformed keyspace lock (`--no-lock` skips it). It does not lock raw, since ingest only appends above the heights read at the start. `DeltaTableConnector` gains `aggregate_per_block`, `select_columns` and `highest_block` (which reads only the top partition), and `DeltaWal` gains a read-only `pending_header`.
-
-- **`graphsense-cli convert gs-files layout` re-lays out an existing Pathfinder `.gs` file, and the layout now follows the money.** The `.gs` format stores no direction (an agg edge's `a`/`b` are just its two ends), so the old hop-distance layout drew every neighbour of a starting point on its right, inflows included. The command asks the REST API (`--api-url` / `GRAPHSENSE_HOST`, `--api-key` / `GRAPHSENSE_API_KEY`) for each tx's inputs and outputs, then places senders left of their tx and receivers right of it. Labels, colours, starting points, edges and annotations of removed nodes are kept. Without an API URL, with `--no-lookup`, or for a tx the lookup can't find, it falls back to the old layout. `--report` prints layout metrics before and after. The pieces are public:
-  - `apply_hierarchical_layout` switches to the new `directed_layout` when any tx in the spec carries `senders` / `receivers`, and is unchanged otherwise. The new layout sets columns by flow, reduces crossings with barycenter sweeps, and places rows by minimising total squared edge height under ordering and spacing constraints (per-column isotonic regression). Links with a known direction are followed before links without one, so an edge with no tx (e.g. a victim linked straight to an exchange) can't pull a node to the wrong side. A part of the graph no starting point reaches, typically the far side of a cross-chain swap, is laid out from where money enters it and placed right of the rest; the old layout stacked it in a single column. The new layout ignores edge `tx_ids` that aren't listed in `txs`: the Pathfinder UI saves both the base hash and the `_I`/`_T` sub-payment of an account-model edge but draws only the listed one, and the old layout gave the undrawn one a row.
-  - `layout_metrics` scores a laid-out spec: overlaps, cramped rows, crossings, backward flow links and mean edge height.
-  - `spec_from_pathfinder` turns a decoded file back into a spec, the inverse of `builder_from_spec`, which gains an `annotations` key (and `GsBuilder.add_annotation`) for labels of ids that aren't nodes.
-  - Swaps and bridges are laid out the way Pathfinder arranges them on load. The UI draws a conversion as an edge from the input leg's first output address to the output leg's first input address (e.g. THORChain contract → BTC vault), and then moves both legs' addresses into a U-turn, overwriting saved positions: the output leg sits in the input leg's column below it, and the other chain runs right to left. The layout produces that arrangement, with each leg's addresses exactly on the leg's row, so the UI's move changes nothing. Only the output leg runs right to left (and the metrics count it that way); flow beyond its addresses goes right again, on the rows below. A same-chain DEX swap becomes a loop right of the swapper, which is on both legs and stays between their rows. Conversion leg ids match with or without the `0x` prefix the endpoint sometimes adds.
-  - `graphsenselib.pathfinder.annotate_tx_flows` fills in `senders` / `receivers` from any backend with a `tx_sides` method, and `annotate_conversions` adds the spec's `conversions` from `tx_conversions` / `tx_io_order`. `RestBackend` implements all three (conversions via `/{network}/txs/{hash}/conversions`), plus an optional shared `tx_cache`.
-
-  Checked with live lookups on all 22 T6.3 case files against their saved (partly hand-arranged) layouts: backward flow links drop to 0 everywhere (5 files had 1–4), crossings fall from 86 to 13 in total and never increase except in one file (1 → 4, all involving edges without a tx), and there are no overlaps. The tests check rules rather than exact coordinates, on hand-written cases, generated graphs and those three files (`tests/testfiles/gs_files/layout/`, with tx directions stored in `tx_sides.json`).
-
-- **The MCP server publishes agent skills for investigations, and the repo is a Claude Code plugin marketplace.** `src/graphsenselib/mcp/skills/` holds three shared skills - `identifier-integrity`, `trace-funds`, `investigation-reporting` - and three investigators that load them, one per automation level: `investigate-strict` (answers exactly what was asked), `investigate-advisor` (the default: answers, then suggests one next step or a Pathfinder export) and `investigate-autonomous` (follows the obvious leads one or two hops itself). The automation levels follow AI-Tracer's. The MCP serves them as resources (`skill://<name>/SKILL.md` plus a `_manifest`) through FastMCP's `SkillsDirectoryProvider`; `GS_MCP_SKILLS_ENABLED=false` turns that off and `GS_MCP_SKILLS_DIR` points it elsewhere. The same directory is the root of the `graphsense` Claude Code plugin, which also registers the GraphSense MCP (URL defaulting to `https://api.iknaio.com/mcp/`, API key sent as `Authorization`): `claude plugin marketplace add graphsense/graphsense-lib`, then `claude plugin install graphsense@graphsense`. `tests/mcp/test_skills.py` fails when a tool a skill declares in its frontmatter leaves the curated surface.
+- **CoW Protocol swaps in tx conversions.** Every order in a CoW settlement is reported as its own `dex_swap`. ETH sell orders placed through the eth-flow contract are linked from the placement tx to the settlement that filled them. Turn it off with `cow_protocol_swaps: false` (`GSREST_COW_PROTOCOL_SWAPS=false`).
+- **`graphsense-cli monitoring check-consistency`** checks that raw, Delta Lake and transformed keyspaces agree over the last N blocks (default 100). It covers bookkeeping (pending WAL, interrupted batches), per-block tx, trace and log counts, exchange rates, and a sampled recount of UTXO address counters. It is read-only and exits 92 on failure, so it can gate cron jobs. `--topic` sends failures to a notification topic.
+- **Direction-aware Pathfinder layout** and the new `graphsense-cli convert gs-files layout` command. Each tx's inputs and outputs are looked up through the REST API: senders go left, receivers right, and swaps and bridges are arranged the way Pathfinder shows them. Without lookups it falls back to the previous layout. MCP `build_pathfinder_file` uses the new layout. New public helpers: `layout_metrics`, `spec_from_pathfinder`, `annotate_tx_flows`, `annotate_conversions`.
+- **MCP investigation skills.** The MCP server serves agent skills as `skill://` resources (`GS_MCP_SKILLS_ENABLED`, `GS_MCP_SKILLS_DIR`). The repository is also a Claude Code plugin marketplace: `claude plugin marketplace add graphsense/graphsense-lib`.
+- Tx identifiers accept lowercase sub-tx markers (`…_t1` as well as `…_T1`).
 
 #### Changed
-- **Dependency bumps.** `DEFAULT_SCALA_JOB_PACKAGES` moves to `bcprov-jdk18on` 1.85 with the Spark build (four advisories against 1.80, see the spark track), so the slim `--packages` path resolves the same BouncyCastle the assembly jar bundles. deltalake 1.6.5 → 1.6.6 (1.6.4 and 1.6.5 were yanked upstream, delta-rs #4784), sqlmodel 0.0.42 → 0.0.44 and capped `<0.0.45` (0.0.45 maps plain `datetime` fields to timezone-aware `timestamptz` and rejects naive values; the tagstore models and databases are naive, so taking it needs a column migration), and the Docker image's uv 0.12.17 → 0.12.19. Dependabot version updates now open against `develop` instead of `master`.
-- **MCP `build_pathfinder_file` looks up tx direction and conversions before a hierarchical layout**, so agent-built files draw inflows on the left and bridges as Pathfinder arranges them. The verifier reuses the fetched tx bodies. A failed lookup is logged and the old layout is used; it adds no warning, because the warnings tell the agent to fix its spec.
+- The default transformed `data_configuration` for trx and eth now matches the Spark job defaults: trx `bucket_size` 25000, `block_bucket_size_address_txs` 150000 (eth) / 50000 (trx), `addressrelations_ids_nbuckets` 100.
+- Dependencies: fastmcp 4, deltalake 1.6.6, bcprov-jdk18on 1.85 for the slim Spark submit path.
 
 #### Fixed
-- **The delta updater writes a batch in reference order, so REST no longer reaches a row whose target is not written yet.** A non-atomic apply sent all of a batch's rows concurrently, so for a moment an address could be findable while its cluster row was missing (`/addresses/{address}/cluster` answered HTTP 500), a relation could point at a neighbour not written yet, or a cluster at its root address. Batch writes (`--write-batch-size` above 1, the worker pool, WAL replay) now go out in phases, each acknowledged in full before the next starts: entity rows, then the prefix rows that make new addresses and txs findable, then relations, memberships and tx lists, then deletes, then the checkpoint (`summary_statistics`, `delta_updater_history`), which the single-process path used to send together with the data. TX mode (one logged batch per tx) is unchanged, and the rows written are the same, so the Spark pipeline needs no change. A table without a phase stops the batch before its first write. (`deltaupdate/update/utxo/update.py`)
-- **`transformation raw-to-transformed` now passes the transformed keyspace layout to the Spark job.** The command only passed network and keyspaces, so the job ran with its own defaults and overwrote the configuration row seeded from the YAML; `data_configuration` was silently ignored. The job defaults do not match production: UTXO chains would get bucket size 25000 instead of 5000 and no bech32 prefix, so all `bc1q…` addresses would share the `address_ids_by_address_prefix` partition `bc1q`, and trx would get a `block_bucket_size_address_txs` of 150000 instead of 50000. The command now passes `--bucket-size`, `--address-prefix-length`, `--bech32-prefix`, `--[no-]coinjoin-filtering`, `--tx-prefix-length`, `--block-bucket-size-address-txs` and `--addressrelations-ids-nbuckets`, taken from `data_configuration` with missing keys filled from graphsense-lib's per-currency defaults. An option already given in `full_transform_args.jar_args` or after `--` wins and is not repeated, and a value of the wrong type (e.g. `coinjoin_filtering: "false"`) is rejected. Because earlier versions ignored `data_configuration`, a value that differs from the default now fails the command before the keyspace is created, unless `--override-defaults` is passed.
-- **The transformed `data_configuration` defaults now match the production keyspaces.** trx's `bucket_size` changes from 10000 to 25000, and eth and trx gain `block_bucket_size_address_txs` (150000 / 50000) and `addressrelations_ids_nbuckets` (100). The graphsense-spark job now uses the same values as its per-network defaults (see the spark track); `tests/transformation/test_spark_layout_defaults_parity.py` keeps the two tables in sync.
-- **The MCP server now sends its instructions when run from the Docker image.** `mcp/curation/instructions.md` was missing from wheels built without `.git`, which is how the Dockerfile builds them: without an SCM file finder setuptools only ships the `package-data` patterns, and `.md` was not among them. `resolved_instructions()` then found no file, and the MCP sent no instructions in its initialize handshake, dropping the cluster discipline, tool selection and Pathfinder-link guidance. `graphsenselib.mcp` now declares `curation/*.md` as package data.
-- **`tagpack/init.sh` grants `INSERT` on `address` to the `userinsertedtags` role.** Since user-reported tags also write their `address` row, a tagstore set up by this script rejected every report with a permission error and the tag was not saved. The script only runs on a fresh database; existing ones need `GRANT INSERT ON TABLE public.address TO userinsertedtags;` applied by hand.
-- **A malformed `GRAPHSENSE_SLACK_TOPICS` is now logged at REST startup.** The config loader reported the parse error only in its return value, which the app ignored, so all Slack notifications went off without a trace. The app also logs at startup whether the `exceptions` and `info` (user-reported tag) topics are configured.
+- **Delta updater:** batch writes are applied in dependency order (entities, lookup prefixes, relations, deletes, then the checkpoint). REST no longer briefly sees an address whose cluster row is not written yet, which used to cause HTTP 500s. The rows written are the same as before.
+- Addresses of user-reported tags are registered in the tagstore, so they get cluster mappings.
+- The MCP server sends its instructions again when run from the Docker image; the file was missing from the wheel.
+- A malformed `GRAPHSENSE_SLACK_TOPICS` is now logged at startup instead of silently disabling Slack notifications.
 
 ### Web API + Python client
 
+The API and client versions move to 2.17.0, in line with the library.
+
+#### Added
+- **External backends.** A network without a Cassandra keyspace can be served by a GraphSense-API-compatible backend, configured under `external_backends` (`enabled`, `networks: {code: {url, api_key}}`). Requests for that network are proxied to the backend. Tags stay local, and `/stats`, `/search`, `/capabilities` and pubkey `related_addresses` merge the backend's entries into the local answer. Clients can opt out per request with `X-Ikn-Currency-Opt-Out: all-light`.
+- **Currency role gating** for externally served networks, configured under `auth` (`roles_header`, `currency_role_prefix`, `gated_currencies`, `enforce_currency_roles`). A request needs the `currency-<code>` role, otherwise it gets a 403. Listings leave out the currencies the caller cannot access.
+- **`GET /capabilities`** lists, per network, the feature families that are not available there (`relations`, `clusters`, `tags`, `conversions`, `exact_stats`).
+- **`is_possible_service`** on address detail responses, a structural heuristic for exchanges and other services.
+- **`qualifiers`** on `Address`, marking lower-bound (`gt`) or approximate (`approx`) values. Only external backends set it.
+
 #### Changed
-- `/{currency}/txs/{tx_hash}/conversions` returns one `dex_swap` per order for CoW Protocol settlements (see Library), where it returned none. Off with the new config option `cow_protocol_swaps: false`.
+- `/{currency}/txs/{tx_hash}/conversions` returns CoW Protocol swaps (see Library).
 
 #### Fixed
-- `POST /tags/report-tag` for a tag that already exists returns the id of the existing report instead of a 500 (the response model requires an `id`, and a duplicate returned none). A duplicate no longer sends a Slack notification.
+- `POST /tags/report-tag` for an already reported tag returns the existing report id instead of a 500, and no longer sends a duplicate notification.
 
 ## [2.16.4] - 2026-09-22
 
@@ -80,44 +78,6 @@ Use one changelog file, but separate entries by track in each release window.
   `org.web3j:utils`, undoing the BouncyCastle swap. The new
   `DEFAULT_SCALA_JOB_EXCLUDES` is generated from the build's `exclude(...)`
   clauses by the same script, and is only emitted alongside `--packages`.
-
-### Web API + Python client
-
-#### Added
-- **Clients can opt out of the external backends per request.** A request
-  carrying `X-External-Backends: off` is served exactly as without the
-  feature: no proxying, no merging, not one call to a backend. The dashboard
-  sends it on every request while its "lite networks" switch is off, so a
-  congested or unavailable backend never delays or breaks work on the core
-  networks; the externally served networks then do not appear in `/stats`,
-  `/search`, `/capabilities` or a twin list, and a direct request on one of
-  them gets the core's own 404. (`middleware/external_backends.py`)
-- **Externally served currencies are gated on the gateway's roles header.**
-  `X-User-Roles` (set by APISIX for API-key and OIDC traffic, unspoofable)
-  lists Keycloak realm roles without the `ikn-` prefix; a request on a gated
-  currency needs `currency-<code>` (`currency-bnb` grants bnb), the only
-  check — the grouped `currencies-extended` role is expanded into leaves by
-  Keycloak, so no bundle list lives here. A miss answers 403
-  `{"detail": "currency not enabled for this account"}`; `/stats`,
-  `/capabilities`, `/search` and `related_addresses` drop the gated
-  currencies the caller lacks so the dashboard hides them instead of
-  discovering them via 403s. Gated by default: every network in
-  `external_backends.networks`; core currencies stay open. Config under
-  `auth`: `roles_header` (X-User-Roles), `currency_role_prefix`
-  (currency-), `gated_currencies` (unset = the external-backend networks),
-  `enforce_currency_roles` (true; false switches the gate off for
-  deployments without a gateway, e.g. local development).
-  (`middleware/currency_roles.py`)
-- **Cross-chain twins of a locally served address include the externally
-  served networks.** `related_addresses` (pubkey) of a network answered from
-  Cassandra now also asks each external backend about the same address and
-  appends its rows for the backend's configured networks: an eth address
-  lists its bnb/arb twins next to the trx one from the pubkey table. A
-  backend that does not know the source network (404) or declines (501)
-  contributes nothing. `external_backends.merge_related_addresses: false`
-  switches it off (middleware/external_backends.py, rule 5).
-
-### Library
 
 #### Changed
 - **`DEFAULT_SCALA_JOB_PACKAGES` drops `org.web3j:core`**, tracking the same
@@ -217,14 +177,6 @@ Use one changelog file, but separate entries by track in each release window.
   0.0.81.
 
 #### Fixed
-- **User-reported tags now get cluster mappings.** `add_user_reported_tag`
-  wrote only the `tag` row, but the cluster-mapping job maps only addresses
-  listed in `address` (which the tagpack importer fills alongside every tag),
-  so addresses reported via the dashboard never got a cluster mapping and
-  never contributed to cluster-level tags. The address row is now written in
-  the same transaction. Existing tags are backfilled with
-  `INSERT INTO address (network, address) SELECT DISTINCT network, identifier FROM tag t WHERE tag_subject = 'address' AND NOT EXISTS (SELECT 1 FROM address a WHERE a.network = t.network AND a.address = t.identifier) ON CONFLICT DO NOTHING;`
-  followed by a cluster-mapping run and `tagstore refresh-views`.
 - **Tagstore: `0x` hex addresses are lowercased on every network, not just
   ETH.** A token tag without an explicit `network` (e.g. `currency: USDT`)
   gets the currency as its network, which skipped the ETH-only lowercasing, so
@@ -317,12 +269,6 @@ Use one changelog file, but separate entries by track in each release window.
 - **A Redis ingest lock left behind by a killed process no longer blocks ingest silently.** Two independent gaps let an eth ingest fall 32h behind without a single notification. (1) The Redis lock was released only in a `finally`, so a holder that died hard (OOM kill during auto-compaction, SIGKILL, reboot) never released it, and the key — an opaque uuid — survived until someone deleted it by hand, naming neither who held it nor since when. The lock value now identifies its holder as `{host, pid, acquired_at, nonce}`, readable with `redis-cli GET <key>` (host and pid are for the human reading the alert — in a container they are a discarded container id and pid 1, and nothing decides anything from them; the nonce keeps the value unique, since `release()` is a compare-and-delete against it), and the holder stamps a heartbeat in a sibling `<key>:heartbeat` while it works. A contender that finds a holder which has gone quiet for more than 15 minutes sends a Slack notification to the `exceptions` topic naming the host, the pid, how long it has been silent and the `redis-cli DEL` needed to break the lock — rate-limited to one report per lock per hour via a `SET NX EX` marker. Because the heartbeat measures *silence* rather than runtime, a legitimately hour-long job keeps stamping and is never reported. Nothing ever takes the lock away from its owner: there is deliberately **no TTL** (a lease must be renewed, and any renewal stall — Redis unreachable, the process stopped or thrashing, a long GIL-holding call — expires the lock while the holder is still writing, putting two ingest processes on one delta table), and no automatic reclaim (proving a pid is dead only works on the same host and in the same pid namespace, and gets it *wrong* elsewhere). A stalled heartbeat can therefore only cause a false alarm, never a released lock. (2) `ingest from-node` exited with code 911 on lock contention *before* reaching its post-ingest staleness check — and 911 is deliberately whitelisted in the Slack exception context, since contention normally just means the previous run is still going. A stuck lock therefore produced one log line per cron run and nothing else. The staleness check now runs on the contention path too (exit code 911 unchanged), so a lock that stays stuck past the configured `raw_ingest_staleness_threshold` raises the same alert as any other stalled ingest.
 
 ### Web API + Python client
-
-#### Added
-- **Networks without a Cassandra keyspace can be served by an external GraphSense-API-compatible backend** (e.g. the iknaio external backend adapter, which answers the GraphSense wire contract from a node-provider API). A new `external_backends` config section (`enabled` toggle + `networks: {code: {url, api_key}}`) activates `ExternalBackendMiddleware`: requests for a configured network are reverse-proxied to its backend (marked `x-served-by: external-backend`), while TagStore-owned data stays local — address `tags`/`tag_summary` routes and their bulk twins (`bulk.{csv,json}/{list_tags_by_address,get_tag_summary_by_address}`) are answered locally, and `/stats` and `/search` merge the backend's per-currency entries (filtered to its configured networks) into the local answer. Entity/cluster routes of an external network are proxied on purpose: each backend mints its own entity ids, which mean nothing in the local id space. When the section is absent or `enabled` is false, the middleware is not installed and the app is byte-identical to before.
-- **New `GET /capabilities` endpoint declares per-network feature availability.** One entry per served network with a `disabled` list of feature families NOT served there, from the vocabulary `relations` (neighbors/links), `clusters`, `tags`, `conversions`, `exact_stats` (the /stats numbers are placeholders). A network absent from the list is fully enabled, as is every network of a deployment old enough to 404 the endpoint; unknown flags must be ignored. Local Cassandra serving always reports `disabled: []`; the external-backends middleware merges each backend's entries for its configured networks and removes `"tags"` from their disabled lists (tag routes are answered locally by the TagStore). This replaces the short-lived per-currency `capabilities` field on `/stats`, which never shipped in a release; a stale backend still declaring it has the field stripped during the stats merge. Needs a `WEBAPISEM` minor bump before release.
-- **Address detail responses now carry `is_possible_service`.** The structural service heuristic moves server-side from the dashboard: on account networks an address with `in_degree > 7500` or `no_incoming_txs > 500`, on UTXO networks an address whose cluster has `no_addresses > 100` or a degree `> 7500`, is flagged as a likely service (exchange, payment processor, ...). Computed only on the address-detail path (one extra single-partition cluster point read on UTXO, overlapped with the existing concurrent lookups); embedded address bodies in listings omit the field, and consumers fall back to their own judgment when it is absent. Tag data is deliberately not consulted — tag visibility varies per caller, a structural flag stays deterministic.
-- **The Address schema declares a flat `qualifiers` map** (field name → `"gt"` for lower-bound values, `"approx"` for sample-approximations) as the simple consumer form of the existing `cutoff` qualification. Set only by external backends; local serving computes exact aggregates and never emits it.
 
 #### Changed
 - **The `graphsense-python` client now requires Python 3.10+** (was 3.9+). Python 3.9 has been end-of-life since October 2025, and supporting it forked the client's lockfile: uv had to keep a second, older resolution pinned under `python_full_version < '3.10'`, which is where the open `urllib3` (GHSA-qccp-gfcp-xxvc, GHSA-mf9v-mfxr-j63j), `requests` (GHSA-gc5v-m9x4-r6x2) and `pytest` (GHSA-6w46-j5rx-g56g) advisories lived — unfixable without dropping 3.9, since the patched releases all require 3.10. With the floor raised the fork collapses to a single resolution on `urllib3` 2.7.0, `requests` 2.34.2 and `pytest` 9.1.1. The library itself has required `>=3.10` all along. Needs a `WEBAPISEM` bump before release.
