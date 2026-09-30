@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.17.0] - Unreleased
+## [2.17.0] - 2026-09-30
 
 ### Upgrade notes
 - **Full transforms now honour `data_configuration`.** `transformation raw-to-transformed` passes the keyspace layout to the Spark job instead of letting the job use its own defaults. A configured value that differs from graphsense-lib's defaults now fails the command unless `--override-defaults` is given. Use Spark pipeline `spark-v26.09.1` or later.
