@@ -26,7 +26,7 @@ import inspect
 import logging
 import re
 from contextlib import AsyncExitStack
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 import httpx
 from fastapi import FastAPI
@@ -39,6 +39,7 @@ from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, Field
 
 from graphsenselib.convert.gs_files import (
+    ANNOTATION_PALETTE,
     apply_hierarchical_layout,
     builder_from_spec,
 )
@@ -83,7 +84,15 @@ def _resolve_open_url_docs(doc: str, *, enabled: bool) -> str:
     return _OPEN_URL_DOC_RE.sub(lambda m: m.group(1) if enabled else "", doc)
 
 
-Color = tuple[float, float, float, float]
+Color = Union[str, tuple[float, float, float, float]]
+
+_COLOR_DESCRIPTION = (
+    "Node highlight color. Prefer one of the Pathfinder annotation "
+    f"palette names ({', '.join(ANNOTATION_PALETTE)}) — these are the "
+    "swatches the user can pick in the UI. Also accepted: a '#rrggbb' / "
+    "'#rrggbbaa' hex string, or an [r, g, b, a] list with each component "
+    "in [0, 1]."
+)
 
 
 class _AddressSpec(BaseModel):
@@ -105,9 +114,7 @@ class _AddressSpec(BaseModel):
             "'first hop after the hack')."
         ),
     )
-    color: Optional[Color] = Field(
-        default=None, description="RGBA tuple, each component in [0, 1]."
-    )
+    color: Optional[Color] = Field(default=None, description=_COLOR_DESCRIPTION)
     starting_point: bool = Field(
         default=False,
         description=(
@@ -168,7 +175,7 @@ class _TxSpec(BaseModel):
             "visible from the transaction data itself."
         ),
     )
-    color: Optional[Color] = Field(default=None)
+    color: Optional[Color] = Field(default=None, description=_COLOR_DESCRIPTION)
     starting_point: bool = Field(default=False)
     x: Optional[float] = Field(default=None)
     y: Optional[float] = Field(default=None)
@@ -455,6 +462,18 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         derivable from tags or transaction data, e.g. "victim wallet",
         "attacker cash-out", "first hop after the hack".
 
+        Colors — ``color`` (on addresses and txs) highlights a node.
+        Use it to group nodes by their role in the case so the pattern
+        reads at a glance, e.g. victim side red, attacker-controlled
+        addresses orange, cash-out points purple. Use one color per
+        role, keep the mapping consistent across the graph, and tell the
+        user what each color means. Leave uninvolved nodes uncolored.
+        Prefer the palette names, which are exactly the swatches the
+        user can pick in the Pathfinder annotation dialog, so they can
+        recolor or extend your scheme: [[palette]]. A ``#rrggbb`` hex
+        string or an ``[r, g, b, a]`` list (0-1) also works. Edges
+        cannot be colored.
+
         Mark the address(es) or tx(s) you started from with
         ``starting_point=true`` so the layout can place anchors at column
         0 and arrange the rest by hop distance.
@@ -463,8 +482,9 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
 
             {
               "addresses": [
-                {"id": "addrA", "starting_point": true, "label": "anchor"},
-                {"id": "addrB"}
+                {"id": "addrA", "starting_point": true,
+                 "label": "victim wallet", "color": "red"},
+                {"id": "addrB", "label": "attacker hop 1", "color": "orange"}
               ],
               "txs": [{"id": "txhash1"}],
               "agg_edges": [
@@ -671,5 +691,5 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         description=_resolve_open_url_docs(
             inspect.cleandoc(build_pathfinder_file.__doc__ or ""),
             enabled=open_url_enabled,
-        ),
+        ).replace("[[palette]]", ", ".join(ANNOTATION_PALETTE)),
     )(build_pathfinder_file)

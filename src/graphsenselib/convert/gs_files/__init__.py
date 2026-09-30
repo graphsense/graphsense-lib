@@ -11,6 +11,7 @@ Encode:
     encode_gs_payload            — raw payload list to .gs bytes
     builder_from_spec            — build a GsBuilder from a JSON spec dict
     spec_from_pathfinder         — decoded pathfinder file back to a spec
+    ANNOTATION_PALETTE           — the Pathfinder annotation dialog's colors
 
 Layout:
     apply_hierarchical_layout    — stamp x/y onto a spec (direction-aware
@@ -19,6 +20,7 @@ Layout:
 """
 
 from .encoder import (
+    ANNOTATION_PALETTE,
     GsBuilder,
     apply_hierarchical_layout,
     builder_from_spec,
@@ -50,6 +52,7 @@ from .summary import summarize
 from .writer import to_jsonable, write_decoded, write_json
 
 __all__ = [
+    "ANNOTATION_PALETTE",
     "Color",
     "GraphAddress",
     "GraphCluster",

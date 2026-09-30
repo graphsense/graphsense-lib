@@ -45,9 +45,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
+from .parser import Color as ParsedColor
 from .parser import PathfinderData, lzw_pack
 
 Color = tuple[float, float, float, float]
+
+# The swatches of the Pathfinder annotation dialog, in dialog order —
+# Theme.Colors.annotation1_color .. annotation10_color in
+# graphsense-dashboard (generated/theme/Theme/Colors.elm). The floats are
+# copied verbatim: the dialog marks a swatch selected only on exact
+# equality, so a hex round-trip (x/255) would leave it unhighlighted.
+ANNOTATION_PALETTE: dict[str, Color] = {
+    "green": (0.0235294122248888, 0.7647058963775635, 0.49803921580314636, 1.0),
+    "red": (0.8666666746139526, 0.23843137919902802, 0.16862745583057404, 1.0),
+    "orange": (0.8700000047683716, 0.3777250051498413, 0.026100000366568565, 1.0),
+    "blue": (0.35670000314712524, 0.5192450284957886, 0.8700000047683716, 1.0),
+    "purple": (0.6280444264411926, 0.3553333282470703, 0.8666666746139526, 1.0),
+    "pink": (0.8700000047683716, 0.35670000314712524, 0.6219050288200378, 1.0),
+    "yellow": (0.8705882430076599, 0.8705882430076599, 0.35686275362968445, 1.0),
+    "gold": (0.7599999904632568, 0.5265532732009888, 0.02280000038444996, 1.0),
+    "cyan": (0.02280000038444996, 0.6494199633598328, 0.7599999904632568, 1.0),
+    "dark_green": (0.0, 0.49803921580314636, 0.33725491166114807, 1.0),
+}
+
+
+def _to_hex(c: Color) -> str:
+    return "#" + "".join(f"{round(v * 255):02x}" for v in c[:3])
+
+
+# A hex that names a palette swatch snaps to the swatch's exact floats.
+_PALETTE_BY_HEX: dict[str, Color] = {_to_hex(c): c for c in ANNOTATION_PALETTE.values()}
 
 
 # ---------------------------------------------------------------------------
@@ -414,8 +441,26 @@ class GsBuilder:
 
 
 def _normalize_color(c: object) -> Optional[Color]:
+    """Accept a palette name (``ANNOTATION_PALETTE``), a ``#rrggbb`` /
+    ``#rrggbbaa`` hex string, or ``[r, g, b, a]`` floats in 0-1."""
     if c is None:
         return None
+    if isinstance(c, str):
+        key = c.strip().lower()
+        if key in ANNOTATION_PALETTE:
+            return ANNOTATION_PALETTE[key]
+        try:
+            h = ParsedColor.from_hex(key)
+        except ValueError:
+            raise ValueError(
+                f"color must be a palette name ({', '.join(ANNOTATION_PALETTE)}), "
+                f"a '#rrggbb' / '#rrggbbaa' hex string, or [r, g, b, a] floats "
+                f"0-1, got {c!r}"
+            ) from None
+        swatch = _PALETTE_BY_HEX.get("#" + key.lstrip("#")[:6])
+        if swatch is not None and h.a == 1.0:
+            return swatch
+        return (h.r, h.g, h.b, h.a)
     if not isinstance(c, (list, tuple)) or len(c) != 4:
         raise ValueError(f"color must be [r, g, b, a] floats 0-1, got {c!r}")
     return (float(c[0]), float(c[1]), float(c[2]), float(c[3]))
@@ -432,7 +477,7 @@ def builder_from_spec(
           "addresses": [
             "bc1q...",
             {"id": "bc1q...", "label": "exchange A",
-             "color": [1, 0.4, 0.2, 1],
+             "color": "red",   # or "#ff6633", or [1, 0.4, 0.2, 1]
              "starting_point": true, "x": 0, "y": 0,
              "network": "btc", "side": "input"}
           ],

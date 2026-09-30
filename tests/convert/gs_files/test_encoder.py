@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from graphsenselib.convert.gs_files import (
+    ANNOTATION_PALETTE,
     GsBuilder,
     PathfinderData,
     builder_from_spec,
@@ -352,6 +353,44 @@ def test_builder_from_spec_rich_objects() -> None:
 def test_builder_from_spec_rejects_bad_color() -> None:
     with pytest.raises(ValueError, match="color"):
         builder_from_spec({"addresses": [{"id": "a", "color": [1, 0, 0]}]})
+
+
+def _addr_color(color: object) -> list:
+    payload = builder_from_spec({"addresses": [{"id": "a", "color": color}]})
+    return payload.to_payload()[5][0][2]
+
+
+def test_palette_name_resolves_to_dashboard_swatch() -> None:
+    assert _addr_color("red") == list(ANNOTATION_PALETTE["red"])
+    assert _addr_color(" Dark_Green ") == list(ANNOTATION_PALETTE["dark_green"])
+
+
+def test_palette_matches_dashboard_dialog() -> None:
+    # Ten swatches, in the dialog's order (annotation1..10_color).
+    assert list(ANNOTATION_PALETTE) == [
+        "green", "red", "orange", "blue", "purple",
+        "pink", "yellow", "gold", "cyan", "dark_green",
+    ]  # fmt: skip
+    assert all(c[3] == 1.0 for c in ANNOTATION_PALETTE.values())
+
+
+def test_hex_color_accepted() -> None:
+    assert _addr_color("#ff8000") == [1.0, 128 / 255, 0.0, 1.0]
+    assert _addr_color("FF800080") == [1.0, 128 / 255, 0.0, 128 / 255]
+
+
+def test_hex_of_palette_swatch_snaps_to_exact_floats() -> None:
+    # The dialog highlights a swatch only on exact equality, so a hex
+    # that names a swatch must not come out as x/255 floats.
+    assert _addr_color("#DD3D2B") == list(ANNOTATION_PALETTE["red"])
+    # With a non-opaque alpha it is a different color, not the swatch.
+    assert _addr_color("#dd3d2b80")[3] == 128 / 255
+
+
+@pytest.mark.parametrize("bad", ["crimson", "#12345", "#gggggg", ""])
+def test_bad_color_string_rejected(bad: str) -> None:
+    with pytest.raises(ValueError, match="palette name"):
+        _addr_color(bad)
 
 
 # ---------------------------------------------------------------------------

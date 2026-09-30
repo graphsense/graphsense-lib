@@ -25,6 +25,7 @@ from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
 from graphsenselib.convert.gs_files import (
+    ANNOTATION_PALETTE,
     PathfinderData,
     decode_gs_bytes,
     structure,
@@ -937,6 +938,50 @@ async def test_oversize_file_rejected_with_tool_error(make_file_store) -> None:
     tiny_store = make_file_store(max_bytes=10)  # any real .gs exceeds 10 bytes
     with pytest.raises(ToolError, match="too large"):
         await _call(_mcp(_app_with_store(tiny_store)), _MINIMAL_SPEC)
+
+
+async def test_colors_accept_palette_names_hex_and_floats() -> None:
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "colors",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "a", "starting_point": True, "color": "red"},
+                    {"id": "b", "color": "#ff8000"},
+                ],
+                "txs": [{"id": "t", "color": [0, 0, 1, 1]}],
+                "agg_edges": [{"a": "a", "b": "b", "tx_ids": ["t"]}],
+            },
+        },
+    )
+    colors = {
+        n.id.id: (n.color.r, n.color.g, n.color.b, n.color.a)
+        for n in _decode(call_result).annotations
+        if n.color is not None
+    }
+    assert colors["a"] == ANNOTATION_PALETTE["red"]
+    assert colors["b"] == (1.0, 128 / 255, 0.0, 1.0)
+    assert colors["t"] == (0.0, 0.0, 1.0, 1.0)
+
+
+async def test_unknown_color_name_is_a_tool_error() -> None:
+    with pytest.raises(ToolError, match="palette name"):
+        await _call(
+            _mcp(),
+            {
+                "name": "bad-color",
+                "default_network": "btc",
+                "spec": {"addresses": [{"id": "a", "color": "crimson"}]},
+            },
+        )
+
+
+async def test_description_lists_the_color_palette() -> None:
+    desc = await _tool_description(_mcp())
+    assert "[[palette]]" not in desc
+    assert ", ".join(ANNOTATION_PALETTE) in desc
 
 
 async def test_extra_field_in_spec_rejected_by_pydantic() -> None:
