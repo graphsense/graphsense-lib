@@ -13,7 +13,7 @@ Use one changelog file, but separate entries by track in each release window.
 ## [2.17.0] - Unreleased
 
 ### Upgrade notes
-- **Full transforms now honour `data_configuration`.** `transformation raw-to-transformed` passes the keyspace layout to the Spark job instead of letting the job use its own defaults. A configured value that differs from graphsense-lib's defaults now fails the command unless `--override-defaults` is given. Use Spark pipeline `spark-v26.09.0` or later.
+- **Full transforms now honour `data_configuration`.** `transformation raw-to-transformed` passes the keyspace layout to the Spark job instead of letting the job use its own defaults. A configured value that differs from graphsense-lib's defaults now fails the command unless `--override-defaults` is given. Use Spark pipeline `spark-v26.09.1` or later.
 - **Tagstore:** existing databases need `GRANT INSERT ON TABLE public.address TO userinsertedtags;` (new databases get it from `tagpack/init.sh`). To give already-reported tags cluster mappings, run `scripts/one-off-fixes/backfill_tag_addresses.py apply`, then a cluster-mapping run and `tagstore refresh-views`.
 - **REST with external backends:** currency role gating is on by default for externally served networks. Deployments without a gateway that sets the roles header must set `auth.enforce_currency_roles: false`.
 - **Dependencies:** fastmcp `>=4.0`; sqlmodel is capped `<0.0.45`.

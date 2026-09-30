@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [v26.09.1] 2026-09-30
 ### Security
 - **BouncyCastle `bcprov-jdk18on` 1.80 → 1.85.** Clears the four advisories
   filed against 1.80 since it was added: GHSA-9pwp-9qqc-pr26 (Name Constraints
