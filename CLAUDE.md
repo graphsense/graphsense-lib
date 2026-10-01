@@ -53,7 +53,7 @@ against prod before releasing graphsense-python**, from `clients/python/`:
 
 ```bash
 GS_API_KEY=<key> REPLACE_API_URL='https://api.iknaio.com>http://localhost:8080' \
-  uv run --with pypandoc test_examples.py
+  uv run --with pypandoc_binary test_examples.py
 ```
 
 (`REPLACE_API_URL` is `from>to`; drop it to hit api.iknaio.com directly.)

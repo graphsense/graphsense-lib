@@ -112,6 +112,6 @@ type-check:
 		$$(find graphsense/ext graphsense/cli -name '*.py')
 
 run-examples:
-	API_KEY=$(API_KEY) uv run --with pypandoc test_examples.py
+	API_KEY=$(API_KEY) uv run --with pypandoc_binary test_examples.py
 
 .PHONY: generate-openapi-client test-compat test test-ci lint format type-check run-examples sync-gs-files check-gs-files sync-address-scan check-address-scan
