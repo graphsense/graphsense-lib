@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 from collections import UserDict, defaultdict
 from datetime import date, datetime
@@ -38,6 +39,151 @@ from graphsenselib.tagpack.cmd_utils import get_user_choice
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class _UnresolvedInclude:
+    """An ``!include`` node kept as a reference instead of being resolved."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def __eq__(self, other):
+        return isinstance(other, _UnresolvedInclude) and other.path == self.path
+
+
+class _UnresolvedIncludeLoader(UniqueKeyLoader):
+    pass
+
+
+_UnresolvedIncludeLoader.add_constructor(
+    "!include",
+    lambda loader, node: _UnresolvedInclude(loader.construct_scalar(node)),
+)
+
+
+class _UnresolvedIncludeDumper(yaml.Dumper):
+    def choose_scalar_style(self):
+        # PyYAML only emits plain scalars for implicit tags, so `!include x`
+        # would come out as `!include 'x'`. Keep it plain, as tagpacks write it.
+        if self.event.tag == "!include" and not self.event.style:
+            if self.analysis is None:
+                self.analysis = self.analyze_scalar(self.event.value)
+            if self.analysis.allow_block_plain and not self.analysis.multiline:
+                return ""
+        return super().choose_scalar_style()
+
+
+_UnresolvedIncludeDumper.add_representer(
+    _UnresolvedInclude,
+    lambda dumper, inc: dumper.represent_scalar("!include", inc.path),
+)
+
+
+def _render_entry(key, value, indent, newline) -> str:
+    line = yaml.safe_dump(
+        {key: value}, default_flow_style=False, allow_unicode=True, width=1 << 20
+    ).rstrip("\n")
+    return " " * indent + line.replace("\n", newline) + newline
+
+
+def _entry_end_line(node) -> int:
+    """Line before which an entry following ``node`` (a value) is inserted."""
+    while (
+        isinstance(node, (yaml.MappingNode, yaml.SequenceNode))
+        and not node.flow_style
+        and node.value
+    ):
+        node = (
+            node.value[-1][1] if isinstance(node, yaml.MappingNode) else node.value[-1]
+        )
+    if isinstance(node, yaml.ScalarNode) and node.style in ("|", ">"):
+        # block scalars end at the start of the next token's line
+        return node.end_mark.line
+    return node.end_mark.line + 1
+
+
+def _edit_actor_entries(text, original, expected) -> Optional[str]:
+    """Apply the top-level ``actor``/``lastmod`` and per-tag ``actor`` values of
+    ``expected`` to ``text`` as line edits.
+
+    ``original`` is ``text`` loaded. Returns None when a change is not a plain
+    insert or value replacement (removing an entry, flow-style tags).
+    """
+    root = yaml.compose(text, _UnresolvedIncludeLoader)
+    if not isinstance(root, yaml.MappingNode) or root.flow_style:
+        return None
+
+    newline = "\r\n" if "\r\n" in text else "\n"
+    line_starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    edits = []  # (start index, end index, replacement)
+
+    def line_index(line):
+        if line < len(line_starts):
+            return line_starts[line]
+        return len(text)
+
+    def insert_line(line, entry):
+        pos = line_index(line)
+        if pos == len(text) and text and not text.endswith("\n"):
+            entry = newline + entry
+        edits.append((pos, pos, entry))
+
+    def set_entry(mapping, key, value, before=None):
+        entries = {k.value: (k, v) for k, v in mapping.value}
+        indent = mapping.value[0][0].start_mark.column
+        if key in entries:
+            _, v = entries[key]
+            if (
+                not isinstance(v, yaml.ScalarNode)
+                or v.start_mark.line != v.end_mark.line
+            ):
+                return False
+            rendered = _render_entry(key, value, 0, newline)
+            rendered = rendered[len(key) + 1 :].strip()
+            edits.append((v.start_mark.index, v.end_mark.index, rendered))
+        elif before is not None and before in entries:
+            insert_line(
+                entries[before][0].start_mark.line,
+                _render_entry(key, value, indent, newline),
+            )
+        else:
+            insert_line(
+                _entry_end_line(mapping.value[-1][1]),
+                _render_entry(key, value, indent, newline),
+            )
+        return True
+
+    for key in ("lastmod", "actor"):
+        want, have = expected.get(key), original.get(key)
+        if want == have:
+            continue
+        if want is None or not set_entry(root, key, want, before="tags"):
+            return None
+
+    want_tags = expected.get("tags") or []
+    have_tags = original.get("tags") or []
+    tag_nodes = [v for k, v in root.value if k.value == "tags"]
+    for i, (want_tag, have_tag) in enumerate(zip(want_tags, have_tags)):
+        want, have = want_tag.get("actor"), have_tag.get("actor")
+        if want == have:
+            continue
+        if want is None or not tag_nodes:
+            return None
+        node = tag_nodes[0]
+        if not isinstance(node, yaml.SequenceNode) or node.flow_style:
+            return None
+        item = node.value[i]
+        if not isinstance(item, yaml.MappingNode) or item.flow_style or not item.value:
+            return None
+        if not set_entry(item, "actor", want):
+            return None
+
+    # apply back to front; same-position inserts keep their order
+    for _, (start, end, replacement) in sorted(
+        enumerate(edits), key=lambda e: (e[1][0], e[0]), reverse=True
+    ):
+        text = text[:start] + replacement + text[end:]
+    return text
 
 
 def get_repository(path: str) -> pathlib.Path:
@@ -498,6 +644,58 @@ class TagPack(object):
     def update_lastmod(self):
         self.contents["lastmod"] = date.today()
 
+    def dump_actor_updates(self, pathname) -> str:
+        """Return the file at ``pathname`` with this pack's ``actor`` and
+        ``lastmod`` changes applied.
+
+        Works on the file as written rather than on ``self.contents``, so an
+        ``!include``d header stays a reference and values filled in on load
+        (defaults, JSON-encoded contexts) are not written back. The changes are
+        made as line edits, keeping the rest of the file (formatting, comments)
+        as it is. Where that is not possible, the whole file is re-serialized.
+        """
+        with open(pathname, "r", newline="") as f:
+            text = f.read()
+
+        original = yaml.load(text, _UnresolvedIncludeLoader)
+        expected = yaml.load(text, _UnresolvedIncludeLoader)
+
+        raw_tags = expected.get("tags") or []
+        tags = self.contents.get("tags") or []
+        if len(raw_tags) != len(tags):
+            raise TagPackFileError(
+                f"{pathname} changed on disk: {len(raw_tags)} tags, {len(tags)} loaded"
+            )
+
+        if "actor" in self.contents:
+            expected["actor"] = self.contents["actor"]
+        else:
+            expected.pop("actor", None)
+
+        for raw_tag, tag in zip(raw_tags, tags):
+            if "actor" in tag:
+                raw_tag["actor"] = tag["actor"]
+            else:
+                raw_tag.pop("actor", None)
+
+        if "lastmod" in self.contents:
+            expected["lastmod"] = self.contents["lastmod"]
+
+        edited = _edit_actor_entries(text, original, expected)
+        if (
+            edited is not None
+            and yaml.load(edited, _UnresolvedIncludeLoader) == expected
+        ):
+            return edited
+
+        logger.warning(
+            f"{pathname}: cannot apply the actor changes as line edits, "
+            "rewriting the whole file (comments and formatting are not kept)."
+        )
+        if "tags" in expected:
+            expected["tags"] = expected.pop("tags")  # keep tags last
+        return yaml.dump(expected, Dumper=_UnresolvedIncludeDumper, sort_keys=False)
+
     def init_default_values(self):
         if "confidence" not in self.contents and not all(
             "confidence" in tag.contents for tag in self.tags
@@ -879,9 +1077,6 @@ class TagPack(object):
             logger.warning("Actor is defined on Tagpack level, skip scanning all tags.")
             return False
 
-        # update tags and trace if all labels carry the same actor
-        actors = set()
-        all_tags_carry_actor = True
         for tag in self.get_unique_tags():
             # Continue if tag is not of a selected category
             if (
@@ -896,17 +1091,9 @@ class TagPack(object):
                 actor = get_user_choice_cached(tl, context_str, user_choice_cache)
                 if actor:
                     tag.contents["actor"] = actor
-                    actors.add(actor)
                     suggestions_found = True
                 else:
                     labels_with_no_actors.add(tl)
-                    all_tags_carry_actor = False
-
-        if all_tags_carry_actor and len(actors) == 1:
-            # promote actor to header field
-            self.contents["actor"] = actors.pop()
-            for tag in self.get_unique_tags():
-                tag.contents.pop("actor")
 
         if len(labels_with_no_actors) > 0:
             logger.warning("Did not assign an actor to the tags with labels:")

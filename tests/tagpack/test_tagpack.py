@@ -1150,3 +1150,217 @@ def test_concept_ids_cache_invalidation():
     ids3 = taxonomy.concept_ids
     assert ids3 is not ids1, "Cache should be invalidated after add_concept"
     assert ids3 == ["concept1", "concept2"]
+
+
+def _choose_first_candidate(monkeypatch):
+    monkeypatch.setattr(
+        "graphsenselib.tagpack.tagpack.get_user_choice",
+        lambda hl, candidates: candidates[0][0],
+    )
+
+
+def test_dump_actor_updates_keeps_header_include(tmp_path, taxonomies, monkeypatch):
+    """add_actors on a pack with an !include header must write back the
+    include, not the header's fields (issue #33)."""
+    import shutil
+
+    import yaml
+
+    shutil.copytree("tests/testfiles/yaml_inclusion", tmp_path, dirs_exist_ok=True)
+    pack_file = tmp_path / "2021/01/20210101.yaml"
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies, tmp_path
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [("badhack", "BadHack")])
+    tagpack.update_lastmod()
+    out = tagpack.dump_actor_updates(str(pack_file))
+
+    assert out.startswith("header: !include header.yaml\n")
+    raw = yaml.safe_load(out.replace("!include ", ""))
+    assert raw["actor"] == "badhack"
+    assert raw["lastmod"] == date.today()
+    assert "title" not in raw and "creator" not in raw and "confidence" not in raw
+    assert raw["tags"][0]["context"] == '{"validated": true}'
+    assert list(raw)[-1] == "tags"
+
+    pack_file.write_text(out)
+    reloaded = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies, tmp_path
+    )
+    assert reloaded.contents["title"] == "BadHack TagPack"
+    assert reloaded.contents["actor"] == "badhack"
+
+
+def test_dump_actor_updates_sets_tag_actors_only(tmp_path, taxonomies, monkeypatch):
+    """Per-tag actors are written; values filled in on load are not."""
+    import yaml
+
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "title: Two actors\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-01\n"
+        "tags:\n"
+        "- address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "  label: alpha\n"
+        "  context:\n"
+        "    validated: true\n"
+        "- address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        "  label: beta\n"
+    )
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+    raw = yaml.safe_load(tagpack.dump_actor_updates(str(pack_file)))
+
+    assert [t["actor"] for t in raw["tags"]] == ["alpha-actor", "beta-actor"]
+    assert "actor" not in raw
+    assert raw["tags"][0]["context"] == {"validated": True}
+    assert "confidence" not in raw and "network" not in raw
+
+
+def test_dump_actor_updates_edits_lines_in_place(tmp_path, taxonomies, monkeypatch):
+    """Only the actor lines and the lastmod value change; comments, blank
+    lines, quoting and nested blocks stay as written."""
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "# Pack about two wallets\n"
+        "title: Two wallets\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-03   # bumped by tooling\n"
+        "\n"
+        "tags:\n"
+        "  # first one is validated\n"
+        "  - address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        '    label: "alpha"\n'
+        "    context:\n"
+        "      validated: true\n"
+        "\n"
+        "  - address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "    label: beta\n"
+        "    description: |\n"
+        "      multi line\n"
+        "      text\n"
+    )
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+    tagpack.update_lastmod()
+
+    assert tagpack.dump_actor_updates(str(pack_file)) == (
+        "# Pack about two wallets\n"
+        "title: Two wallets\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        f"lastmod: {date.today().isoformat()}   # bumped by tooling\n"
+        "\n"
+        "tags:\n"
+        "  # first one is validated\n"
+        "  - address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        '    label: "alpha"\n'
+        "    context:\n"
+        "      validated: true\n"
+        "    actor: alpha-actor\n"
+        "\n"
+        "  - address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "    label: beta\n"
+        "    description: |\n"
+        "      multi line\n"
+        "      text\n"
+        "    actor: beta-actor\n"
+    )
+
+
+def test_dump_actor_updates_falls_back_for_flow_style_tags(
+    tmp_path, taxonomies, monkeypatch, caplog
+):
+    """A change that is not a plain line edit rewrites the whole file."""
+    import yaml
+
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "title: Flow tags\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-01\n"
+        "tags:\n"
+        "- {address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF, label: alpha}\n"
+        "- {address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh, label: beta}\n"
+    )
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+    raw = yaml.safe_load(tagpack.dump_actor_updates(str(pack_file)))
+
+    assert "rewriting the whole file" in caplog.text
+    assert [t["actor"] for t in raw["tags"]] == ["alpha-actor", "beta-actor"]
+    assert "confidence" not in raw
+
+
+def _two_tag_pack(tmp_path, taxonomies, alpha_extra, beta_extra):
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "title: Two tags\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-01\n"
+        "tags:\n"
+        "- address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "  label: alpha\n"
+        f"{alpha_extra}"
+        "- address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        "  label: beta\n"
+        f"{beta_extra}"
+    )
+    return TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+
+
+def test_add_actors_leaves_tags_outside_category_filter_alone(
+    tmp_path, taxonomies, monkeypatch
+):
+    """Used to raise KeyError and would have given beta alpha's actor."""
+    tagpack = _two_tag_pack(
+        tmp_path, taxonomies, "  category: exchange\n", "  category: miner\n"
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(
+        lambda label: [(f"{label}-actor", label)], only_categories=["exchange"]
+    )
+
+    assert "actor" not in tagpack.contents
+    assert [t.get("actor") for t in tagpack.contents["tags"]] == ["alpha-actor", None]
+
+
+def test_add_actors_keeps_existing_tag_actor(tmp_path, taxonomies, monkeypatch):
+    """Used to move beta's new actor to pack level and drop alpha's actor."""
+    tagpack = _two_tag_pack(tmp_path, taxonomies, "  actor: binance\n", "")
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+
+    assert "actor" not in tagpack.contents
+    assert [t.get("actor") for t in tagpack.contents["tags"]] == [
+        "binance",
+        "beta-actor",
+    ]

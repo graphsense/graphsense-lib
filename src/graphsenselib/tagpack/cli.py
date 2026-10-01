@@ -915,14 +915,10 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                     else tagpack_file
                 )
                 click.secho(f"Writing updated Tagpack {updated_file}", fg="green")
+                tagpack.update_lastmod()
+                updated_yaml = tagpack.dump_actor_updates(tagpack_file)
                 with open(updated_file, "w") as outfile:
-                    tagpack.contents["tags"] = tagpack.contents.pop(
-                        "tags"
-                    )  # re-insert tags
-                    tagpack.update_lastmod()
-                    yaml.dump(
-                        tagpack.contents, outfile, sort_keys=False
-                    )  # write in order of insertion
+                    outfile.write(updated_yaml)
             else:
                 click.secho("No actors added, moving on.", fg="green")
 

@@ -14,6 +14,10 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Fixed
+- **`tagpack add-actors` keeps `!include`d headers and the file's formatting (#33).** It used to write back the merged in-memory pack, inlining the header's fields along with defaults filled in on load (`confidence`, `network`) and JSON-encoded `context` values. It now edits the file as written: it inserts the new `actor` lines and updates `lastmod`, and leaves everything else, including comments and the `header: !include …` reference, unchanged. When a change can't be made as a line edit (tags in `{…}` flow style), it warns and rewrites the whole file: the header stays an `!include`, but comments are lost.
+- **`tagpack add-actors` no longer moves a shared actor to pack level.** When every tag it asked about got the same actor, it moved that actor to the pack and removed `actor` from all tags. That also hit tags it hadn't asked about: with `--categories` it raised `KeyError` on tags outside the filter, and it silently replaced an actor a tag already had. Each tag now keeps the actor assigned to it.
+
 #### Changed
 - **sqlmodel is no longer capped `<0.0.45`.** The tagstore's datetime columns (`lastmod` on tagpack, actorpack, actor and tag; `created` on address) are now declared as `DateTime(timezone=False)` explicitly, so sqlmodel 0.0.45+ no longer maps them to `timestamptz` and rejects naive values. The generated column type is unchanged (`TIMESTAMP WITHOUT TIME ZONE`), so existing tagstores need no migration.
 
