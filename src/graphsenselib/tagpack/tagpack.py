@@ -627,10 +627,10 @@ class TagPack(object):
 
             if field == "is_public":
                 logger.warning(
-                    "YAML field 'is_public' is DEPRECATED and will be removed "
-                    "in future versions. Use the commandline flag "
-                    "--public for inserting public tagpacks. By default, tagpacks "
-                    "are inserted with access set to private."
+                    "YAML field 'is_public' is DEPRECATED and will be ignored. "
+                    "Use the commandline flag --public for inserting public "
+                    "tagpacks. By default, tagpacks are inserted with access "
+                    "set to private."
                 )
 
             self.schema.check_type(field, value)
