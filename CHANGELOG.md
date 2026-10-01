@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Changed
+- **sqlmodel is no longer capped `<0.0.45`.** The tagstore's datetime columns (`lastmod` on tagpack, actorpack, actor and tag; `created` on address) are now declared as `DateTime(timezone=False)` explicitly, so sqlmodel 0.0.45+ no longer maps them to `timestamptz` and rejects naive values. The generated column type is unchanged (`TIMESTAMP WITHOUT TIME ZONE`), so existing tagstores need no migration.
+
 ## [2.17.0] - 2026-09-30
 
 ### Upgrade notes
