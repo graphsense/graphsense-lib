@@ -360,6 +360,35 @@ def _normalize_parameter_examples_for_generated_clients(
     return schema
 
 
+def _add_request_body_examples_for_generated_clients(
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose model-level request body examples to the python client snippets.
+
+    openapi-generator ignores schema examples for body parameters and emits
+    ``graphsense.<Model>()`` — an empty body that fails model validation (or
+    the server's own checks) when ``make run-examples`` executes the snippet.
+    The generator copies requestBody extensions onto the body parameter, so
+    the ``api_doc_example`` template can build the body from this literal.
+    """
+    components = schema.get("components", {}).get("schemas", {})
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            body = operation.get("requestBody")
+            if not isinstance(body, dict):
+                continue
+            body_schema = (
+                body.get("content", {}).get("application/json", {}).get("schema", {})
+            )
+            ref = body_schema.get("$ref", "")
+            example = components.get(ref.rsplit("/", 1)[-1], {}).get("example")
+            if example is not None:
+                body["x-graphsense-python-body-example"] = repr(example)
+    return schema
+
+
 def _convert_schema_names_to_snake_case(schema: dict[str, Any]) -> dict[str, Any]:
     """Post-process OpenAPI schema to use snake_case schema names.
 
@@ -1320,6 +1349,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Normalize selected parameter examples for generated SDK snippets
         openapi_schema = _normalize_parameter_examples_for_generated_clients(
+            openapi_schema
+        )
+        openapi_schema = _add_request_body_examples_for_generated_clients(
             openapi_schema
         )
 

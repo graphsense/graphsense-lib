@@ -14,7 +14,7 @@ from pprint import pprint
     # Create an instance of the API class
     api_instance = {{{packageName}}}.{{{classname}}}(api_client)
     {{#allParams}}
-    {{#required}}{{paramName}} = {{{example}}} # {{{dataType}}} | {{{description}}}{{#defaultValue}} (default to {{{.}}}){{/defaultValue}}{{/required}}{{^required}}{{#vendorExtensions.x-graphsense-python-example}}{{paramName}} = {{{vendorExtensions.x-graphsense-python-example}}}{{/vendorExtensions.x-graphsense-python-example}}{{^vendorExtensions.x-graphsense-python-example}}{{paramName}} = None{{/vendorExtensions.x-graphsense-python-example}} # {{{dataType}}} | {{{description}}} (optional){{#defaultValue}} (default to {{{.}}}){{/defaultValue}}{{/required}}
+    {{#required}}{{#vendorExtensions.x-graphsense-python-body-example}}{{paramName}} = {{{packageName}}}.{{{dataType}}}.from_dict({{{vendorExtensions.x-graphsense-python-body-example}}}){{/vendorExtensions.x-graphsense-python-body-example}}{{^vendorExtensions.x-graphsense-python-body-example}}{{paramName}} = {{{example}}}{{/vendorExtensions.x-graphsense-python-body-example}} # {{{dataType}}} | {{{description}}}{{#defaultValue}} (default to {{{.}}}){{/defaultValue}}{{/required}}{{^required}}{{#vendorExtensions.x-graphsense-python-example}}{{paramName}} = {{{vendorExtensions.x-graphsense-python-example}}}{{/vendorExtensions.x-graphsense-python-example}}{{^vendorExtensions.x-graphsense-python-example}}{{paramName}} = None{{/vendorExtensions.x-graphsense-python-example}} # {{{dataType}}} | {{{description}}} (optional){{#defaultValue}} (default to {{{.}}}){{/defaultValue}}{{/required}}
     {{/allParams}}
 
     try:

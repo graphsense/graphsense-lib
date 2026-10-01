@@ -47,7 +47,7 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.GraphApi(api_client)
-    graph_compare_request = graphsense.GraphCompareRequest() # GraphCompareRequest | 
+    graph_compare_request = graphsense.GraphCompareRequest.from_dict({'include': ['characteristics', 'signals', 'lineage', 'verdict'], 'txs': [{'network': 'btc', 'tx_hash': '756a95ba337d5dab4ee32fb46071e6cdcd78a6dd3970f025b25daae7c67298e5'}, {'network': 'btc', 'tx_hash': 'e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114'}]}) # GraphCompareRequest | 
 
     try:
         # Compare multiple transactions (beta)
@@ -130,7 +130,7 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.GraphApi(api_client)
-    graph_summary_request = graphsense.GraphSummaryRequest() # GraphSummaryRequest | 
+    graph_summary_request = graphsense.GraphSummaryRequest.from_dict({'addresses': [{'address': '14QK3yVfakMHD2W5oect54AtCez77wJgGf', 'network': 'btc'}, {'address': '15Lv7zkEtTfTeBvUB9Py7BZQoKKBpFQLsn', 'network': 'btc'}], 'txs': [{'network': 'btc', 'tx_hash': '756a95ba337d5dab4ee32fb46071e6cdcd78a6dd3970f025b25daae7c67298e5'}, {'network': 'btc', 'tx_hash': 'e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114'}]}) # GraphSummaryRequest | 
 
     try:
         # Summarize a set of transactions and/or addresses (beta)

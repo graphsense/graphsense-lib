@@ -43,6 +43,27 @@ Traps, each of which has already bitten once:
   local resolver charges for a dead name — 120s on a dev box behind a
   blackholing DNS server, instant in CI. Use a refused port (`127.0.0.1:1`).
 
+### Python client examples: run them before every client release
+
+`clients/python/test_examples.py` executes every snippet in the generated
+`clients/python/docs/*Api.md` against a live API (`report_tag` is skipped —
+side effects). No hook or test suite covers this, and the CI job
+(`python-examples.yml`) silently skips when `GS_API_KEY` is unset. **Run it
+against prod before releasing graphsense-python**, from `clients/python/`:
+
+```bash
+GS_API_KEY=<key> REPLACE_API_URL='https://api.iknaio.com>http://localhost:8080' \
+  uv run --with pypandoc test_examples.py
+```
+
+(`REPLACE_API_URL` is `from>to`; drop it to hit api.iknaio.com directly.)
+Snippets are generated, so fix failures at the source: query/path params get
+their value from `Query/Path(examples=[...])`; JSON request bodies get theirs
+from the request model's `api_model_config(EXAMPLE)`, which
+`_add_request_body_examples_for_generated_clients` (`web/app.py`) hands to
+`templates/api_doc_example.mustache`. Without a model example, a body snippet
+sends `Model()` and fails. Example data must be real on-chain data.
+
 ## Delta updater must stay in tandem with the Spark pipeline (`spark/`)
 
 The delta updater (`src/graphsenselib/deltaupdate/`) incrementally produces the
