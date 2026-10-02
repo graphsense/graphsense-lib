@@ -1427,9 +1427,10 @@ class TestZcashShieldedFieldValidation:
     """The bundle is enumerated strictly, so a new field fails loudly."""
 
     # Every stored block, oldest first. The four NU6.3 ones were picked so that
-    # between them they carry all seven distinct transaction key sets observed
-    # over the whole NU6.3 range. 1,687,119 was captured from Zebra 6.4.2, the
-    # others from Zebra 6.3.0.
+    # between them they carry seven of the eight distinct transaction key sets
+    # observed over the NU6.3 range; the eighth is described in
+    # test_distinct_transaction_key_sets_are_covered. 1,687,119 was captured
+    # from Zebra 6.4.2, the others from Zebra 6.3.0.
     BLOCKS = (
         600_000,
         1_687_119,
@@ -1477,15 +1478,18 @@ class TestZcashShieldedFieldValidation:
         }
 
     def test_distinct_transaction_key_sets_are_covered(self):
-        """The NU6.3 fixtures carry every transaction shape the range contains.
+        """The NU6.3 fixtures carry seven of the range's eight transaction shapes.
 
-        A census of all 52,157 blocks from NU6.3 activation to the chain tip
-        (328,134 transactions) found exactly seven distinct transaction key
+        A census of the 74,647 blocks from NU6.3 activation at 3,428,143 up to
+        3,502,789 (597,145 transactions) found eight distinct transaction key
         sets. ``ironwood``, ``authdigest``, ``bindingSig``, ``joinSplitPubKey``
-        and ``joinSplitSig`` are each optional and vary independently, and the
-        transaction-level validation has to accept all seven combinations —
-        including the rarest, Sprout joinsplits still appearing in the NU6.3
-        range, which numbered 14 transactions in that census.
+        and ``joinSplitSig`` are each optional, and the transaction-level
+        validation has to accept every combination that occurs. The fixtures
+        hold seven of them, including the rarest of those: Sprout joinsplits
+        next to a Sapling bundle, on 52 transactions in that census. The
+        eighth occurs once, 73204371...3f57 @ 3,493,704: joinsplits with no
+        Sapling spends or outputs, so ``joinSplitSig`` without ``bindingSig``.
+        Its block of 113 transactions is not stored.
         """
         key_sets = set()
         for height in self.NU63_BLOCKS:
