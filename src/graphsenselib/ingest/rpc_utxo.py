@@ -239,8 +239,8 @@ _SCRIPT_PUB_KEY_BLACKLIST = frozenset(
 
 _JOINSPLIT_KNOWN_KEYS = frozenset(
     {
-        "vpub_old",
-        "vpub_new",
+        "vpub_oldZat",
+        "vpub_newZat",
     }
 )
 
@@ -254,8 +254,10 @@ _JOINSPLIT_BLACKLIST = frozenset(
         "randomSeed",
         "macs",
         "proof",
-        "vpub_oldZat",
-        "vpub_newZat",
+        # Float ZEC renderings of the "vpub_oldZat" and "vpub_newZat" this
+        # parser reads, as with the "valueBalance" floats.
+        "vpub_old",
+        "vpub_new",
         "anchor",  # Sprout anchor hash
         "ciphertexts",  # encrypted note ciphertexts
     }
@@ -350,6 +352,22 @@ def _value_balance_zat(obj, context, content_keys):
                 "refusing to drop the shielded amount."
             )
     return balance or 0
+
+
+def _vpub_zat(joinsplit, key):
+    """Return a joinsplit's integer ``<key>Zat``, or 0 if it has none.
+
+    Same rule as ``_value_balance_zat``: only the integer is read, and a
+    joinsplit that carries the float ``<key>`` without it raises instead of
+    turning a Sprout amount into 0.
+    """
+    amount = joinsplit.get(f"{key}Zat")
+    if amount is None and key in joinsplit:
+        raise ValueError(
+            f"vjoinsplit has {key} but no {key}Zat; "
+            "refusing to drop the shielded amount."
+        )
+    return amount or 0
 
 
 def _btc_to_satoshi(value):
@@ -640,6 +658,8 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
         # vpub_old = value from transparent → shielded (consumed) = OUTPUT
         # vpub_new = value from shielded → transparent (produced) = INPUT
         # Same convention as Sapling valueBalance: z→t = input, t→z = output
+        # Both are read from the integer vpub_oldZat/vpub_newZat, already in
+        # zatoshi like the value balances below.
         vjoinsplit = raw_tx.get("vjoinsplit")
         if vjoinsplit:
             for js in vjoinsplit:
@@ -649,8 +669,8 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     _JOINSPLIT_BLACKLIST,
                     "vjoinsplit",
                 )
-                vpub_old = _btc_to_satoshi(js.get("vpub_old")) or 0
-                vpub_new = _btc_to_satoshi(js.get("vpub_new")) or 0
+                vpub_old = _vpub_zat(js, "vpub_old")
+                vpub_new = _vpub_zat(js, "vpub_new")
                 if vpub_new > 0:
                     inputs.append(_make_shielded_input(len(inputs), vpub_new))
                 if vpub_old > 0:

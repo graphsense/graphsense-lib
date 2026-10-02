@@ -482,7 +482,11 @@ class TestParseBlockAndTxs:
         assert regular["fee"] == 0 - 99_000_000  # input(0) - output
 
     def test_zcash_shielded_joinsplit(self):
-        """ZCash vjoinsplit creates shielded inputs/outputs."""
+        """ZCash vjoinsplit creates shielded inputs/outputs.
+
+        The amounts are read from the integer vpub_oldZat/vpub_newZat, which
+        nodes emit next to the floats.
+        """
         block_raw = {
             "hash": "zcash_block",
             "height": 100,
@@ -512,7 +516,18 @@ class TestParseBlockAndTxs:
                         }
                     ],
                     "vjoinsplit": [
-                        {"vpub_old": 0.0, "vpub_new": 10.0},
+                        {
+                            "vpub_old": 0.0,
+                            "vpub_oldZat": 0,
+                            "vpub_new": 10.0,
+                            "vpub_newZat": 1_000_000_000,
+                        },
+                        {
+                            "vpub_old": 2.5,
+                            "vpub_oldZat": 250_000_000,
+                            "vpub_new": 0.0,
+                            "vpub_newZat": 0,
+                        },
                     ],
                 }
             ],
@@ -523,6 +538,10 @@ class TestParseBlockAndTxs:
         shielded_inputs = [i for i in tx["inputs"] if i.get("type") == "shielded"]
         assert len(shielded_inputs) == 1
         assert shielded_inputs[0]["value"] == 1_000_000_000
+        # vpub_old (t→z) > 0 → shielded OUTPUT (takes value from the transaction)
+        shielded_outputs = [o for o in tx["outputs"] if o["type"] == "shielded"]
+        assert len(shielded_outputs) == 1
+        assert shielded_outputs[0]["value"] == 250_000_000
 
     def test_zcash_value_balance(self):
         """ZCash valueBalanceZat creates shielded inputs or outputs."""
@@ -1136,6 +1155,57 @@ class TestZcashShieldedPools:
         assert [i["value"] for i in shielded(tx["inputs"])] == [92_000_000]
         assert [o["value"] for o in shielded(tx["outputs"])] == [91_990_000]
         assert tx["fee"] == 10_000
+
+    def test_sprout_reads_the_integer_fields_not_the_floats(self):
+        """Sprout amounts are vpub_oldZat/vpub_newZat, read verbatim.
+
+        Mainnet block 600,000 — its six Sprout-to-Sapling migrations carry one
+        joinsplit each, with vpub_newZat from 81,000,000 to 9,100,000,000 and
+        vpub_oldZat 0. Swapping every float for a different value must not
+        change the result, which is what keeps a revert to the floats from
+        passing unnoticed.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        joinsplits = {
+            tx["txid"]: tx["vjoinsplit"] for tx in raw["tx"] if tx["vjoinsplit"]
+        }
+        assert len(joinsplits) == 6
+        for (js,) in joinsplits.values():
+            assert round(js["vpub_new"] * 1e8) == js["vpub_newZat"]
+            js["vpub_old"] = 1.0
+            js["vpub_new"] = 2.0
+
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+
+        for txid, (js,) in joinsplits.items():
+            tx = tx_by_hash(txs, txid)
+            assert [i["value"] for i in shielded(tx["inputs"])] == [js["vpub_newZat"]]
+        assert txs == self.parse(600_000)
+
+    @pytest.mark.parametrize("key", ["vpub_old", "vpub_new"])
+    @pytest.mark.parametrize("float_field", ["kept", "null"])
+    def test_sprout_float_without_integer_raises(self, key, float_field):
+        """A joinsplit float with no integer beside it must not become 0.
+
+        00c8e2ed...af10 @ 600,000 — one joinsplit, vpub_new 0.92 and
+        vpub_newZat 92,000,000. No node emits a float alone, but validation
+        cannot catch it: the float is blacklisted and a missing known key
+        never raises. Without the guard this transaction would lose its
+        Sprout input and report a fee of -91,990,000.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        (js,) = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10"
+        )["vjoinsplit"]
+        del js[f"{key}Zat"]
+        if float_field == "null":
+            js[key] = None
+
+        with pytest.raises(ValueError, match=f"vjoinsplit has {key} but no {key}Zat"):
+            _parse_btc_block_and_txs(raw, network="zec")
 
 
 class TestZcashShieldedFieldValidation:
