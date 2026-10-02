@@ -202,6 +202,7 @@ _PREVOUT_BLACKLIST = frozenset(
 _VOUT_KNOWN_KEYS = frozenset(
     {
         "value",
+        "valueZat",  # ZEC: integer zatoshi value, preferred to value when present
         "n",
         "scriptPubKey",
     }
@@ -211,7 +212,6 @@ _VOUT_BLACKLIST = frozenset(
     {
         "ismweb",  # LTC: flags vout from MimbleWimble Extension Block
         "valueSat",  # ZEC: integer satoshi value, redundant with value
-        "valueZat",  # ZEC: integer zatoshi value, redundant with value
         "tokenData",  # BCH: CashTokens data (category, amount, nft)
     }
 )
@@ -577,6 +577,16 @@ def _parse_output(vout_entry, network="btc"):
             output_type = "nonstandard"
             addresses = [_script_hex_to_non_standard_address(script_hex)]
 
+    # No node omits "value" on an output that passes the validation above. One
+    # without it would not fail there either (a missing known key never
+    # raises) and would then be skipped by the None-tolerant sums, so it
+    # raises instead. A value of 0 is valid.
+    value = vout_entry.get("value")
+    if value is None:
+        raise ValueError("vout has no value; refusing to drop the output amount.")
+    # ZEC nodes also give the amount as an integer, which avoids the float.
+    value_zat = vout_entry.get("valueZat") if network == "zec" else None
+
     return {
         "index": vout_entry.get("n"),
         "script_asm": script_pub_key.get("asm"),
@@ -584,7 +594,7 @@ def _parse_output(vout_entry, network="btc"):
         "required_signatures": required_signatures,
         "type": output_type,
         "addresses": addresses,
-        "value": _btc_to_satoshi(vout_entry.get("value")),
+        "value": value_zat if value_zat is not None else _btc_to_satoshi(value),
     }
 
 

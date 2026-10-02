@@ -46,6 +46,30 @@ def shielded(inoutputs):
     return [x for x in inoutputs if x["type"] == "shielded"]
 
 
+class FakeRpcClient:
+    """Stands in for BatchRpcClient: answers getrawtransaction from a dict.
+
+    Only the transport is replaced, so the exporter's own batching, output
+    parsing and caching run on whatever responses the test supplies.
+    """
+
+    def __init__(self, raw_txs):
+        self.raw_txs = raw_txs
+        self.requested = []
+
+    def make_batch_request(self, rpc_requests):
+        results = []
+        for request in rpc_requests:
+            assert request["method"] == "getrawtransaction"
+            txid, verbose = request["params"]
+            assert verbose == 1
+            self.requested.append(txid)
+            results.append(
+                {"id": request["id"], "result": self.raw_txs.get(txid), "error": None}
+            )
+        return results
+
+
 class TestBtcToSatoshi:
     def test_none(self):
         assert _btc_to_satoshi(None) is None
@@ -354,6 +378,104 @@ class TestParseOutput:
             "1BDvQZjaAJH4ecZ8aL3fYgTi7rnn3o2thE"
         ]
 
+    @pytest.mark.parametrize("network", ["btc", "ltc", "bch"])
+    @pytest.mark.parametrize("value", ["absent", "null"])
+    def test_output_without_value_raises(self, network, value):
+        """An output with no value must not vanish from output_value.
+
+        No node omits it on an output that passes field validation, and that
+        validation cannot catch its absence: a missing known key never raises,
+        and the sums skip a value of None.
+        """
+        vout = {
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 abc OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a914abc88ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"],
+            },
+        }
+        if value == "null":
+            vout["value"] = None
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            _parse_output(vout, network=network)
+
+    def _zcash_vout(self):
+        """vout 0 of 8b231f95...4011 @ 600,000 — value 59.995, valueZat 5,999,500,000."""
+        tx = next(
+            tx
+            for tx in load_zcash_block(600_000)["tx"]
+            if tx["txid"]
+            == "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"
+        )
+        vout = copy.deepcopy(tx["vout"][0])
+        assert (vout["value"], vout["valueZat"]) == (59.995, 5_999_500_000)
+        return vout
+
+    def test_zcash_output_reads_value_zat_not_the_float(self):
+        """ZEC outputs take the integer valueZat when the node gives one.
+
+        Swapping the float for a different value must not change the result,
+        which is what keeps a revert to the float from passing unnoticed.
+        """
+        vout = self._zcash_vout()
+        vout["value"] = 1.0
+
+        assert _parse_output(vout, network="zec")["value"] == 5_999_500_000
+
+    def test_zcash_output_without_value_zat_reads_the_float(self):
+        """The integer is preferred, not required: without it the float is read."""
+        vout = self._zcash_vout()
+        del vout["valueZat"]
+
+        assert _parse_output(vout, network="zec")["value"] == 5_999_500_000
+
+    @pytest.mark.parametrize("network", ["btc", "ltc", "bch"])
+    def test_value_zat_is_only_read_for_zcash(self, network):
+        """Other networks keep reading the float, whatever else the output holds."""
+        vout = self._zcash_vout()
+        vout["value"] = 1.0
+
+        assert _parse_output(vout, network=network)["value"] == 100_000_000
+
+    @pytest.mark.parametrize("value", ["absent", "null"])
+    def test_zcash_output_without_value_raises(self, value):
+        """A missing value raises on ZEC too, even with valueZat in place."""
+        vout = self._zcash_vout()
+        del vout["value"]
+        if value == "null":
+            vout["value"] = None
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            _parse_output(vout, network="zec")
+
+    @pytest.mark.parametrize("network", ["btc", "zec"])
+    def test_zero_value_output_is_valid(self, network):
+        """A value of 0 is an amount, not a missing one.
+
+        vout 0 of 574040a3...ee8e @ 3,479,931 (Zebra 6.4.2), a nulldata
+        output of 0 zat.
+        """
+        vout = {
+            "value": 0.0,
+            "valueZat": 0,
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_RETURN 00010074657374696e672e2e2e2e2e2e07",
+                "hex": "6a1100010074657374696e672e2e2e2e2e2e07",
+                "type": "nulldata",
+            },
+        }
+
+        result = _parse_output(vout, network=network)
+
+        assert result["value"] == 0
+        assert result["type"] == "nulldata"
+        assert result["addresses"] == []
+
 
 class TestParseBlockAndTxs:
     SAMPLE_BLOCK = {
@@ -612,6 +734,47 @@ class TestParseBlockAndTxs:
         assert tx["input_value"] == 40_000
         assert tx["output_value"] == 0
         assert tx["fee"] == 40_000
+
+    def test_zcash_transparent_outputs_are_their_value_zat(self):
+        """Every transparent output of a ZEC block is its valueZat, verbatim.
+
+        Mainnet block 600,000 — ten transparent outputs over five
+        transactions, each carrying the float value and the integer valueZat.
+        """
+        raw = load_zcash_block(600_000)
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+
+        seen = 0
+        for raw_tx, tx in zip(raw["tx"], txs):
+            transparent = [o for o in tx["outputs"] if o["type"] != "shielded"]
+            assert [o["value"] for o in transparent] == [
+                vout["valueZat"] for vout in raw_tx["vout"]
+            ]
+            seen += len(transparent)
+        assert seen == 10
+
+    def test_zcash_output_without_value_raises(self):
+        """8b231f95...4011 @ 600,000 — outputs of 5,999,500,000 and 1,091,949,394,611.
+
+        Without the first output's value the transaction's output_value would
+        read 1,091,949,394,611 instead of 1,097,948,894,611, so the parse is
+        aborted instead.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"
+        )
+        assert [vout["valueZat"] for vout in target["vout"]] == [
+            5_999_500_000,
+            1_091_949_394_611,
+        ]
+        del target["vout"][0]["value"]
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            _parse_btc_block_and_txs(raw, network="zec")
 
     def test_regular_tx_with_prevout(self):
         """Verbosity 3: prevout resolves input_value and fee correctly."""
@@ -1553,6 +1716,54 @@ class TestResolveUnresolvedInputs:
             mock_rpc.assert_not_called()
 
         assert transactions[1]["inputs"][0]["value"] == 100
+
+    def test_fetched_output_without_value_raises(self):
+        """A previous output with no value aborts the resolution outright.
+
+        8b231f95...4011 @ 600,000 stands in for the getrawtransaction response
+        of a spent transaction, with the value of its output 0 removed. The
+        error must come from the output parser, through the fetch thread pool,
+        rather than surface later as an unresolved input blamed on a missing
+        txindex.
+        """
+        prev = copy.deepcopy(
+            next(
+                tx
+                for tx in load_zcash_block(600_000)["tx"]
+                if tx["txid"]
+                == "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"
+            )
+        )
+        del prev["vout"][0]["value"]
+
+        exp = self._make_exporter()
+        exp.network = "zec"
+        exp.client = FakeRpcClient({prev["txid"]: prev})
+        transactions = [
+            {
+                "hash": "spender",
+                "is_coinbase": False,
+                "inputs": [
+                    {
+                        "spent_transaction_hash": prev["txid"],
+                        "spent_output_index": 0,
+                        "value": None,
+                        "addresses": [],
+                        "type": None,
+                    },
+                ],
+                "outputs": [],
+                "input_value": 0,
+                "output_value": 0,
+                "fee": 0,
+            },
+        ]
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            exp._resolve_unresolved_inputs(transactions)
+
+        assert exp.client.requested == [prev["txid"]]
+        assert transactions[0]["inputs"][0]["value"] is None
 
 
 class TestTxVersionToInt32:
