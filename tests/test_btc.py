@@ -1009,6 +1009,44 @@ class TestZcashShieldedPools:
         assert tx["output_value"] == 300_000_000
         assert tx["fee"] == 15_000
 
+    def test_shielded_coinbase_reward_is_a_shielded_output(self):
+        """d2f91598...e42b @ 1,687,119 — a coinbase that pays the miner into Sapling.
+
+        The only transaction of its block, captured from Zebra 6.4.2. The
+        3.125 ZEC subsidy goes to three transparent funding-stream outputs
+        (62,500,000 zat together) and one Sapling output holding the miner's
+        2.5 ZEC, so the Sapling balance is -250,000,000 with nothing spent.
+        The shielded reward has to appear as a shielded output: the coinbase's
+        output_value is then the whole subsidy, and its fee stays 0.
+        """
+        raw = load_zcash_block(1_687_119)
+        (raw_tx,) = raw["tx"]
+        assert raw_tx["vShieldedSpend"] == []
+        assert len(raw_tx["vShieldedOutput"]) == 1
+
+        block, (tx,) = _parse_btc_block_and_txs(raw, network="zec")
+
+        assert block["coinbase_param"] == "034fbe1900"
+        assert (
+            tx["hash"]
+            == "d2f915983054efb9b8af88671f323fa444e0b7af4974dd3cc92105c6b94ee42b"
+        )
+        assert tx["is_coinbase"] is True
+        assert tx["inputs"] == []
+        assert tx["sapling_value_balance"] == -250_000_000
+        assert tx["orchard_value_balance"] == 0
+        assert tx["ironwood_value_balance"] == 0
+        assert [o["value"] for o in tx["outputs"]] == [
+            21_875_000,
+            25_000_000,
+            15_625_000,
+            250_000_000,
+        ]
+        assert shielded(tx["outputs"]) == [tx["outputs"][3]]
+        assert tx["input_value"] == 0
+        assert tx["output_value"] == 312_500_000
+        assert tx["fee"] == 0
+
     def test_empty_orchard_bundle_contributes_nothing(self):
         """Every NU5+ transaction carries an ``orchard`` key, usually empty.
 
@@ -1390,8 +1428,18 @@ class TestZcashShieldedFieldValidation:
 
     # Every stored block, oldest first. The four NU6.3 ones were picked so that
     # between them they carry all seven distinct transaction key sets observed
-    # over the whole NU6.3 range.
-    BLOCKS = (600_000, 1_687_194, 2_501_409, 3_442_130, 3_442_400, 3_463_373, 3_479_000)
+    # over the whole NU6.3 range. 1,687,119 was captured from Zebra 6.4.2, the
+    # others from Zebra 6.3.0.
+    BLOCKS = (
+        600_000,
+        1_687_119,
+        1_687_194,
+        2_501_409,
+        3_442_130,
+        3_442_400,
+        3_463_373,
+        3_479_000,
+    )
     NU63_BLOCKS = (3_442_130, 3_442_400, 3_463_373, 3_479_000)
 
     def test_validation_runs_at_every_level(self):
@@ -1413,14 +1461,14 @@ class TestZcashShieldedFieldValidation:
                 _parse_btc_block_and_txs(load_zcash_block(height), network="zec")
 
         assert contexts == {
-            "block": 7,
-            "transaction": 40,
-            "vin": 102,
+            "block": 8,
+            "transaction": 41,
+            "vin": 103,
             "scriptSig": 95,
-            "vout": 96,
-            "scriptPubKey": 96,
+            "vout": 99,
+            "scriptPubKey": 99,
             "vjoinsplit": 8,
-            "orchard bundle": 40,
+            "orchard bundle": 41,
             "ironwood bundle": 8,
             "orchard action": 11,
             "ironwood action": 15,
