@@ -963,15 +963,143 @@ class TestZcashShieldedPools:
             _parse_btc_block_and_txs(raw, network="zec")
 
     def test_missing_value_balance_pair_is_zero(self):
-        """With both fields absent there is no amount to lose, so no error."""
+        """An empty Sapling bundle with both fields absent has no amount to lose.
+
+        Mainnet block 600,000 — five of its eleven transactions have no
+        Sapling spends or outputs. Dropping the pair from those changes
+        nothing: their balance is still 0 and every fee in the block is what
+        it was. The other six are the Sprout-to-Sapling migrations, whose
+        bundles are not empty and keep their pair, so each still pays its
+        10,000 zat.
+        """
         raw = copy.deepcopy(load_zcash_block(600_000))
-        for tx in raw["tx"]:
-            tx.pop("valueBalance", None)
-            tx.pop("valueBalanceZat", None)
+        empty = [
+            tx
+            for tx in raw["tx"]
+            if not tx["vShieldedSpend"] and not tx["vShieldedOutput"]
+        ]
+        assert len(empty) == 5
+        for tx in empty:
+            del tx["valueBalance"]
+            del tx["valueBalanceZat"]
+
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+        parsed = {tx["hash"]: tx for tx in txs}
+
+        assert all(parsed[tx["txid"]]["sapling_value_balance"] == 0 for tx in empty)
+        assert [tx["fee"] for tx in txs] == [tx["fee"] for tx in self.parse(600_000)]
+        assert [tx["fee"] for tx in txs[5:]] == [10_000] * 6
+
+    @pytest.mark.parametrize(
+        "height, txid, content",
+        [
+            (
+                600_000,
+                "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10",
+                "vShieldedOutput",
+            ),
+            (
+                1_687_194,
+                "bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517",
+                "vShieldedSpend and vShieldedOutput",
+            ),
+        ],
+        ids=["output", "spend and output"],
+    )
+    @pytest.mark.parametrize("float_field", ["absent", "null"])
+    def test_non_empty_sapling_bundle_without_integer_raises(
+        self, height, txid, content, float_field
+    ):
+        """Sapling spends or outputs with no integer balance must not become 0.
+
+        00c8e2ed...af10 @ 600,000 has one Sapling output and a balance of
+        -91,990,000; bd84ece1...6517 @ 1,687,194 has one spend, one output and
+        +89,000. Without the pair, or with a null float in its place, the
+        balance is unknown rather than 0: the first transaction's fee would
+        read 92,000,000 instead of 10,000.
+        """
+        raw = copy.deepcopy(load_zcash_block(height))
+        target = next(tx for tx in raw["tx"] if tx["txid"] == txid)
+        del target["valueBalanceZat"]
+        if float_field == "absent":
+            del target["valueBalance"]
+        else:
+            target["valueBalance"] = None
+
+        with pytest.raises(ValueError, match=f"transaction has {content} but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    def test_sapling_spends_alone_make_the_bundle_non_empty(self):
+        """The guard looks at spends as well as outputs.
+
+        bd84ece1...6517 @ 1,687,194 with its output list emptied still has a
+        Sapling spend, so a missing balance pair raises.
+        """
+        raw = copy.deepcopy(load_zcash_block(1_687_194))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517"
+        )
+        assert len(target["vShieldedSpend"]) == 1
+        target["vShieldedOutput"] = []
+        del target["valueBalance"]
+        del target["valueBalanceZat"]
+
+        with pytest.raises(ValueError, match="transaction has vShieldedSpend but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    @pytest.mark.parametrize("pool", ["orchard", "ironwood"])
+    @pytest.mark.parametrize("float_field", ["absent", "null"])
+    def test_non_empty_bundle_without_integer_raises(self, pool, float_field):
+        """Same for an Orchard or Ironwood bundle that has actions.
+
+        3115796d...9e53 @ 3,479,000 carries two Orchard actions (+1,020,000)
+        and two Ironwood actions (-1,000,000). Losing either balance would
+        turn its 20,000 zat fee into -1,000,000 or 1,020,000.
+        """
+        raw = copy.deepcopy(load_zcash_block(3_479_000))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "3115796d7ebd1f35d270229221166f2318888587153a294dfb712ef620899e53"
+        )[pool]
+        assert len(target["actions"]) == 2
+        del target["valueBalanceZat"]
+        if float_field == "absent":
+            del target["valueBalance"]
+        else:
+            target["valueBalance"] = None
+
+        with pytest.raises(ValueError, match=f"{pool} bundle has actions but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    @pytest.mark.parametrize("shape", ["pair absent", "null float", "no bundle"])
+    def test_empty_or_absent_orchard_bundle_is_zero(self, shape):
+        """A bundle with no actions, or no bundle at all, still reads as 0.
+
+        Mainnet block 1,687,194 — four of its five transactions carry an empty
+        ``orchard`` object. Dropping its balance pair, nulling the float, or
+        dropping the object changes nothing in the parsed block.
+        """
+        raw = copy.deepcopy(load_zcash_block(1_687_194))
+        empty = [tx for tx in raw["tx"] if not tx["orchard"]["actions"]]
+        assert len(empty) == 4
+        for tx in empty:
+            if shape == "no bundle":
+                del tx["orchard"]
+                continue
+            del tx["orchard"]["valueBalanceZat"]
+            if shape == "pair absent":
+                del tx["orchard"]["valueBalance"]
+            else:
+                tx["orchard"]["valueBalance"] = None
 
         _, txs = _parse_btc_block_and_txs(raw, network="zec")
 
-        assert all(tx["sapling_value_balance"] == 0 for tx in txs)
+        assert txs == self.parse(1_687_194)
 
     def test_pre_nu5_transactions_carry_an_empty_orchard_bundle(self):
         """Mainnet block 600,000 — every transaction is v4 and long pre-NU5.

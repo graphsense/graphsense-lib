@@ -101,6 +101,11 @@ _TX_KNOWN_KEYS = frozenset(
         # present or absent together — the integer is therefore no less
         # available than the float, and avoids the lossy float round-trip.
         "valueBalanceZat",
+        # Sapling spend and output descriptions. Only their emptiness is read:
+        # a transaction that has any must also carry valueBalanceZat (see
+        # _value_balance_zat). The descriptions themselves are not parsed.
+        "vShieldedSpend",
+        "vShieldedOutput",
         # NU5 Orchard and NU6.3 Ironwood bundles. Optional: validate_rpc_fields
         # works by set difference, so a known key that is absent never raises.
         # Zebra emits "orchard" on every transaction, including pre-NU5 v1-v4
@@ -121,8 +126,6 @@ _TX_BLACKLIST = frozenset(
         "hex",  # raw transaction hex, not stored
         "fee",  # convenience field at verbosity 3, we compute it ourselves
         # ZCash extras we don't parse
-        "vShieldedSpend",
-        "vShieldedOutput",
         "bindingSig",
         "overwintered",
         "expiryheight",
@@ -318,21 +321,34 @@ _ORCHARD_FLAGS_BLACKLIST = frozenset(
 )
 
 
-def _value_balance_zat(obj, context):
-    """Return ``obj``'s integer ``valueBalanceZat``, or 0 if it has none.
+def _value_balance_zat(obj, context, content_keys):
+    """Return ``obj``'s integer ``valueBalanceZat``, or 0 for an empty bundle.
 
     Every node emits the float ``valueBalance`` and ``valueBalanceZat``
     together, and only the integer is read. A float without its integer would
     otherwise pass validation (the float is blacklisted, and a missing known
     key never raises) and turn a real shielded amount into 0, so that case
     raises instead.
+
+    So does a bundle that is not empty but has no integer, whether the float
+    is absent or null. ``content_keys`` names the lists that make it non-empty:
+    the Sapling spends and outputs of a transaction, or the actions of an
+    Orchard or Ironwood bundle. Its balance is then unknown rather than 0.
+    Only an empty or absent bundle has no amount to lose, and reads as 0.
     """
     balance = obj.get("valueBalanceZat")
-    if balance is None and obj.get("valueBalance") is not None:
-        raise ValueError(
-            f"{context} has valueBalance but no valueBalanceZat; "
-            "refusing to drop the shielded amount."
-        )
+    if balance is None:
+        if obj.get("valueBalance") is not None:
+            raise ValueError(
+                f"{context} has valueBalance but no valueBalanceZat; "
+                "refusing to drop the shielded amount."
+            )
+        content = [key for key in content_keys if obj.get(key)]
+        if content:
+            raise ValueError(
+                f"{context} has {' and '.join(content)} but no valueBalanceZat; "
+                "refusing to drop the shielded amount."
+            )
     return balance or 0
 
 
@@ -641,7 +657,9 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     outputs.append(_make_shielded_output(len(outputs), vpub_old))
 
         # ZCash: Sapling value balance, already in zatoshi like the bundles below.
-        sapling_value_balance = _value_balance_zat(raw_tx, "transaction")
+        sapling_value_balance = _value_balance_zat(
+            raw_tx, "transaction", ("vShieldedSpend", "vShieldedOutput")
+        )
         if sapling_value_balance > 0:
             inputs.append(_make_shielded_input(len(inputs), sapling_value_balance))
         elif sapling_value_balance < 0:
@@ -681,7 +699,7 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     _ORCHARD_FLAGS_BLACKLIST,
                     f"{pool} flags",
                 )
-            balance = _value_balance_zat(bundle, f"{pool} bundle")
+            balance = _value_balance_zat(bundle, f"{pool} bundle", ("actions",))
             pool_value_balance[pool] = balance
             if balance > 0:
                 inputs.append(_make_shielded_input(len(inputs), balance))
