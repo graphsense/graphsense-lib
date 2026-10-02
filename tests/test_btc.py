@@ -38,6 +38,20 @@ def load_zcash_block(height):
         return json.loads(gzip.decompress(fh.read()))
 
 
+def load_zcash_tx(txid):
+    """Return the verbatim ``getrawtransaction(<txid>, 1)`` response of a txid.
+
+    Stored like the block fixtures, unmodified and only gzipped. These are the
+    transactions whose outputs a fixture transaction spends, as a Zebra 6.4.2
+    node returns them.
+    """
+    path = importlib.resources.files(ingest_resources).joinpath(
+        f"zcash_tx_{txid}.json.gz"
+    )
+    with path.open("rb") as fh:
+        return json.loads(gzip.decompress(fh.read()))
+
+
 def tx_by_hash(txs, tx_hash):
     return next(tx for tx in txs if tx["hash"] == tx_hash)
 
@@ -1764,6 +1778,105 @@ class TestResolveUnresolvedInputs:
 
         assert exp.client.requested == [prev["txid"]]
         assert transactions[0]["inputs"][0]["value"] is None
+
+    @pytest.mark.parametrize(
+        "height, txid, spent, fee_before, input_value, output_value, fee",
+        [
+            # Orchard -362,999,000, one transparent input, no transparent output
+            (
+                2_501_409,
+                "7bd7717f8897e323840ac0f6b09518e580dbca1fa77dbd20ed0b90fc56d2fe69",
+                [
+                    (
+                        "fa436b021b15c9ad965ea25e53acb18622db1219dd4fc8020734db42bef8a4ef",
+                        0,
+                        363_000_000,
+                    ),
+                ],
+                -362_999_000,
+                363_000_000,
+                362_999_000,
+                1_000,
+            ),
+            # Sapling -2,821,000,000, two transparent inputs, one transparent output
+            (
+                3_442_130,
+                "c30b8b7e014599442ff851f7c6bda59ab88b6a79048f4754f365bb50ab7999dc",
+                [
+                    (
+                        "bae8c7aca322619a554640da7351426ce99341a95a974015bb7b0fb6c2c9a11b",
+                        1,
+                        1_500_000_000,
+                    ),
+                    (
+                        "eaade029f99936d10862f4c6613e7a1207c5f38b1b4595d08ee098201156c095",
+                        1,
+                        1_500_000_000,
+                    ),
+                ],
+                -2_999_985_000,
+                3_000_000_000,
+                2_999_985_000,
+                15_000,
+            ),
+            # Ironwood -135,028, one transparent input, one transparent output
+            (
+                3_442_400,
+                "b1a00ede11a2dabd31d9465d969454f152980bc85aa92bdbf5425640a39cb857",
+                [
+                    (
+                        "0982413a27b031ea711a57f247d65acafa7c4291bd7fb97fc9cb2d7e175d0c77",
+                        0,
+                        4_260_000,
+                    ),
+                ],
+                -4_245_000,
+                4_260_000,
+                4_245_000,
+                15_000,
+            ),
+        ],
+        ids=["orchard", "sapling", "ironwood"],
+    )
+    def test_zcash_transparent_inputs_resolve_next_to_a_shielded_leg(
+        self, height, txid, spent, fee_before, input_value, output_value, fee
+    ):
+        """Real ZEC transactions with transparent inputs and a shielded leg.
+
+        7bd7717f...fe69 @ 2,501,409 shields into Orchard, c30b8b7e...99dc @
+        3,442,130 into Sapling and b1a00ede...b857 @ 3,442,400 into Ironwood.
+        At parse time their transparent inputs have no value, so the fee is
+        the negated output_value. Resolving the inputs from the transactions
+        they spend must keep the shielded output and give the fee each one
+        paid: 1,000, 15,000 and 15,000 zat.
+        """
+        _, txs = _parse_btc_block_and_txs(load_zcash_block(height), network="zec")
+        tx = tx_by_hash(txs, txid)
+        assert [
+            (i["spent_transaction_hash"], i["spent_output_index"]) for i in tx["inputs"]
+        ] == [(prev_txid, index) for prev_txid, index, _ in spent]
+        assert tx["input_value"] == 0
+        assert tx["fee"] == fee_before
+        shielded_outputs = shielded(tx["outputs"])
+        assert len(shielded_outputs) == 1
+
+        prev_txs = {prev_txid: load_zcash_tx(prev_txid) for prev_txid, _, _ in spent}
+        exp = self._make_exporter()
+        exp.network = "zec"
+        exp.client = FakeRpcClient(prev_txs)
+
+        exp._resolve_unresolved_inputs([tx])
+
+        assert sorted(exp.client.requested) == sorted(prev_txs)
+        for inp, (prev_txid, index, value) in zip(tx["inputs"], spent):
+            prev_out = prev_txs[prev_txid]["vout"][index]
+            assert inp["value"] == value == prev_out["valueZat"]
+            assert inp["addresses"] == prev_out["scriptPubKey"]["addresses"]
+            assert inp["type"] == "pubkeyhash"
+        assert shielded(tx["outputs"]) == shielded_outputs
+        assert tx["input_value"] == input_value
+        assert tx["output_value"] == output_value
+        assert tx["fee"] == fee
 
 
 class TestTxVersionToInt32:
