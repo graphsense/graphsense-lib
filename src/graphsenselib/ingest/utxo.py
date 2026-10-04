@@ -665,6 +665,9 @@ def enrich_txs(
             tx["input_value"] = sum(
                 [i["value"] for i in tx["inputs"] if i["value"] is not None]
             )
+            # The exporter computed fee before these inputs were resolved.
+            if not tx["is_coinbase"]:
+                tx["fee"] = tx["input_value"] - tx["output_value"]
 
 
 def prepare_transactions_inplace(
