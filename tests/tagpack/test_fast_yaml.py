@@ -173,3 +173,42 @@ class TestPyYamlFallback:
             load_yaml_fast(str(yaml_file))
         assert "Duplicate" in str(exc_info.value)
         assert "title" in str(exc_info.value)
+
+
+@pytest.mark.skipif(not RYML_AVAILABLE, reason="rapidyaml not installed")
+class TestRapidyamlFallback:
+    """A rapidyaml parse failure falls back to PyYAML instead of aborting."""
+
+    def _fail_fast_parser(self, monkeypatch):
+        import ryml
+
+        real = ryml.parse_in_arena
+
+        def boom(*a, **kw):
+            return real(b"a: b: c\n")  # a genuine rapidyaml parse error
+
+        monkeypatch.setattr(ryml, "parse_in_arena", boom)
+
+    def test_falls_back_to_pyyaml(self, tmp_path, monkeypatch, caplog):
+        self._fail_fast_parser(monkeypatch)
+        yaml_file = tmp_path / "pack.yaml"
+        yaml_file.write_text("title: Ünïcode\ntags:\n  - label: a\n", encoding="utf-8")
+        assert load_yaml_fast(str(yaml_file)) == {
+            "title": "Ünïcode",
+            "tags": [{"label": "a"}],
+        }
+        assert "retrying with PyYAML" in caplog.text
+
+    def test_broken_file_reports_line_and_column(self, tmp_path):
+        yaml_file = tmp_path / "broken.yaml"
+        yaml_file.write_text("title: x\ntags:\n  - label: Exchange: deposit\n")
+        with pytest.raises(yaml.YAMLError) as exc_info:
+            load_yaml_fast(str(yaml_file))
+        assert "line 3" in str(exc_info.value)
+
+    def test_fallback_still_rejects_duplicate_keys(self, tmp_path, monkeypatch):
+        self._fail_fast_parser(monkeypatch)
+        yaml_file = tmp_path / "dup.yaml"
+        yaml_file.write_text("title: a\ntitle: b\n")
+        with pytest.raises(Exception, match="title"):
+            load_yaml_fast(str(yaml_file))

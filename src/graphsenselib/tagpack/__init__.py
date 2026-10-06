@@ -5,11 +5,14 @@ try:
 except ImportError:
     from yaml import SafeLoader as SafeLoader
 
+import logging
 import warnings
 
 import re
 
 from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
+
+logger = logging.getLogger(__name__)
 
 try:
     # Use the graphsense-lib version since tagpack is now part of it
@@ -129,10 +132,10 @@ def load_yaml_fast(file_path):
     """
     import json
 
-    if not RYML_AVAILABLE:
-        import yaml
+    import yaml
 
-        with open(file_path, "r") as f:
+    if not RYML_AVAILABLE:
+        with open(file_path, "r", encoding="utf-8") as f:
             return yaml.load(f, UniqueKeyLoader)
 
     with warnings.catch_warnings():
@@ -141,7 +144,14 @@ def load_yaml_fast(file_path):
 
     with open(file_path, "rb") as f:
         content = f.read()
-    tree = ryml.parse_in_arena(content)
+    try:
+        tree = ryml.parse_in_arena(content)
+    except ryml.ExceptionParse:
+        # rapidyaml is only the fast path, and its exception carries no
+        # message (it prints line/column to stderr itself). PyYAML loads what
+        # only rapidyaml rejects, and fails with line and column otherwise.
+        logger.warning(f"{file_path}: fast YAML parser failed, retrying with PyYAML")
+        return yaml.load(content.decode("utf-8"), UniqueKeyLoader)
     json_bytes = ryml.emit_json_malloc(tree, tree.root_id())
     data = json.loads(json_bytes, object_pairs_hook=_dict_raise_on_duplicates)
     return _convert_yaml_dates(data)

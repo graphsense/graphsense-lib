@@ -1104,6 +1104,110 @@ def test_validate_fail_null_characters_in_list_field(schema, taxonomies):
         tagpack.validate()
 
 
+def _pack_with_label(schema, taxonomies, label, **tag_extra):
+    return TagPack(
+        "http://example.com",
+        {
+            "title": "Test TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "currency": "BTC",
+            "tags": [{"label": label, "address": "123Bitcoin45", **tag_extra}],
+        },
+        schema,
+        taxonomies,
+    )
+
+
+@pytest.fixture
+def text_errors(monkeypatch):
+    """Garbled text as an error, as planned for a later release."""
+    import graphsenselib.tagpack.tagpack as tp
+
+    monkeypatch.setattr(tp, "TEXT_PROBLEMS_ARE_ERRORS", True)
+
+
+# UTF-8 Cyrillic read as Latin-1
+_BROKEN = "Name: Ivanov Иван".encode("utf-8").decode("latin-1")
+
+
+def test_validate_warns_on_mojibake_naming_the_intended_text(
+    schema, taxonomies, caplog
+):
+    _pack_with_label(schema, taxonomies, _BROKEN).validate()
+    assert "1 field value(s) with garbled or non-printable text" in caplog.text
+    assert "Field 'label' is mis-encoded" in caplog.text
+    assert "'Name: Ivanov Иван'" in caplog.text
+
+
+def test_validate_warns_once_per_pack(schema, taxonomies, caplog):
+    tp = TagPack(
+        "http://example.com",
+        {
+            "title": "Test TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "currency": "BTC",
+            "tags": [{"label": f"MÃ¼nchen {i}", "address": f"1A{i}"} for i in range(5)],
+        },
+        schema,
+        taxonomies,
+    )
+    tp.validate()
+    records = [r for r in caplog.records if "garbled" in r.getMessage()]
+    assert len(records) == 1
+    assert "5 field value(s)" in records[0].getMessage()
+    assert "(and 2 more)" in records[0].getMessage()
+
+
+def test_validate_fail_mojibake_when_errors(schema, taxonomies, text_errors):
+    with pytest.raises(ValidationError, match="'Name: Ivanov Иван'"):
+        _pack_with_label(schema, taxonomies, _BROKEN).validate()
+
+
+def test_validate_fail_cp1252_mojibake_when_errors(schema, taxonomies, text_errors):
+    tagpack = _pack_with_label(schema, taxonomies, "Exchange MÃ¼nchen")
+    with pytest.raises(ValidationError, match="'Exchange München'"):
+        tagpack.validate()
+
+
+def test_validate_finds_partly_garbled_text(schema, taxonomies, text_errors):
+    # garbled Arabic-Indic digits next to correct ones: the whole string
+    # cannot be re-encoded, the garbled run can
+    garbled = "٠".encode().decode("latin-1") * 2 + "١٦٦.eth"
+    with pytest.raises(ValidationError, match="'٠٠١٦٦.eth'"):
+        _pack_with_label(schema, taxonomies, garbled).validate()
+
+
+@pytest.mark.parametrize("char", ["\x07", "\x1b", "\x7f", "\x85", "\x9b"])
+def test_validate_non_printable_characters(
+    schema, taxonomies, char, caplog, monkeypatch
+):
+    _pack_with_label(schema, taxonomies, f"label{char}x").validate()
+    assert "non-printable control characters" in caplog.text
+
+    import graphsenselib.tagpack.tagpack as tp
+
+    monkeypatch.setattr(tp, "TEXT_PROBLEMS_ARE_ERRORS", True)
+    with pytest.raises(ValidationError, match="non-printable control characters"):
+        _pack_with_label(schema, taxonomies, f"label{char}x").validate()
+
+
+def test_validate_bad_text_in_context(schema, taxonomies, text_errors):
+    _pack_with_label(schema, taxonomies, "ok", context='{"note": "fine"}').validate()
+    tagpack = _pack_with_label(schema, taxonomies, "ok", context='{"note": "a\x01b"}')
+    with pytest.raises(ValidationError, match="Field 'context' contains non-printable"):
+        tagpack.validate()
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Zürich Exchange", "Артем", "日本 wallet", "Café € naïve", "two\nlines"],
+)
+def test_validate_accepts_correct_unicode(schema, taxonomies, label, text_errors):
+    _pack_with_label(schema, taxonomies, label).validate()
+
+
 def test_tags_cache_invalidation(schema, taxonomies):
     """Test that tags are cached and cache invalidates when contents change."""
     tagpack = TagPack(

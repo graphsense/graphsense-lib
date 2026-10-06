@@ -76,3 +76,19 @@ context:
   legal_name:
     type: text
     mandatory: false
+  # Other actors that are the same organisation (rebrand, duplicate entry).
+  same_as:
+    type: list
+    item_type: text
+    mandatory: false
+  # Other actors that are distinct but legitimately tag the same addresses
+  # (e.g. a custodian and the product it holds the funds of).
+  related_actors:
+    type: list
+    item_type: text
+    mandatory: false
+  # The actor this one is a sub-service of (e.g. an exchange's mining pool
+  # or wallet product); one actor id.
+  sub_service_of:
+    type: text
+    mandatory: false

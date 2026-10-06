@@ -94,7 +94,8 @@ def read_url_from_env():
     ev = dict(os.environ)
     try:
         url = f"postgresql://{ev['POSTGRES_USER']}:{ev['POSTGRES_PASSWORD']}"
-        url += f"@{ev['POSTGRES_HOST']}:5432/{ev['POSTGRES_DB']}"
+        port = ev.get("POSTGRES_PORT") or "5432"
+        url += f"@{ev['POSTGRES_HOST']}:{port}/{ev['POSTGRES_DB']}"
         msg = ""
     except KeyError:
         fields = ["USER", "PASSWORD", "HOST", "DB"]
@@ -917,7 +918,7 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                 click.secho(f"Writing updated Tagpack {updated_file}", fg="green")
                 tagpack.update_lastmod()
                 updated_yaml = tagpack.dump_actor_updates(tagpack_file)
-                with open(updated_file, "w") as outfile:
+                with open(updated_file, "w", encoding="utf-8") as outfile:
                     outfile.write(updated_yaml)
             else:
                 click.secho("No actors added, moving on.", fg="green")
@@ -2559,6 +2560,252 @@ def list_labels_without_actor(ctx, category, max, csv):
 def list_addresses_with_actor_collisions(ctx, csv):
     """List actors with address collisions."""
     list_addresses_with_actor_collisions_impl(ctx.obj["url"], ctx.obj["schema"], csv)
+
+
+def _run_on_async_tagstore(ctx, fn):
+    """Run ``fn(TagstoreDbAsync)`` against the quality group's --url/--schema."""
+    import asyncio
+
+    from graphsenselib.tagstore.db.database import get_db_engine_async
+    from graphsenselib.tagstore.db.queries import TagstoreDbAsync
+
+    url = ctx.obj["url"]
+    for prefix in ("postgresql://", "postgres://", "postgresql+psycopg2://"):
+        if url.startswith(prefix):
+            url = "postgresql+asyncpg://" + url[len(prefix) :]
+    engine = get_db_engine_async(
+        url, connect_args={"server_settings": {"search_path": ctx.obj["schema"]}}
+    )
+
+    async def run():
+        try:
+            return await fn(TagstoreDbAsync(engine))
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
+
+
+def _network_or_fail(ctx, network):
+    network = network or ctx.obj["network"]
+    if not network:
+        raise click.UsageError("--network is required")
+    return network
+
+
+def _groups_list(groups):
+    return [g.strip() for g in groups.split(",")] if groups else None
+
+
+def _run_conflict_detection(
+    ctx,
+    network,
+    groups,
+    clustering,
+    limit,
+    addresses,
+    check,
+    relations,
+):
+    from graphsenselib.tagstore.ranking_conflicts import detect
+
+    network = _network_or_fail(ctx, network)
+    result = _run_on_async_tagstore(
+        ctx,
+        lambda db: detect(
+            db,
+            network,
+            groups=_groups_list(groups),
+            clustering=clustering,
+            limit=limit,
+            addresses=list(addresses) or None,
+            ranking=check == "ranking",
+            actors=check == "actors",
+            relations=relations,
+        ),
+    )
+    for key in sorted(result.n_candidates):
+        click.echo(
+            f"{key}: checked {result.n_candidates[key]} addresses "
+            f"({result.n_mapped[key]} with a cluster mapping) and "
+            f"{result.n_clusters[key]} clusters",
+            err=True,
+        )
+    return result
+
+
+def _emit_conflict_rows(rows, columns, fmt, out):
+    from graphsenselib.tagstore.ranking_conflicts import reason_counts, write_rows
+
+    if out:
+        with open(out, "w", encoding="utf-8", newline="") as f:
+            write_rows(rows, columns, fmt, f)
+    else:
+        write_rows(rows, columns, fmt, sys.stdout)
+
+    for level, counts in sorted(reason_counts(rows).items()):
+        summary = ", ".join(
+            f"{k}={v}" for k, v in sorted(counts.items()) if k != "rows"
+        )
+        click.echo(f"{level}: {counts['rows']} findings ({summary})", err=True)
+
+
+def _conflict_options(f):
+    from graphsenselib.tagstore.ranking_conflicts import CLUSTERING_CHOICES
+
+    options = [
+        click.option(
+            "--network", default="", help="Network to check, e.g. BTC (required)."
+        ),
+        click.option(
+            "--groups",
+            default="",
+            help="Comma-separated ACL groups to read tags from "
+            "(default: all groups, i.e. the internal view).",
+        ),
+        click.option(
+            "--clustering",
+            type=click.Choice(CLUSTERING_CHOICES),
+            default="auto",
+            show_default=True,
+            help="Address->cluster mapping to use. auto = v2 where the network "
+            "has v2 mappings (what REST reads), legacy otherwise.",
+        ),
+        click.option(
+            "--format",
+            "fmt",
+            type=click.Choice(["csv", "json"]),
+            default="csv",
+            show_default=True,
+        ),
+        click.option("--out", default=None, help="Output file (default: stdout)."),
+        click.option(
+            "--limit",
+            type=int,
+            default=None,
+            help="Check at most this many candidate addresses, and only their "
+            "clusters (for a quick trial run).",
+        ),
+        click.option(
+            "--address",
+            "addresses",
+            multiple=True,
+            help="Check only this address and its cluster (repeatable).",
+        ),
+    ]
+    for option in reversed(options):
+        f = option(f)
+    return f
+
+
+@quality.command("ranking-conflicts")
+@_conflict_options
+@click.pass_context
+def ranking_conflicts(
+    ctx,
+    network,
+    groups,
+    clustering,
+    fmt,
+    out,
+    limit,
+    addresses,
+):
+    """Exchange attributions hidden in the tag summary (read-only).
+
+    Runs every exchange-tagged address through the same tag digest REST
+    serves, and reports those whose best_actor/best_label is not one of their
+    exchange tags (or the same organisation, declared as same_as or
+    sub_service_of in the actorpacks), with reason codes. Also checks each multi-address cluster's
+    selected definer against the confidence-weighted majority of its definers.
+    """
+    from graphsenselib.tagstore.ranking_conflicts import (
+        RANKING_COLUMNS,
+        ranking_rows,
+    )
+
+    result = _run_conflict_detection(
+        ctx,
+        network,
+        groups,
+        clustering,
+        limit,
+        addresses,
+        "ranking",
+        None,
+    )
+    _emit_conflict_rows(ranking_rows(result), RANKING_COLUMNS, fmt, out)
+
+
+@quality.command("actor-conflicts")
+@_conflict_options
+@click.pass_context
+def actor_conflicts(
+    ctx,
+    network,
+    groups,
+    clustering,
+    fmt,
+    out,
+    limit,
+    addresses,
+):
+    """Addresses and clusters attributed to more than one actor (read-only).
+
+    Actor pairs declared as same_as, sub_service_of or related_actors in the
+    actorpacks are not reported.
+    """
+    from graphsenselib.tagstore.ranking_conflicts import ACTOR_COLUMNS, actor_rows
+
+    result = _run_conflict_detection(
+        ctx,
+        network,
+        groups,
+        clustering,
+        limit,
+        addresses,
+        "actors",
+        None,
+    )
+    _emit_conflict_rows(actor_rows(result), ACTOR_COLUMNS, fmt, out)
+
+
+@quality.command("list-bad-text")
+@click.option(
+    "--network",
+    default="",
+    help="Limit the tag scan to one network (pack headers and actors are "
+    "always scanned).",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["csv", "json"]),
+    default="csv",
+    show_default=True,
+)
+@click.option("--out", default=None, help="Output file (default: stdout).")
+@click.pass_context
+def list_bad_text(ctx, network, fmt, out):
+    """Mis-encoded or non-printable text already in the tagstore (read-only).
+
+    Lists every distinct value in tag, tagpack, actor and actorpack fields
+    that tagpack validation now rejects, with the pack it comes from and, for
+    mis-encoded text, the probably intended text. Fix it in the pack.
+    """
+    from graphsenselib.tagstore.ranking_conflicts import write_rows
+    from graphsenselib.tagstore.text_checks import BAD_TEXT_COLUMNS, find_bad_text
+
+    rows = _run_on_async_tagstore(
+        ctx, lambda db: find_bad_text(db, network or ctx.obj["network"] or None)
+    )
+    if out:
+        with open(out, "w", encoding="utf-8", newline="") as f:
+            write_rows(rows, BAD_TEXT_COLUMNS, fmt, f)
+    else:
+        write_rows(rows, BAD_TEXT_COLUMNS, fmt, sys.stdout)
+    packs = {r["pack_uri"] for r in rows}
+    click.echo(f"{len(rows)} bad values in {len(packs)} packs", err=True)
 
 
 def main():

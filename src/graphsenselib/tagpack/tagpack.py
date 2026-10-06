@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import sys
+import unicodedata
 from collections import UserDict, defaultdict
 from datetime import date, datetime
 from typing import Optional, Tuple
@@ -346,31 +347,173 @@ def get_uri_for_tagpack(
         return res, rel_path, default_prefix, commit_date
 
 
-def check_for_null_characters(field_name: str, value, context=None) -> None:
-    """
-    Check if a field value contains null characters (\x00 or \u0000).
+# Control characters allowed in text fields: tab and line breaks.
+_ALLOWED_CONTROL_CHARS = frozenset("\t\n\r")
 
-    Args:
-        field_name: Name of the field being checked
-        value: Value to check for null characters
-        context: Additional context for error messages (converted to str only on error)
+# Garbled or non-printable text only warns for now: some generated
+# packs carry many such values and must be
+# repaired at their generators first. Set to True to reject them. Null
+# characters are always rejected.
+TEXT_PROBLEMS_ARE_ERRORS = False
+
+_CP1252_SPECIALS = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ"
+# Characters that UTF-8 bytes turn into when read as Latin-1/cp1252.
+_MOJIBAKE_RUN = re.compile("[\u0080-\u00ff" + re.escape(_CP1252_SPECIALS) + "]+")
+
+
+def _utf8_sequence_length(lead: int) -> int:
+    if 0xC2 <= lead <= 0xDF:
+        return 2
+    if 0xE0 <= lead <= 0xEF:
+        return 3
+    if 0xF0 <= lead <= 0xF4:
+        return 4
+    return 0
+
+
+def decode_mojibake_pieces(pieces: list) -> str:
+    """Decode a run given as [(byte, original text)], one entry per byte.
+
+    Every valid UTF-8 sequence becomes its character; any other byte keeps
+    its original text. So "Ã\xa0è" becomes "àè": the first two characters
+    are a garbled "à", the "è" is correct and stays.
+    """
+    out = []
+    left = []
+    i = 0
+    while i < len(pieces):
+        n = _utf8_sequence_length(pieces[i][0])
+        if n and i + n <= len(pieces):
+            try:
+                out.append(bytes(b for b, _ in pieces[i : i + n]).decode("utf-8"))
+                i += n
+                continue
+            except UnicodeDecodeError:
+                pass
+        out.append(pieces[i][1])
+        left.append(pieces[i][0])
+        i += 1
+    # A partial decode is only trusted if what is left looks like real text:
+    # leftover cp1252 punctuation or C1 bytes mean the run was garbled some
+    # other way (e.g. Mac Roman), and "repairing" it would garble it further.
+    if any(0x80 <= b <= 0x9F for b in left):
+        return "".join(t for _, t in pieces)
+    return "".join(out)
+
+
+def _run_pieces(run: str) -> Optional[list]:
+    pieces = []
+    for c in run:
+        if ord(c) < 256:
+            pieces.append((ord(c), c))
+        else:
+            try:
+                pieces.append((c.encode("cp1252")[0], c))
+            except UnicodeError:
+                return None
+    return pieces
+
+
+def repair_mojibake(text: str) -> Optional[str]:
+    """``text`` decoded properly if it contains UTF-8 that was read as
+    cp1252 or Latin-1 (e.g. "Ð\x9bÐ\x98Ð¤" for "ЛИФ", "MÃ¼nchen" for
+    "München"), else None.
+
+    Works on runs of Latin-1/cp1252 characters and decodes every valid UTF-8
+    sequence inside them, so text that is only partly damaged (garbled next
+    to correct characters, as in some generated packs) is found too. Correct
+    accented text ("Zürich", "Café") does not form UTF-8 sequences, and
+    Cyrillic, CJK etc. are never part of a run. The rare exception is
+    adjacent Latin-1 characters that happen to be valid UTF-8 bytes (e.g.
+    "ß¿"), which are reported too. Text garbled through other codecs (Mac
+    Roman: "‚Ä¢" for "•") is not detected.
+    """
+    if text.isascii():
+        return None
+
+    def fix(m):
+        pieces = _run_pieces(m.group(0))
+        return m.group(0) if pieces is None else decode_mojibake_pieces(pieces)
+
+    fixed = _MOJIBAKE_RUN.sub(fix, text)
+    return fixed if fixed != text else None
+
+
+def text_problem(text: str) -> Optional[str]:
+    """Why ``text`` should not be in a tagpack field, or None if it is fine."""
+    if "\x00" in text:
+        return "contains null characters (\\x00)"
+    fixed = repair_mojibake(text)
+    if fixed is not None:
+        return (
+            "is mis-encoded (UTF-8 bytes read as Latin-1/cp1252); "
+            f"the intended text is probably {fixed!r}"
+        )
+    bad = sorted(
+        {
+            c
+            for c in text
+            if unicodedata.category(c) == "Cc" and c not in _ALLOWED_CONTROL_CHARS
+        }
+    )
+    if bad:
+        codes = ", ".join(f"U+{ord(c):04X}" for c in bad)
+        return f"contains non-printable control characters ({codes})"
+    return None
+
+
+def check_text_field(
+    field_name: str, value, context=None, warnings: Optional[list] = None
+) -> None:
+    """Check a field value, including strings nested in lists and dicts (e.g.
+    a JSON context), for null characters, other non-printable control
+    characters and mis-encoded (mojibake) text.
+
+    Null characters always raise. The other problems raise only if
+    TEXT_PROBLEMS_ARE_ERRORS; otherwise their messages are appended to
+    ``warnings`` (or logged if no list is given).
 
     Raises:
-        ValidationError: If null characters are found in the value
+        ValidationError: naming the field, the position of the bad string
+            and, for mojibake, the probably intended text.
     """
-    if isinstance(value, str):
-        if "\x00" in value or "\u0000" in value:
+
+    def walk(v, where):
+        if isinstance(v, str):
+            problem = text_problem(v)
+            if problem is None:
+                return
             context_str = f" in {context}" if context else ""
-            raise ValidationError(
-                f"Field '{field_name}' contains null characters (\\x00 or \\u0000){context_str}"
-            )
-    elif isinstance(value, (list, tuple)):
-        for i, item in enumerate(value):
-            if isinstance(item, str) and ("\x00" in item or "\u0000" in item):
-                context_str = f" in {context}" if context else ""
-                raise ValidationError(
-                    f"Field '{field_name}' item at index {i} contains null characters (\\x00 or \\u0000){context_str}"
-                )
+            message = f"Field '{field_name}'{where} {problem}{context_str}"
+            if "\x00" in v or TEXT_PROBLEMS_ARE_ERRORS:
+                raise ValidationError(message)
+            if warnings is not None:
+                warnings.append(message)
+            else:
+                logger.warning(message)
+        elif isinstance(v, (list, tuple)):
+            for i, item in enumerate(v):
+                walk(item, f"{where} item at index {i}")
+        elif isinstance(v, dict):
+            for k, item in v.items():
+                walk(k, f"{where} key {k!r}")
+                walk(item, f"{where} key {k!r}")
+
+    walk(value, "")
+
+
+def log_text_warnings(source_prefix: str, warnings: list, shown: int = 3) -> None:
+    """One summary warning per pack instead of one per value."""
+    if not warnings:
+        return
+    examples = "; ".join(warnings[:shown])
+    more = f" (and {len(warnings) - shown} more)" if len(warnings) > shown else ""
+    logger.warning(
+        f"{source_prefix}{len(warnings)} field value(s) with garbled or "
+        f"non-printable text, accepted for now but to be rejected in a later "
+        f"release: {examples}{more}. Repair with "
+        "scripts/one-off-fixes/fix_tagpack_mojibake.py in graphsense-lib."
+    )
 
 
 # Tagpack convention: header files live at the repo root, not next to the
@@ -630,7 +773,7 @@ class TagPack(object):
                 yaml_include.Constructor(base_dir=include_base),
                 UniqueKeyLoader,
             )
-            with open(pathname, "r") as f:
+            with open(pathname, "r", encoding="utf-8") as f:
                 contents = yaml.load(f, UniqueKeyLoader)
         else:
             contents = load_yaml_fast(pathname)
@@ -654,7 +797,7 @@ class TagPack(object):
         made as line edits, keeping the rest of the file (formatting, comments)
         as it is. Where that is not possible, the whole file is re-serialized.
         """
-        with open(pathname, "r", newline="") as f:
+        with open(pathname, "r", encoding="utf-8", newline="") as f:
             text = f.read()
 
         original = yaml.load(text, _UnresolvedIncludeLoader)
@@ -803,6 +946,7 @@ class TagPack(object):
 
     def validate(self):
         """Validates a TagPack against its schema and used taxonomies"""
+        text_warnings: list = []
         # check if mandatory header fields are used by a TagPack
         for schema_field in self.schema.mandatory_header_fields:
             if schema_field not in self.header_fields:
@@ -821,7 +965,8 @@ class TagPack(object):
                     "Value of header field {} must not be empty (None)".format(field)
                 )
 
-            check_for_null_characters(field, value, "header")
+            if field != "tags":  # checked per tag below, with the tag named
+                check_text_field(field, value, "header", text_warnings)
 
             if field == "is_public":
                 logger.warning(
@@ -875,7 +1020,7 @@ class TagPack(object):
                 if value is None:
                     raise ValidationError(e4.format(field, tag))
 
-                check_for_null_characters(field, value, tag)
+                check_text_field(field, value, tag, text_warnings)
 
                 # check types and taxomomy use
                 try:
@@ -883,6 +1028,8 @@ class TagPack(object):
                     self.schema.check_taxonomies(field, value, self.taxonomies)
                 except ValidationError as e:
                     raise ValidationError(f"{e} in {tag}")
+
+        log_text_warnings(self._source_prefix(), text_warnings)
 
         if nr_no_actors > 0:
             src_prefix = self._source_prefix()
