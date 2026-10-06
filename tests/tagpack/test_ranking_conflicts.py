@@ -303,6 +303,27 @@ def test_address_actor_conflict_and_relations():
     assert address_actor_conflict("BTC", ADDR, tags, allow) is None
 
 
+def test_sub_service_is_no_conflict_and_not_hidden():
+    # the address's exchange tag names the parent; a stronger tag names its
+    # sub-service, which therefore wins the summary
+    tags = [
+        tag("Exchange A Pool", 90, actor="exchange_a_pool", category="mining_service"),
+        tag("Exchange A", 20, actor="exchange_a", category="exchange"),
+    ]
+    assert address_actor_conflict("BTC", ADDR, tags) is not None
+    assert evaluate_address("BTC", ADDR, tags, None, EXCHANGES) is not None
+
+    rel = ActorRelations(same_org=[("exchange_a_pool", "exchange_a")])
+    assert address_actor_conflict("BTC", ADDR, tags, rel) is None
+    assert evaluate_address("BTC", ADDR, tags, None, EXCHANGES, relations=rel) is None
+    assert rel.same_organisation("exchange_a", "exchange_a_pool")
+
+    # a related (distinct) actor is no conflict, but still hides the exchange
+    rel = ActorRelations(pairs=[("exchange_a_pool", "exchange_a")])
+    assert address_actor_conflict("BTC", ADDR, tags, rel) is None
+    assert evaluate_address("BTC", ADDR, tags, None, EXCHANGES, relations=rel)
+
+
 def test_cluster_without_definer_members_disagree():
     ctx = ClusterContext(cluster_id=7, n_addresses=10, selected=None)
     members = {"a": ActorStats(actor="a"), "b": ActorStats(actor="b")}

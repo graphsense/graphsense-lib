@@ -67,10 +67,12 @@ def _seed(engine):
                 ),
                 {"a": actor},
             )
-        # a rebrand: two actor entries of one organisation, declared same_as
+        # a rebrand: two actor entries of one organisation, declared same_as;
+        # and a sub-service of the new one
         for actor, context in (
             ("rebrand_new", None),
             ("rebrand_old", '{"same_as": ["rebrand_new"]}'),
+            ("rebrand_pool", '{"sub_service_of": "rebrand_new"}'),
         ):
             c.execute(
                 text(
@@ -213,6 +215,8 @@ def _seed(engine):
                 )
         add_tag("1Rebrand", "Old Name", c50, "gambling", "rebrand_old")
         add_tag("1Rebrand", "New Name", c50, "gambling", "rebrand_new")
+        add_tag("1SubService", "New Name", c50, "gambling", "rebrand_new")
+        add_tag("1SubService", "New Name Pool", c50, "gambling", "rebrand_pool")
 
         # an exchange-categorised mention is no exchange attribution
         add_tag("1Mention", "Dark Web", c20, "exchange", tag_type="mention")
@@ -308,8 +312,10 @@ async def test_actor_conflicts_and_groups(rc_db):
     assert Reason.DEFINER_WITHOUT_ACTOR in clusters[CLUSTER_GAMBLING].reasons
     assert clusters[CLUSTER_GAMBLING].n_addresses == 1003
 
-    # rebrand_old / rebrand_new are declared same_as in the actorpack
+    # rebrand_old / rebrand_new are declared same_as in the actorpack,
+    # rebrand_pool is sub_service_of rebrand_new
     assert "1Rebrand" not in by_addr
+    assert "1SubService" not in by_addr
 
     # the exchange_b tag on 1Multi is private
     public_only = await _detect(

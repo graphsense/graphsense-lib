@@ -103,24 +103,29 @@ async def exchange_actors(db: TagstoreDbAsync) -> set:
 
 
 async def actor_relations(db: TagstoreDbAsync) -> ActorRelations:
-    """Pairs from the actors' ``same_as`` and ``related_actors`` (actor
-    context), which ``actor-conflicts`` does not report."""
+    """Pairs from the actors' ``same_as``, ``sub_service_of`` and
+    ``related_actors`` (actor context), which the checks do not report."""
     rows = await _rows(
         db,
         text(
             "SELECT id, context FROM actor "
-            "WHERE context LIKE '%same_as%' OR context LIKE '%related_actors%'"
+            "WHERE context LIKE '%same_as%' OR context LIKE '%related_actors%' "
+            "OR context LIKE '%sub_service_of%'"
         ),
     )
-    pairs = []
+    pairs, same_org = [], []
     for actor_id, context in rows:
         try:
             ctx = json.loads(context)
         except (TypeError, ValueError):
             continue
-        for other in (ctx.get("same_as") or []) + (ctx.get("related_actors") or []):
+        for other in ctx.get("same_as") or []:
+            same_org.append((actor_id, other))
+        if isinstance(ctx.get("sub_service_of"), str):
+            same_org.append((actor_id, ctx["sub_service_of"]))
+        for other in ctx.get("related_actors") or []:
             pairs.append((actor_id, other))
-    return ActorRelations(pairs)
+    return ActorRelations(pairs, same_org)
 
 
 async def resolve_regimes(
@@ -575,7 +580,10 @@ async def detect(
 
     ``groups`` defaults to every ACL group in the tagstore, i.e. the internal
     view. ``relations`` (actor pairs that are no conflict) default to the
-    actorpacks' ``same_as`` / ``related_actors``. ``limit`` caps the candidate addresses per check and restricts the
+    actorpacks' ``same_as`` / ``sub_service_of`` / ``related_actors``; the
+    ranking check also accepts a summary showing the same organisation
+    (``same_as``, ``sub_service_of``) as an exchange tag. ``limit`` caps the
+    candidate addresses per check and restricts the
     cluster-level checks to those addresses' clusters; without it every
     multi-address cluster is checked. ``addresses`` replaces the candidate
     query with the given addresses and, like ``limit``, restricts the
@@ -586,6 +594,8 @@ async def detect(
     if groups is None:
         groups = await all_acl_groups(db)
     ex_actors = await exchange_actors(db)
+    if relations is None:
+        relations = await actor_relations(db)
     result = DetectionResult()
 
     for regime, fresh in await resolve_regimes(db, network, clustering):
@@ -632,6 +642,7 @@ async def detect(
                         ex_actors,
                         config=config,
                         clustering=regime,
+                        relations=relations,
                     )
                     if f is not None:
                         found.append(f)
@@ -657,8 +668,6 @@ async def detect(
                     result.cluster_findings.append(f)
 
         if actors:
-            if relations is None:
-                relations = await actor_relations(db)
             key, cands, cluster_of, only = await candidates_and_clusters(
                 _MULTI_ACTOR_CANDIDATES_SQL, "actors"
             )

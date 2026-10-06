@@ -115,8 +115,8 @@ Values in the field jurisdictions are validated against a set of [country codes]
 
 ### Relations between actors
 
-Two optional `context` fields record that two actor entries may tag the same
-addresses without that being a conflict:
+Three optional `context` fields record that two actor entries may tag the
+same addresses without that being a conflict:
 
 - `same_as`: the other actor is the same organisation, e.g. after a rebrand
   or for a duplicate entry. Use it instead of deleting the old entry: tags
@@ -124,6 +124,8 @@ addresses without that being a conflict:
 - `related_actors`: the other actor is a different organisation that
   legitimately appears on the same addresses, e.g. the custodian of a
   wrapped token and the token.
+- `sub_service_of`: this actor is a sub-service of another one, e.g. an
+  exchange's mining pool, custody or wallet product. Takes one actor id.
 
 ```yaml
 - id: oldname
@@ -138,13 +140,24 @@ addresses without that being a conflict:
   context:
     related_actors:
     - custodian       # holds the token's reserves
+- id: exchangepool
+  label: Exchange Pool
+  ...
+  context:
+    sub_service_of: exchange   # the exchange's mining pool
 ```
 
-Declaring a pair on one of the two actors is enough. Validation rejects an
-actor that lists itself or lists the same actor in both fields, and warns
-about ids that are not in the same actorpack (they may be defined in another
-one). `graphsense-cli tagpack-tool quality actor-conflicts` does not report
-pairs declared this way.
+Declaring a pair on one of the two actors is enough (`sub_service_of` goes on
+the sub-service). Validation rejects an actor that lists itself, lists the
+same actor in both `same_as` and `related_actors`, gives `sub_service_of` more
+than one id or makes `sub_service_of` go round in a cycle; it warns about ids
+that are not in the same actorpack (they may be defined in another one).
+Actors declared `same_as` or `sub_service_of` get no "consider merging"
+warning for a shared domain or handle. `graphsense-cli tagpack-tool quality
+actor-conflicts` does not report pairs declared this way, and
+`quality ranking-conflicts` accepts a tag summary that shows the same
+organisation (`same_as`, `sub_service_of`) instead of the exchange tag.
+`sub_service_of` does not change the tag summary itself.
 
 Like all context fields, they are only read by tools that know them: older
 graphsense-lib versions ignore them, so adding them to an actorpack does not

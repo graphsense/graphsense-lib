@@ -318,7 +318,12 @@ class ActorPack(object):
                     f"Actor {actor.identifier}: {sorted(same & related)} in both "
                     "same_as and related_actors"
                 )
-            unknown = (same | related) - actor_ids
+            parent = actor.sub_service_of
+            if parent == actor.identifier:
+                raise ValidationError(
+                    f"Actor {actor.identifier} is sub_service_of itself"
+                )
+            unknown = (same | related | ({parent} if parent else set())) - actor_ids
             if unknown:
                 # may be defined in another actorpack
                 logger.warning(
@@ -326,13 +331,30 @@ class ActorPack(object):
                     f"pack: {sorted(unknown)}"
                 )
 
-        # Overlaps between actors declared as the same organisation are
-        # expected (a rebrand keeps its domain, handles, ids): no merge hint.
+        parent_of = {
+            actor.identifier: actor.sub_service_of
+            for actor in unique_actors
+            if actor.sub_service_of
+        }
+        for child in parent_of:
+            seen, node = {child}, parent_of[child]
+            while node in parent_of:
+                if node in seen:
+                    raise ValidationError(
+                        f"Actor {child}: sub_service_of forms a cycle "
+                        f"({' -> '.join(sorted(seen))})"
+                    )
+                seen.add(node)
+                node = parent_of[node]
+
+        # Overlaps between actors declared as the same organisation, or as a
+        # service and its sub-service, are expected (a rebrand keeps its
+        # domain, a sub-service shares its parent's): no merge hint.
         same_pairs = {
             frozenset((actor.identifier, other))
             for actor in unique_actors
             for other in actor.same_as
-        }
+        } | {frozenset(p) for p in parent_of.items()}
 
         def merge_hint(actors) -> bool:
             actors = sorted(actors)
@@ -473,6 +495,12 @@ class Actor(object):
     def related_actors(self):
         """Distinct actors that legitimately tag the same addresses."""
         return self.context.get("related_actors", []) or []
+
+    @property
+    def sub_service_of(self):
+        """The actor this one is a sub-service of (e.g. an exchange's mining
+        pool or wallet product), or None."""
+        return self.context.get("sub_service_of") or None
 
     @property
     def identifier(self):

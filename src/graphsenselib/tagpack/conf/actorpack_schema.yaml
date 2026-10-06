@@ -87,3 +87,8 @@ context:
     type: list
     item_type: text
     mandatory: false
+  # The actor this one is a sub-service of (e.g. an exchange's mining pool
+  # or wallet product); one actor id.
+  sub_service_of:
+    type: text
+    mandatory: false

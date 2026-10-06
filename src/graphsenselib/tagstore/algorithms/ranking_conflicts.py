@@ -387,10 +387,12 @@ def evaluate_address(
     exchange_actors: Set[str],
     config: Optional[TagDigestComputationConfig] = None,
     clustering: str = "",
+    relations: Optional["ActorRelations"] = None,
 ) -> Optional[AddressRankingFinding]:
     """B1 for one address: does the tag summary hide its exchange attribution?
 
-    Flags when ``best_actor`` is none of the address's exchange actors and
+    Flags when ``best_actor`` is none of the address's exchange actors (nor
+    the same organisation as one, see ActorRelations.same_org) and
     ``best_label`` is not the label of one of its exchange tags.
     """
     config = config or rest_digest_config()
@@ -408,6 +410,12 @@ def evaluate_address(
     best_key = _normalizeWord(digest.best_label) if digest.best_label else None
 
     if digest.best_actor in ex_actors or best_key in ex_labels:
+        return None
+    if (
+        relations is not None
+        and digest.best_actor is not None
+        and any(relations.same_organisation(digest.best_actor, a) for a in ex_actors)
+    ):
         return None
 
     threshold = compute_actor_confidence_threshold(tags, config)
@@ -525,12 +533,23 @@ class ActorRelations:
     """Actor pairs that may tag the same addresses without a conflict.
 
     Built from the actorpacks' ``same_as`` (same organisation: rebrand,
-    duplicate entry) and ``related_actors`` (distinct, but legitimately on
-    the same addresses, e.g. custodian and product). Pairs are unordered.
+    duplicate entry), ``sub_service_of`` (a service and its sub-service) and
+    ``related_actors`` (distinct, but legitimately on the same addresses,
+    e.g. custodian and product). Pairs are unordered. ``same_org`` holds the
+    first two kinds: the summary showing one of them for the other hides
+    nothing.
     """
 
-    def __init__(self, pairs: Iterable[Tuple[str, str]] = ()):
-        self.pairs: Set[FrozenSet[str]] = {frozenset(p) for p in pairs}
+    def __init__(
+        self,
+        pairs: Iterable[Tuple[str, str]] = (),
+        same_org: Iterable[Tuple[str, str]] = (),
+    ):
+        self.same_org: Set[FrozenSet[str]] = {frozenset(p) for p in same_org}
+        self.pairs: Set[FrozenSet[str]] = {frozenset(p) for p in pairs} | self.same_org
+
+    def same_organisation(self, a: str, b: str) -> bool:
+        return a == b or frozenset((a, b)) in self.same_org
 
     def covers(self, actors: Iterable[str]) -> bool:
         """True if every pair of distinct actors in ``actors`` is related."""

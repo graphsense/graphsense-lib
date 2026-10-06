@@ -345,6 +345,53 @@ def test_validate_actor_relations_errors(actorpack, context, match):
         actorpack.validate()
 
 
+def test_validate_sub_service_of(actorpack, caplog):
+    actorpack.contents["actors"][0]["context"] = '{"sub_service_of": "parent"}'
+    actorpack.validate()
+    assert actorpack.actors[0].sub_service_of == "parent"
+    assert "refers to actors not in this pack: ['parent']" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "context,match",
+    [
+        ('{"sub_service_of": "0xnodes"}', "sub_service_of itself"),
+        ('{"sub_service_of": ["a", "b"]}', "sub_service_of must be of type text"),
+    ],
+)
+def test_validate_sub_service_of_errors(actorpack, context, match):
+    actorpack.contents["actors"][0]["context"] = context
+    with pytest.raises(ValidationError, match=match):
+        actorpack.validate()
+
+
+def test_validate_sub_service_of_cycle(actorpack):
+    actorpack.contents["actors"][0]["context"] = '{"sub_service_of": "0xchild"}'
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xchild",
+            "label": "0x child",
+            "uri": "https://child.example.com",
+            "context": '{"sub_service_of": "0xnodes"}',
+        }
+    )
+    with pytest.raises(ValidationError, match="cycle"):
+        actorpack.validate()
+
+
+def test_no_merge_hint_for_sub_service(actorpack, caplog):
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xnodespool",
+            "label": "0x nodes pool",
+            "uri": "https://www.0xnodes.io/pool",
+            "context": '{"sub_service_of": "0xnodes"}',
+        }
+    )
+    actorpack.validate()
+    assert "share the same domain" not in caplog.text
+
+
 def test_no_merge_hint_for_actors_declared_same_as(actorpack, caplog):
     first = actorpack.contents["actors"][0]
     actorpack.contents["actors"].append(
