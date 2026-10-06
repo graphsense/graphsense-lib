@@ -2716,7 +2716,8 @@ def ranking_conflicts(
     Runs every exchange-tagged address through the same tag digest REST
     serves, and reports those whose best_actor/best_label is not one of their
     exchange tags (or the same organisation, declared as same_as or
-    sub_service_of in the actorpacks), with reason codes. Also checks each multi-address cluster's
+    sub_service_of in the actorpacks, or a service nested_in it), with reason
+    codes. Also checks each multi-address cluster's
     selected definer against the confidence-weighted majority of its definers.
     """
     from graphsenselib.tagstore.ranking_conflicts import (
@@ -2752,8 +2753,8 @@ def actor_conflicts(
 ):
     """Addresses and clusters attributed to more than one actor (read-only).
 
-    Actor pairs declared as same_as, sub_service_of or related_actors in the
-    actorpacks are not reported.
+    Actor pairs declared as same_as, sub_service_of, nested_in or
+    related_actors in the actorpacks are not reported.
     """
     from graphsenselib.tagstore.ranking_conflicts import ACTOR_COLUMNS, actor_rows
 

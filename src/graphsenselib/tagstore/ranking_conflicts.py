@@ -103,17 +103,17 @@ async def exchange_actors(db: TagstoreDbAsync) -> set:
 
 
 async def actor_relations(db: TagstoreDbAsync) -> ActorRelations:
-    """Pairs from the actors' ``same_as``, ``sub_service_of`` and
-    ``related_actors`` (actor context), which the checks do not report."""
+    """Pairs from the actors' ``same_as``, ``sub_service_of``, ``nested_in``
+    and ``related_actors`` (actor context), which the checks do not report."""
     rows = await _rows(
         db,
         text(
             "SELECT id, context FROM actor "
             "WHERE context LIKE '%same_as%' OR context LIKE '%related_actors%' "
-            "OR context LIKE '%sub_service_of%'"
+            "OR context LIKE '%sub_service_of%' OR context LIKE '%nested_in%'"
         ),
     )
-    pairs, same_org = [], []
+    pairs, same_org, nested = [], [], []
     for actor_id, context in rows:
         try:
             ctx = json.loads(context)
@@ -123,9 +123,11 @@ async def actor_relations(db: TagstoreDbAsync) -> ActorRelations:
             same_org.append((actor_id, other))
         if isinstance(ctx.get("sub_service_of"), str):
             same_org.append((actor_id, ctx["sub_service_of"]))
+        for host in ctx.get("nested_in") or []:
+            nested.append((actor_id, host))
         for other in ctx.get("related_actors") or []:
             pairs.append((actor_id, other))
-    return ActorRelations(pairs, same_org)
+    return ActorRelations(pairs, same_org, nested)
 
 
 async def resolve_regimes(
@@ -580,9 +582,10 @@ async def detect(
 
     ``groups`` defaults to every ACL group in the tagstore, i.e. the internal
     view. ``relations`` (actor pairs that are no conflict) default to the
-    actorpacks' ``same_as`` / ``sub_service_of`` / ``related_actors``; the
-    ranking check also accepts a summary showing the same organisation
-    (``same_as``, ``sub_service_of``) as an exchange tag. ``limit`` caps the
+    actorpacks' ``same_as`` / ``sub_service_of`` / ``nested_in`` /
+    ``related_actors``; the ranking check also accepts a summary showing the
+    same organisation (``same_as``, ``sub_service_of``) as an exchange tag, or
+    a service ``nested_in`` it. ``limit`` caps the
     candidate addresses per check and restricts the
     cluster-level checks to those addresses' clusters; without it every
     multi-address cluster is checked. ``addresses`` replaces the candidate

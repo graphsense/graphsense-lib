@@ -392,7 +392,8 @@ def evaluate_address(
     """B1 for one address: does the tag summary hide its exchange attribution?
 
     Flags when ``best_actor`` is none of the address's exchange actors (nor
-    the same organisation as one, see ActorRelations.same_org) and
+    the same organisation as one or nested in one, see
+    ActorRelations.shows_attributed) and
     ``best_label`` is not the label of one of its exchange tags.
     """
     config = config or rest_digest_config()
@@ -414,7 +415,7 @@ def evaluate_address(
     if (
         relations is not None
         and digest.best_actor is not None
-        and any(relations.same_organisation(digest.best_actor, a) for a in ex_actors)
+        and any(relations.shows_attributed(digest.best_actor, a) for a in ex_actors)
     ):
         return None
 
@@ -533,23 +534,38 @@ class ActorRelations:
     """Actor pairs that may tag the same addresses without a conflict.
 
     Built from the actorpacks' ``same_as`` (same organisation: rebrand,
-    duplicate entry), ``sub_service_of`` (a service and its sub-service) and
-    ``related_actors`` (distinct, but legitimately on the same addresses,
-    e.g. custodian and product). Pairs are unordered. ``same_org`` holds the
-    first two kinds: the summary showing one of them for the other hides
-    nothing.
+    duplicate entry), ``sub_service_of`` (a product or division of the same
+    organisation), ``nested_in`` (a separate organisation running on
+    another's addresses or accounts) and ``related_actors`` (distinct, but
+    legitimately on the same addresses). Pairs are unordered, except
+    ``nested`` (service, host).
     """
 
     def __init__(
         self,
         pairs: Iterable[Tuple[str, str]] = (),
         same_org: Iterable[Tuple[str, str]] = (),
+        nested: Iterable[Tuple[str, str]] = (),
     ):
         self.same_org: Set[FrozenSet[str]] = {frozenset(p) for p in same_org}
-        self.pairs: Set[FrozenSet[str]] = {frozenset(p) for p in pairs} | self.same_org
+        self.nested: Set[Tuple[str, str]] = set(nested)
+        self.pairs: Set[FrozenSet[str]] = (
+            {frozenset(p) for p in pairs}
+            | self.same_org
+            | {frozenset(p) for p in self.nested}
+        )
 
     def same_organisation(self, a: str, b: str) -> bool:
         return a == b or frozenset((a, b)) in self.same_org
+
+    def shows_attributed(self, shown: str, attributed: str) -> bool:
+        """Showing actor ``shown`` hides nothing about ``attributed``: the same
+        organisation, or a service nested in it (the more specific operator).
+        Showing the host of a nested service does hide it."""
+        return (
+            self.same_organisation(shown, attributed)
+            or (shown, attributed) in self.nested
+        )
 
     def covers(self, actors: Iterable[str]) -> bool:
         """True if every pair of distinct actors in ``actors`` is related."""

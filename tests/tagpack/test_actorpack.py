@@ -365,6 +365,40 @@ def test_validate_sub_service_of_errors(actorpack, context, match):
         actorpack.validate()
 
 
+def test_validate_nested_in(actorpack, caplog):
+    actorpack.contents["actors"][0]["context"] = '{"nested_in": ["host_a", "host_b"]}'
+    actorpack.validate()
+    assert actorpack.actors[0].nested_in == ["host_a", "host_b"]
+    assert "refers to actors not in this pack: ['host_a', 'host_b']" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "context,match",
+    [
+        ('{"nested_in": ["0xnodes"]}', "nested_in itself"),
+        ('{"sub_service_of": "x", "nested_in": ["x"]}', "both sub_service_of and"),
+        ('{"nested_in": "host"}', "nested_in must be of type list"),
+    ],
+)
+def test_validate_nested_in_errors(actorpack, context, match):
+    actorpack.contents["actors"][0]["context"] = context
+    with pytest.raises(ValidationError, match=match):
+        actorpack.validate()
+
+
+def test_merge_hint_kept_for_nested_service(actorpack, caplog):
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xnodesclient",
+            "label": "0x nodes client",
+            "uri": "https://www.0xnodes.io/client",
+            "context": '{"nested_in": ["0xnodes"]}',
+        }
+    )
+    actorpack.validate()
+    assert "share the same domain" in caplog.text
+
+
 def test_validate_sub_service_of_cycle(actorpack):
     actorpack.contents["actors"][0]["context"] = '{"sub_service_of": "0xchild"}'
     actorpack.contents["actors"].append(

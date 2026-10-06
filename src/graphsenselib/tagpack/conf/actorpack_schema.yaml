@@ -87,8 +87,14 @@ context:
     type: list
     item_type: text
     mandatory: false
-  # The actor this one is a sub-service of (e.g. an exchange's mining pool
-  # or wallet product); one actor id.
+  # The actor this one belongs to, as a product or division of the same
+  # organisation (e.g. an exchange's mining pool); one actor id.
   sub_service_of:
     type: text
+    mandatory: false
+  # Actors whose addresses or accounts this one runs on, as a separate
+  # organisation (e.g. an exchange using a custodian).
+  nested_in:
+    type: list
+    item_type: text
     mandatory: false
