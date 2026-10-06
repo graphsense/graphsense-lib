@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
+from pydantic import Field
 
 from graphsenselib.mcp.pagesize import resolve_pagesize
 
@@ -611,86 +612,77 @@ def register_list_neighbors(mcp, app, stack) -> None:
 def register_lookup_tx_details(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_transaction-level"})
     async def lookup_tx_details(
-        currency: str,
-        tx_hash: str,
-        include_upstream: bool = False,
-        include_downstream: bool = False,
-        include_heuristics: bool = False,
-        include_conversions: bool = False,
+        currency: Annotated[
+            str, Field(description='Network identifier (e.g. "btc", "eth").')
+        ],
+        tx_hash: Annotated[str, Field(description="Transaction hash.")],
+        include_upstream: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Backward trace (where did the money come from?). Appends "
+                    "`upstream`: one `{tx_hash, input_index, output_index}` per "
+                    "input, read as 'our input [input_index] was produced by "
+                    "[tx_hash]'s output [output_index]'."
+                )
+            ),
+        ] = False,
+        include_downstream: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Forward trace (where did the money go next?). Appends "
+                    "`downstream`: the later tx that spent each output. "
+                    "Unspent outputs don't appear."
+                )
+            ),
+        ] = False,
+        include_heuristics: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Compute the UTXO heuristics (change-address detection, "
+                    "CoinJoin: wasabi/whirlpool/joinmarket); results sit in "
+                    "the tx body. No-op on account-model chains."
+                )
+            ),
+        ] = False,
+        include_conversions: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Appends `conversions`: the DEX swaps and bridge txs in "
+                    "this tx under one schema (`conversion_type` 'dex_swap' "
+                    "or 'bridge_tx', `from_address`, `to_address`, "
+                    "`from_asset`, `to_asset`, `from_amount`, ...)."
+                )
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Fetch a transaction with full IO detail and optional trace context.
 
-        One call replaces get_tx, get_tx_io, get_spending_txs,
-        get_spent_in_txs, and get_tx_conversions. The tx body is retrieved
-        with io + nonstandard io + io indices always enabled, so UTXO txs
-        come back with a complete inputs/outputs list (including
-        non-standard scripts and their positional indices) and
-        account-model txs come back with the usual sender/receiver/value
-        fields.
+        UTXO txs always come back with the complete inputs/outputs list,
+        including non-standard scripts and positional indices;
+        account-model txs with the usual sender/receiver/value fields.
+        The `include_*` flags add backward (`upstream`) and forward
+        (`downstream`) trace links, UTXO heuristics, and DEX swap / bridge
+        `conversions`.
 
-        Optional add-ons:
+        For account-model txs the per-event value flows (every base,
+        internal and token transfer) are not included, because an
+        aggregator or exploit tx can fan out into hundreds of them. Page
+        through them with `list_tx_flows`. On UTXO chains the same
+        information is already in `inputs`/`outputs`.
 
-        - `include_upstream=True` → appends an `upstream` list: for each
-          INPUT of this tx, the earlier tx whose output funded it. Backward
-          tracing ("where did the money come from?"). Each entry
-          `{"tx_hash": str, "input_index": int, "output_index": int}` reads
-          as "our input [input_index] was produced by [tx_hash]'s output
-          [output_index]".
-        - `include_downstream=True` → appends a `downstream` list: for each
-          OUTPUT of this tx, the later tx that consumed it. Forward tracing
-          ("where did the money go next?"). Outputs that haven't been spent
-          yet simply don't appear.
-        - `include_heuristics=True` → asks graphsense to compute all
-          supported UTXO heuristics (change-address detection, CoinJoin
-          identification — wasabi/whirlpool/joinmarket variants). The
-          results are embedded in the returned tx body under
-          implementation-specific fields. UTXO-chain only; a no-op on
-          account-model chains.
-        - `include_conversions=True` → appends a `conversions` list:
-          "conversion" is graphsense's internal term for any cross-asset
-          movement within a single tx. It covers BOTH DEX swaps (token A
-          → token B on the same chain) and bridge transactions (asset X
-          on chain A → asset Y on chain B). The returned entries share one
-          schema (`conversion_type: "dex_swap" | "bridge_tx"`, `from_address`,
-          `to_address`, `from_asset`, `to_asset`, `from_amount`, …) so the
-          LLM doesn't need to branch on the subtype to reason about the
-          cross-asset edge.
-
-        For account-model txs, the per-event value-flow listing (every
-        base/internal/token transfer with sender, receiver, asset, value)
-        is *not* included here because the count is unbounded — an
-        aggregator or exploit tx can fan out into hundreds of events.
-        Call the dedicated `list_tx_flows` tool for that, paginated.
-        On UTXO chains the equivalent information is already present in
-        this response under `inputs`/`outputs`.
-
-        Note on `spending` vs `spent_in`: the underlying graphsense
-        endpoints `/spending` and `/spent_in` are NAMED counter-intuitively
-        (/spending is backward, /spent_in is forward). This consolidation
-        hides that and uses `upstream` / `downstream` to mean what they say.
-
-        Note on `identifier` vs `tx_hash`: account-model responses carry
-        both. `tx_hash` names the on-chain transaction; `identifier`
-        names a specific sub-payment within it (one tx hash can carry
-        many sub-payments — the native transfer plus token transfers,
-        each with its own `identifier`). When feeding a tx into
-        `build_pathfinder_file`, pass the `identifier` so pathfinder can
-        disambiguate which sub-payment is meant. UTXO responses have
-        only `tx_hash` and no `identifier`; use `tx_hash` there.
-
-        Args:
-            currency: Network identifier (e.g. "btc", "bch", "ltc", "eth").
-            tx_hash: Transaction hash.
-            include_upstream: Backward trace — where our inputs came from.
-            include_downstream: Forward trace — where our outputs went next.
-            include_heuristics: Compute all supported UTXO heuristics.
-            include_conversions: DEX swaps and bridge transactions in this
-                tx, unified under one schema.
+        `identifier` vs `tx_hash`: account-model responses carry both.
+        `tx_hash` names the on-chain transaction; `identifier` names one
+        sub-payment within it (the native transfer or a token transfer).
+        Pass the `identifier` to `build_pathfinder_file`. UTXO txs have
+        only `tx_hash`.
 
         Returns:
-            The full tx body (always includes io, nonstandard io, and io
-            indices) with optional top-level `upstream`, `downstream`, and
-            `conversions` keys.
+            The full tx body with optional top-level `upstream`,
+            `downstream`, and `conversions` keys.
         """
         _validate_currency(currency)
         _validate_id("tx_hash", tx_hash)
@@ -854,6 +846,14 @@ def register_list_tags_by_address(mcp, app, stack) -> None:
         cluster's best-confidence tag is appended to the last page so
         cluster-derived attribution still surfaces. Qualify any claim
         drawn from a cluster-derived tag (see server `instructions`).
+
+        Name fields, strong to weak: `actor` (curated id, sparsest),
+        `label` (free text; match case-insensitively as a substring),
+        `category` + `concepts`, then `tagpack_title` +
+        `tagpack_is_public`. An empty stronger field is not missing
+        attribution, only missing at that level. A high-confidence tag
+        from a non-public tagpack with empty actor and label is a
+        redacted real attribution, not an unknown one.
 
         Args:
             currency: Network identifier (e.g. "btc", "eth").

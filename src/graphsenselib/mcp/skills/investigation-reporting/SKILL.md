@@ -1,6 +1,6 @@
 ---
 name: investigation-reporting
-description: "How to write up blockchain investigation findings - the subject is a third party, every fact carries its source, High/Medium/Low confidence, no legal judgment, an AI-generated notice, and Pathfinder exports via build_pathfinder_file. Use when presenting GraphSense findings to a user, or exporting a traced graph."
+description: "How to write up blockchain investigation findings - the subject is a third party, every fact carries its source, High/Medium/Low confidence, no legal judgment, an AI-generated notice, and Pathfinder exports via build_pathfinder_file. Not a starting point: investigators load it. To investigate, pick an investigator first (investigate-strict by default)."
 metadata:
   graphsense-tools: build_pathfinder_file
 ---

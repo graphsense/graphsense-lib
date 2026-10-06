@@ -1,6 +1,6 @@
 ---
 name: identifier-integrity
-description: "Hard rules for writing crypto addresses, transaction hashes, xpubs and export links into answers without fabricating or corrupting them. Use whenever an answer, figure or export will contain an on-chain identifier taken from GraphSense tool results."
+description: "Hard rules for writing crypto addresses, transaction hashes, xpubs and export links into answers without fabricating or corrupting them. Investigators load it; in an investigation, pick an investigator first (investigate-strict by default). Outside one, use whenever an answer, figure or export will contain an on-chain identifier taken from GraphSense tool results."
 metadata:
   graphsense-tools: list_txs_for build_pathfinder_file
 ---

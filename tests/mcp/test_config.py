@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from graphsenselib.mcp.config import GSMCPConfig, SearchNeighborsConfig
@@ -91,6 +93,29 @@ def test_bundled_instructions_loaded_by_default(monkeypatch):
     # Placeholder must be substituted, not leaked, with the default base URL.
     assert "{pathfinder_base_url}" not in text
     assert "https://app.iknaio.com/pathfinder" in text
+
+
+def test_instructions_point_only_at_bundled_skills(monkeypatch):
+    """The bundled instructions name the investigators and the skill://
+    URI template; every named investigator must be a skill the server
+    actually serves, so a renamed or removed skill cannot leave the
+    instructions pointing at a dead resource."""
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
+    monkeypatch.delenv("GS_MCP_SKILLS_DIR", raising=False)
+
+    cfg = GSMCPConfig()
+    text = cfg.resolved_instructions()
+    assert text is not None
+    assert "skill://<name>/SKILL.md" in text
+    names = set(re.findall(r"`(investigate-[a-z]+)`", text))
+    assert names == {
+        "investigate-advisor",
+        "investigate-strict",
+        "investigate-autonomous",
+    }
+    for name in names:
+        assert (cfg.resolved_skills_dir() / name / "SKILL.md").is_file()
 
 
 def test_open_url_instructions_stripped_by_default(monkeypatch):
