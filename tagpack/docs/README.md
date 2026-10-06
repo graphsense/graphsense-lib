@@ -113,6 +113,43 @@ Actorpacks are validated against the [actorpack schema](../../src/graphsenselib/
 
 Values in the field jurisdictions are validated against a set of [country codes](../../src/graphsenselib/tagpack/db/countries.csv).
 
+### Relations between actors
+
+Two optional `context` fields record that two actor entries may tag the same
+addresses without that being a conflict:
+
+- `same_as`: the other actor is the same organisation, e.g. after a rebrand
+  or for a duplicate entry. Use it instead of deleting the old entry: tags
+  still refer to it by id.
+- `related_actors`: the other actor is a different organisation that
+  legitimately appears on the same addresses, e.g. the custodian of a
+  wrapped token and the token.
+
+```yaml
+- id: oldname
+  label: Old Name
+  ...
+  context:
+    same_as:
+    - newname         # rebranded
+- id: wrappedtoken
+  label: Wrapped Token
+  ...
+  context:
+    related_actors:
+    - custodian       # holds the token's reserves
+```
+
+Declaring a pair on one of the two actors is enough. Validation rejects an
+actor that lists itself or lists the same actor in both fields, and warns
+about ids that are not in the same actorpack (they may be defined in another
+one). `graphsense-cli tagpack-tool quality actor-conflicts` does not report
+pairs declared this way.
+
+Like all context fields, they are only read by tools that know them: older
+graphsense-lib versions ignore them, so adding them to an actorpack does not
+break validation or insertion anywhere.
+
 ## View available taxonomies and concepts <a name="taxonomies"></a>
 
 List configured taxonomy keys and URIs
@@ -175,6 +212,7 @@ Or just export each variable using:
     export POSTGRES_PASSWORD=VALUE
     export POSTGRES_HOST=VALUE
     export POSTGRES_DB=VALUE
+    export POSTGRES_PORT=VALUE   # optional, default 5432
 
     GS_TAGSTORE_DB_URL=value # For the newer tagstore cli
 

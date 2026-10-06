@@ -66,3 +66,20 @@ def test_mockargs_are_pickelable():
     pickled_instance = pickle.dumps(instance)
 
     assert isinstance(pickled_instance, bytes)
+
+
+def test_read_url_from_env_port(monkeypatch):
+    from graphsenselib.tagpack.cli import read_url_from_env
+
+    for k, v in {
+        "POSTGRES_USER": "u",
+        "POSTGRES_PASSWORD": "p",
+        "POSTGRES_HOST": "h",
+        "POSTGRES_DB": "d",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("POSTGRES_PORT", raising=False)
+    assert read_url_from_env()[0] == "postgresql://u:p@h:5432/d"
+
+    monkeypatch.setenv("POSTGRES_PORT", "7432")
+    assert read_url_from_env()[0] == "postgresql://u:p@h:7432/d"

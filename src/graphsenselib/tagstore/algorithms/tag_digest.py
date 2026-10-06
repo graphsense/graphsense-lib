@@ -1,6 +1,8 @@
 import re
 from collections import Counter, defaultdict
-from typing import Dict, List, Optional
+from functools import lru_cache
+from importlib.resources import files
+from typing import Dict, FrozenSet, List, Optional
 
 from pydantic import BaseModel
 
@@ -34,6 +36,28 @@ class TagDigest(BaseModel):
     best_label: Optional[str]
     label_digest: Dict[str, LabelDigest]
     concept_tag_cloud: Dict[str, TagCloudEntry]
+    # Why best_actor/best_label may be contested, in AMBIGUITIES order; empty
+    # if nothing disagrees.
+    ambiguities: List[str] = []
+
+
+# The address's own actor tags name another actor than the tag it inherits
+# from its cluster (whichever of them wins).
+CLUSTER_TAG_VS_DIRECT = "cluster_tag_vs_direct"
+# The address's own actor tags name two or more actors.
+DIRECT_ACTORS_DISAGREE = "direct_actors_disagree"
+# A non-mention tag with a risk concept (see is_risk_tag) is present, but
+# best_label is not one.
+RISK_LABEL_OUTRANKED = "risk_label_outranked"
+AMBIGUITIES = (
+    CLUSTER_TAG_VS_DIRECT,
+    DIRECT_ACTORS_DISAGREE,
+    RISK_LABEL_OUTRANKED,
+)
+
+# Concept subtrees (with all narrower concepts) that count as risk: abuse
+# (scams, sanctions, blacklists, ...) and mixing.
+RISK_ROOT_CONCEPTS = ("abuse", "gray_usage", "mixing_service")
 
 
 class wCounter:
@@ -120,6 +144,115 @@ class TagDigestComputationConfig(BaseModel):
     def with_confidence_weight_exponent(self, exponent: float):
         self.confidence_weight_exponent = exponent
         return self
+
+
+@lru_cache(maxsize=1)
+def risk_concepts() -> FrozenSet[str]:
+    """RISK_ROOT_CONCEPTS and every concept below them in the bundled concept
+    taxonomy."""
+    import yaml
+
+    data = yaml.safe_load(
+        (files("graphsenselib.tagpack.db") / "concepts.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    parent = {
+        k: v.get("broader")
+        for k, v in data.items()
+        if isinstance(v, dict) and v.get("type") == "concept"
+    }
+
+    def is_risk(c: Optional[str]) -> bool:
+        seen = set()
+        while c is not None and c not in seen:
+            if c in RISK_ROOT_CONCEPTS:
+                return True
+            seen.add(c)
+            c = parent.get(c)
+        return False
+
+    return frozenset(c for c in parent if is_risk(c))
+
+
+def is_risk_tag(t: TagPublic) -> bool:
+    """A tag with a risk concept; mentions only report where an address was
+    seen and do not count."""
+    return t.tag_type != "mention" and not risk_concepts().isdisjoint(t.concepts)
+
+
+def _is_cluster_inherited(t: TagPublic) -> bool:
+    return t.inherited_from in (InheritedFrom.CLUSTER, InheritedFrom.PUBKEY_AND_CLUSTER)
+
+
+def _actor_of(t: TagPublic) -> Optional[str]:
+    return t.actor if t.actor is not None and t.actor.strip() else None
+
+
+def _direct_actors(tags: List[TagPublic]) -> Dict[str, int]:
+    """Actor -> highest confidence, over the direct actor-type tags."""
+    out: Dict[str, int] = {}
+    for t in tags:
+        actor = _actor_of(t)
+        if actor is not None and t.tag_type == "actor" and not _is_cluster_inherited(t):
+            out[actor] = max(out.get(actor, 0), t.confidence_level or 0)
+    return out
+
+
+def tag_summary_ambiguities(
+    tags: List[TagPublic], best_label_concepts: Optional[List[str]] = None
+) -> List[str]:
+    """Why the summary of ``tags`` may be contested; see AMBIGUITIES.
+
+    best_label_concepts: the concepts of the summary's best label; None skips
+    RISK_LABEL_OUTRANKED."""
+    found = set()
+    if (
+        best_label_concepts is not None
+        and risk_concepts().isdisjoint(best_label_concepts)
+        and any(is_risk_tag(t) for t in tags)
+    ):
+        found.add(RISK_LABEL_OUTRANKED)
+    direct = _direct_actors(tags)
+    for t in tags:
+        if _is_cluster_inherited(t) and set(direct) - {_actor_of(t)}:
+            found.add(CLUSTER_TAG_VS_DIRECT)
+    if len(direct) > 1:
+        found.add(DIRECT_ACTORS_DISAGREE)
+    return [a for a in AMBIGUITIES if a in found]
+
+
+def compute_actor_confidence_threshold(
+    tags: List[TagPublic], config: TagDigestComputationConfig
+) -> float:
+    """Minimum confidence an actor tag needs to count towards best_actor.
+
+    0.0 unless only_propagate_high_confidence_actors is set. Exposed so the
+    ranking-conflict detection can tell which actor tags the digest dropped.
+    """
+    if not config.only_propagate_high_confidence_actors:
+        return 0.0
+
+    confidences_for_actor_inheritance = set()
+    for t in tags:
+        if t.tag_type == "actor":
+            conf = t.confidence_level or 0.1
+            confidences_for_actor_inheritance.add(conf)
+
+    highest_n = list(reversed(sorted(list(confidences_for_actor_inheritance))))[
+        : config.consider_n_confidence_buckets
+    ]
+
+    # only keep confidences if drop is less than max_confidence_drop
+    lastc = None
+    considered_confs = []
+    for c in highest_n:
+        if lastc is not None and (lastc - c) > config.max_confidence_drop:
+            break
+        lastc = c
+        considered_confs.append(c)
+
+    return min(considered_confs) if len(considered_confs) > 0 else 0.0
 
 
 def compute_tag_digest(
@@ -221,31 +354,7 @@ def compute_tag_digest(
 
         return tags_count, total_words, tags_count_cluster
 
-    if config.only_propagate_high_confidence_actors:
-        confidences_for_actor_inheritance = set()
-        for t in tags:
-            if t.tag_type == "actor":
-                conf = t.confidence_level or 0.1
-                confidences_for_actor_inheritance.add(conf)
-
-        highest_n = list(reversed(sorted(list(confidences_for_actor_inheritance))))[
-            : config.consider_n_confidence_buckets
-        ]
-
-        # only keep confidences if drop is less than max_confidence_drop
-        lastc = None
-        considered_confs = []
-        for c in highest_n:
-            if lastc is not None and (lastc - c) > config.max_confidence_drop:
-                break
-            lastc = c
-            considered_confs.append(c)
-
-        actor_confidence_threshold = (
-            min(considered_confs) if len(considered_confs) > 0 else 0.0
-        )
-    else:
-        actor_confidence_threshold = 0.0
+    actor_confidence_threshold = compute_actor_confidence_threshold(tags, config)
 
     for t in tags:
         tags_count, total_words, tags_count_cluster = add_tag_data(
@@ -301,15 +410,15 @@ def compute_tag_digest(
     # get best label (within actor if actor is specified)
     p_actor = None
     best_label = None
+    best_key = None
     actor_mc = actor_counter.most_common(1, weighted=True)
     if len(actor_mc) > 0:
         p_actor = actor_mc[0][0]
-        key = actor_labels[p_actor].most_common(1, weighted=True)[0][0]
-        best_label = label_digest[key].label
-    else:
-        if len(full_label_counter) > 0:
-            key = full_label_counter.most_common(1, weighted=True)[0][0]
-            best_label = label_digest[key].label
+        best_key = actor_labels[p_actor].most_common(1, weighted=True)[0][0]
+    elif len(full_label_counter) > 0:
+        best_key = full_label_counter.most_common(1, weighted=True)[0][0]
+    if best_key is not None:
+        best_label = label_digest[best_key].label
 
     return TagDigest(
         broad_concept=broad_concept,
@@ -319,4 +428,7 @@ def compute_tag_digest(
         best_label=best_label,
         concept_tag_cloud=_calcTagCloud(concepts_counter),
         label_digest=label_digest,
+        ambiguities=tag_summary_ambiguities(
+            tags, label_digest[best_key].concepts if best_key is not None else None
+        ),
     )

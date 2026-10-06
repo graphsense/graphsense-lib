@@ -128,13 +128,13 @@ def get_github_repo_url(github_url):
 
 def open_localfile_with_pkgresource_fallback(path):
     if os.path.isfile(path):
-        return open(path, "r")
+        return open(path, "r", encoding="utf-8")
     else:
         filename = os.path.basename(path)
         for res_dir in [conf, db]:
             resource = imprtlb_files(res_dir).joinpath(filename)
             if resource.is_file():
-                return resource.open("r")
+                return resource.open("r", encoding="utf-8")
 
     raise Exception(f"File {path} was not found on disk or in package resources.")
 
@@ -144,7 +144,7 @@ def open_pkgresource_file(path):
     for res_dir in [conf, db]:
         resource = imprtlb_files(res_dir).joinpath(filename)
         if resource.is_file():
-            return resource.open("r")
+            return resource.open("r", encoding="utf-8")
 
     return None
 

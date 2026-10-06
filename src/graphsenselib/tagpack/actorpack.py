@@ -11,6 +11,7 @@ import yaml
 import yaml_include
 
 from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
+from graphsenselib.tagpack.tagpack import check_text_field, log_text_warnings
 from graphsenselib.tagpack.utils import (
     apply_to_dict_field,
     get_secondlevel_domain,
@@ -80,7 +81,7 @@ class ActorPack(object):
 
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
-        with open(pathname, "r") as f:
+        with open(pathname, "r", encoding="utf-8") as f:
             contents = yaml.load(f, UniqueKeyLoader)
 
         if "header" in contents.keys():
@@ -173,6 +174,7 @@ class ActorPack(object):
 
     def validate(self):
         """Validates an ActorPack against its schema and used taxonomies"""
+        text_warnings: list = []
 
         # check if mandatory header fields are used by an ActorPack
         for schema_field in self.schema.mandatory_header_fields:
@@ -190,6 +192,8 @@ class ActorPack(object):
                 msg = f"Value of header field {field} must not be empty (None)"
                 raise ValidationError(msg)
 
+            if field != "actors":  # checked per actor below
+                check_text_field(field, value, "header", text_warnings)
             self.schema.check_type(field, value)
             self.schema.check_taxonomies(field, value, self.taxonomies)
 
@@ -228,6 +232,8 @@ class ActorPack(object):
                 # check for None values
                 if value is None:
                     raise ValidationError(e4.format(field, actor))
+
+                check_text_field(field, value, actor, text_warnings)
 
                 # check types and taxomomy use
                 try:
@@ -301,6 +307,41 @@ class ActorPack(object):
                 f"Collision detected: Actor ids and aliases share the following values: {collision}"
             )
 
+        for actor in unique_actors:
+            same, related = set(actor.same_as), set(actor.related_actors)
+            if actor.identifier in same | related:
+                raise ValidationError(
+                    f"Actor {actor.identifier} lists itself in same_as/related_actors"
+                )
+            if same & related:
+                raise ValidationError(
+                    f"Actor {actor.identifier}: {sorted(same & related)} in both "
+                    "same_as and related_actors"
+                )
+            unknown = (same | related) - actor_ids
+            if unknown:
+                # may be defined in another actorpack
+                logger.warning(
+                    f"Actor {actor.identifier} refers to actors not in this "
+                    f"pack: {sorted(unknown)}"
+                )
+
+        # Overlaps between actors declared as the same organisation are
+        # expected (a rebrand keeps its domain, handles, ids): no merge hint.
+        same_pairs = {
+            frozenset((actor.identifier, other))
+            for actor in unique_actors
+            for other in actor.same_as
+        }
+
+        def merge_hint(actors) -> bool:
+            actors = sorted(actors)
+            return len(actors) > 1 and not all(
+                frozenset((a, b)) in same_pairs
+                for i, a in enumerate(actors)
+                for b in actors[i + 1 :]
+            )
+
         whitelist_domains = [
             "x.com",
             "github.com",
@@ -311,31 +352,33 @@ class ActorPack(object):
         for domain, actors in domain_overlap.items():
             if domain in whitelist_domains:
                 continue
-            if len(actors) > 1:
+            if merge_hint(actors):
                 logger.warning(
                     f"Actors share the same domain {domain}: {actors}. Please consider merging them"
                 )
 
         for twitter_handle, actors in twitter_handle_overlap.items():
-            if len(actors) > 1:
+            if merge_hint(actors):
                 logger.warning(
                     "These actors share the same twitter_handle "
                     f" {twitter_handle}: {actors}. Consider Merge?"
                 )
 
         for cg_id, actors in coingecko_id_overlap.items():
-            if len(actors) > 1:
+            if merge_hint(actors):
                 logger.warning(
                     f"Actors share the same coingecko_id {cg_id}: {actors}. "
                     "Please consider merging them"
                 )
 
         for dl_id, actors in defilama_id_overlap.items():
-            if len(actors) > 1:
+            if merge_hint(actors):
                 logger.warning(
                     f"Actors share the same defilama_id {dl_id}: {actors}. "
                     "Please consider merging them"
                 )
+
+        log_text_warnings(f"[{self.uri}] " if self.uri else "", text_warnings)
 
         if self._duplicates:
             msg = (
@@ -420,6 +463,16 @@ class Actor(object):
     @property
     def defilama_ids(self):
         return self.context.get("defilama_ids", []) or []
+
+    @property
+    def same_as(self):
+        """Actors that are the same organisation (rebrand, duplicate)."""
+        return self.context.get("same_as", []) or []
+
+    @property
+    def related_actors(self):
+        """Distinct actors that legitimately tag the same addresses."""
+        return self.context.get("related_actors", []) or []
 
     @property
     def identifier(self):

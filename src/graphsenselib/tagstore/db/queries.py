@@ -419,6 +419,15 @@ def _routed_id_batches(cluster_ids):
     return ((legacy, False, 0), (fresh_raw, True, FRESH_CLUSTER_ID_OFFSET))
 
 
+def _definer_tie_break():
+    """ORDER BY tail after the confidence: equally confident definers go to
+    the tagpack whose id sorts first, then to its first tag. Tagpack ids
+    derive from the pack's path and a re-insert keeps the order of a pack's
+    tags, so the pick is the same on every request and survives re-inserting
+    a pack (a bare tag id would not)."""
+    return (Tag.tagpack_id.collate("C"), Tag.id)
+
+
 def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str]):
     _, BestClusterTag, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
@@ -433,7 +442,7 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
         .where(BestClusterTag.tag_id == Tag.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(Confidence.level.desc())
+        .order_by(Confidence.level.desc(), *_definer_tie_break())
         .limit(1)
     )
 
@@ -459,7 +468,9 @@ def _get_best_cluster_tag_winners_stmt(
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(BestClusterTag.cluster_id, Confidence.level.desc())
+        .order_by(
+            BestClusterTag.cluster_id, Confidence.level.desc(), *_definer_tie_break()
+        )
     )
 
 

@@ -307,3 +307,60 @@ def test_get_resolve_mapping_handles_invalid_json_context(schema, taxonomies):
     assert mapping["valid"] == "valid"
     assert mapping["valid_alias"] == "valid"
     assert "broken_alias" not in mapping  # no alias for broken actor
+
+
+def test_validate_warns_on_mojibake_in_actor_label(actorpack, caplog):
+    actorpack.contents["actors"][0]["label"] = "MÃ¼nchen Nodes"
+    actorpack.validate()
+    assert "'München Nodes'" in caplog.text
+
+
+def test_validate_fail_bad_text_when_errors(actorpack, monkeypatch):
+    import graphsenselib.tagpack.tagpack as tp
+
+    monkeypatch.setattr(tp, "TEXT_PROBLEMS_ARE_ERRORS", True)
+    actorpack.contents["title"] = "Actors\x1b[31m"
+    with pytest.raises(ValidationError, match="Field 'title' contains non-printable"):
+        actorpack.validate()
+
+
+def test_validate_actor_relations(actorpack, caplog):
+    a = actorpack.contents["actors"][0]
+    a["context"] = '{"same_as": ["other_pack_actor"], "related_actors": ["x"]}'
+    actorpack.validate()
+    assert "refers to actors not in this pack" in caplog.text
+    assert actorpack.actors[0].same_as == ["other_pack_actor"]
+
+
+@pytest.mark.parametrize(
+    "context,match",
+    [
+        ('{"same_as": ["0xnodes"]}', "lists itself"),
+        ('{"same_as": ["x"], "related_actors": ["x"]}', "in both"),
+    ],
+)
+def test_validate_actor_relations_errors(actorpack, context, match):
+    actorpack.contents["actors"][0]["context"] = context
+    with pytest.raises(ValidationError, match=match):
+        actorpack.validate()
+
+
+def test_no_merge_hint_for_actors_declared_same_as(actorpack, caplog):
+    first = actorpack.contents["actors"][0]
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xnodesold",
+            "label": "0x nodes (old)",
+            "uri": "https://www.0xnodes.io/old",
+            "context": '{"same_as": ["0xnodes"]}',
+        }
+    )
+    actorpack.validate()
+    assert "share the same domain" not in caplog.text
+
+    # without the declaration the shared domain is still reported
+    caplog.clear()
+    actorpack.contents["actors"][1]["context"] = "{}"
+    actorpack.validate()
+    assert "share the same domain 0xnodes.io" in caplog.text
+    assert first["id"] == "0xnodes"
