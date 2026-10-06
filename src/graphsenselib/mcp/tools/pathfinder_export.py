@@ -26,7 +26,7 @@ import inspect
 import logging
 import re
 from contextlib import AsyncExitStack
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import httpx
 from fastapi import FastAPI
@@ -403,131 +403,90 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
     """
 
     async def build_pathfinder_file(
-        name: str,
-        default_network: str,
-        spec: PathfinderSpec,
-        layout: Literal["auto", "hierarchical", "columnar"] = "auto",
-        verify: bool = True,
+        name: Annotated[
+            str,
+            Field(description="Graph name embedded in the .gs file (shown in the UI)."),
+        ],
+        default_network: Annotated[
+            str,
+            Field(
+                description=(
+                    "Network ticker for items that don't carry an explicit "
+                    "network (e.g. 'btc', 'eth')."
+                )
+            ),
+        ],
+        spec: Annotated[
+            PathfinderSpec,
+            Field(description="Addresses, txs, and aggregated edges of the graph."),
+        ],
+        layout: Annotated[
+            Literal["auto", "hierarchical", "columnar"],
+            Field(
+                description=(
+                    "'auto' picks hierarchical when at least one starting_point "
+                    "is set, else columnar. 'hierarchical' forces the "
+                    "BFS-by-hop layout; 'columnar' forces addresses, txs and "
+                    "side-aware columns."
+                )
+            ),
+        ] = "auto",
+        verify: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Cross-check the spec against the backend: look up every "
+                    "address and tx hash, and verify that each agg_edge.tx_ids "
+                    "entry mediates the claimed a<->b relationship on chain. "
+                    "Findings go to summary.warnings and the text block. Adds "
+                    "one backend call per address and tx. Pass false to skip "
+                    "while drafting; backend hiccups during verify become a "
+                    "soft warning."
+                )
+            ),
+        ] = True,
     ) -> ToolResult:
         """Build a Pathfinder .gs save file from an investigation graph.
 
-        Pass the addresses, transactions, and address↔address relationships
-        you discovered. The tool encodes them into a Pathfinder ``.gs``
-        file; the user opens that file in the Pathfinder UI to verify your
+        Pass the addresses, transactions and address↔address relationships
+        you found. The user opens the file in Pathfinder to check your
         findings visually.
 
-        YOU DO NOT RECEIVE THE FILE CONTENT. The ``.gs`` payload is binary
-        and is deliberately kept out of your context. Do not try to read,
-        decode, reconstruct, or base64-encode it, and never invent a
-        download link or a ``data:`` URL of your own.
+        YOU DO NOT RECEIVE THE FILE CONTENT. Never read, decode, rebuild
+        or base64-encode it, and never invent a download link or a
+        ``data:`` URL of your own.
 
         Once the tool succeeds, tell the user where their file is:
 
-        [[open-url]]* If the result has a non-null ``open_url``, give that link to the
-          user verbatim — clicking it opens the graph directly in the
-          Pathfinder web app (no manual download/import needed). It is
-          time-limited like the download link.
-        [[/open-url]]* If the result has a non-null ``download_url``, give that link to
-          the user verbatim — it is a real, time-limited download link
-          for the ``.gs`` file itself.
-        * Otherwise the file is delivered as an attachment embedded in this
-          tool's result; tell the user to open or save it from their
-          client (the file is named ``filename``).
+        [[open-url]]* ``open_url`` set: give it verbatim. It opens the graph directly
+          in Pathfinder, no download or import needed (time-limited).
+        [[/open-url]]* ``download_url`` set: give it verbatim. It is a real,
+          time-limited download link for the ``.gs`` file.
+        * Otherwise the file is an attachment embedded in this result,
+          named ``filename``; tell the user to open or save it.
 
-        Either way, surface any ``summary.warnings`` to the user.
+        Always surface ``summary.warnings``; they flag authoring mistakes.
 
-        IMPORTANT — how transactions render in pathfinder: to make a
-        transaction appear you must do TWO things. (1) list it as an
-        entry in ``txs`` and (2) reference its hash from
-        ``agg_edges.tx_ids`` on the edge(s) it mediates. An ``agg_edge``
-        without ``tx_ids`` becomes an abstract a↔b line and no
-        transactions are shown for it. If you provide ``agg_edges`` but
-        leave ``txs`` empty, the response includes a warning and the
-        resulting .gs renders only abstract relationship lines.
+        A transaction renders only if it is listed in ``txs`` AND its id
+        is in the ``tx_ids`` of an ``agg_edge`` from its sender (``a``) to
+        its receiver (``b``). An edge without ``tx_ids`` is an abstract
+        a↔b line; a tx on no edge floats unconnected.
 
-        For every tx you include, provide at least one source and one
-        destination address — i.e. add an ``agg_edge`` with the tx's
-        ``from``-address as ``a`` and the tx's ``to``-address as ``b``,
-        with the tx hash in ``tx_ids``. Optional but strongly
-        recommended for proper visualisation: a tx not referenced from
-        any ``agg_edge`` renders as a floating node, and on ETH the
-        renderer can silently drop edges whose tx node is off-line.
+        ``label`` is for case context such as "victim wallet", not for
+        tags, dates or amounts, which Pathfinder already shows. ``color``
+        groups nodes by role: one color per role, the same mapping across
+        the graph, explained to the user, uninvolved nodes left plain.
+        Prefer the palette names, the swatches users pick in Pathfinder:
+        [[palette]]. Mark the node(s) you started from with
+        ``starting_point=true`` so the layout anchors them.
 
-        Labels — keep ``label`` (on addresses and txs) for case context
-        the UI cannot already show. Pathfinder renders attribution tags
-        on address nodes, and the date and value on transaction nodes,
-        by itself — so do NOT copy tag names, exchange names, dates or
-        amounts into ``label``; that is redundant. Reserve ``label`` for
-        context that comes from the investigation itself and is not
-        derivable from tags or transaction data, e.g. "victim wallet",
-        "attacker cash-out", "first hop after the hack".
+        Example (one tx between two addresses, anchored at addrA)::
 
-        Colors — ``color`` (on addresses and txs) highlights a node.
-        Use it to group nodes by their role in the case so the pattern
-        reads at a glance, e.g. victim side red, attacker-controlled
-        addresses orange, cash-out points purple. Use one color per
-        role, keep the mapping consistent across the graph, and tell the
-        user what each color means. Leave uninvolved nodes uncolored.
-        Prefer the palette names, which are exactly the swatches the
-        user can pick in the Pathfinder annotation dialog, so they can
-        recolor or extend your scheme: [[palette]]. A ``#rrggbb`` hex
-        string or an ``[r, g, b, a]`` list (0-1) also works. Edges
-        cannot be colored.
-
-        Mark the address(es) or tx(s) you started from with
-        ``starting_point=true`` so the layout can place anchors at column
-        0 and arrange the rest by hop distance.
-
-        Example (a single tx between two addresses, anchored at addrA)::
-
-            {
-              "addresses": [
-                {"id": "addrA", "starting_point": true,
-                 "label": "victim wallet", "color": "red"},
-                {"id": "addrB", "label": "attacker hop 1", "color": "orange"}
-              ],
-              "txs": [{"id": "txhash1"}],
-              "agg_edges": [
-                {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}
-              ]
-            }
-
-        Args:
-            name: Graph name embedded in the .gs file (shown in the UI).
-            default_network: Network ticker for items that don't carry an
-                explicit network (e.g. "btc", "eth").
-            spec: Addresses, txs, and aggregated edges of the graph.
-            layout: "auto" (default) picks hierarchical when at least one
-                starting_point is set, else columnar. "hierarchical" forces
-                BFS-by-hop layout; "columnar" forces the GsBuilder default
-                (addresses, txs, side-aware columns).
-            verify: When True (the default), additionally cross-check
-                the spec against the backend: every address and tx hash
-                is looked up, and each agg_edge.tx_ids reference is
-                verified to actually mediate the claimed a↔b
-                relationship on chain. Findings are appended to
-                ``summary.warnings`` and to the text content block.
-                Adds N+M backend calls (capped by an internal
-                concurrency limit). Pass False to skip for fast
-                iteration while drafting; backend hiccups during verify
-                are downgraded to a soft warning so a flaky backend
-                cannot sink a structurally valid file.
-
-        Returns:
-            A tool result whose structured content carries
-            ``{filename, download_url,[[open-url]] open_url,[[/open-url]] summary}`` — this, and
-            only this, is what you can read. ``download_url`` is either a
-            real, time-limited download link or null (null when the server
-            has no file store configured, or could not address the link);
-            the file is then delivered as an embedded attachment instead.
-            [[open-url]]``open_url`` is a deep link that opens the graph directly in
-            the Pathfinder web app (null when no file store is
-            configured); prefer surfacing it first when present.
-            [[/open-url]]Inspect ``summary.warnings`` (it flags common authoring
-            mistakes) and mention any to the user. The .gs bytes travel
-            as an embedded MCP resource and/or via the download link;
-            they never enter your context, so do not expect to access or
-            relay the file's contents.
+            {"addresses": [{"id": "addrA", "starting_point": true,
+                            "label": "victim wallet", "color": "red"},
+                           {"id": "addrB", "color": "orange"}],
+             "txs": [{"id": "txhash1"}],
+             "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}]}
         """
         _validate_spec(spec, default_network)
 

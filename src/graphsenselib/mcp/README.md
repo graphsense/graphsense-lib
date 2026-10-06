@@ -310,6 +310,15 @@ The dominant cost scaling factor is **descriptions, not count** — long
 docstrings and verbose schemas are the biggest levers. Keep descriptions
 action-oriented and under ~3 sentences.
 
+**Hard cap: 2048 characters.** Claude Code silently truncates the server
+instructions (`curation/instructions.md`) and every tool description at
+2048 characters before they reach the model. Parameter descriptions in
+the input schema are not cut, so put argument detail there
+(`Annotated[..., Field(description=...)]`), not in the docstring. Keep
+cross-tool guidance in the instructions and per-tool guidance in the
+tool's own description. `tests/mcp/test_client_limits.py` enforces the
+cap for both states of the open-url flag.
+
 ## Tests
 
 ```bash
