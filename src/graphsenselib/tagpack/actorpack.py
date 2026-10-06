@@ -323,7 +323,17 @@ class ActorPack(object):
                 raise ValidationError(
                     f"Actor {actor.identifier} is sub_service_of itself"
                 )
-            unknown = (same | related | ({parent} if parent else set())) - actor_ids
+            hosts = set(actor.nested_in)
+            if actor.identifier in hosts:
+                raise ValidationError(f"Actor {actor.identifier} is nested_in itself")
+            if parent is not None and parent in hosts:
+                raise ValidationError(
+                    f"Actor {actor.identifier}: {parent} is both sub_service_of "
+                    "and nested_in"
+                )
+            unknown = (
+                same | related | hosts | ({parent} if parent else set())
+            ) - actor_ids
             if unknown:
                 # may be defined in another actorpack
                 logger.warning(
@@ -498,9 +508,16 @@ class Actor(object):
 
     @property
     def sub_service_of(self):
-        """The actor this one is a sub-service of (e.g. an exchange's mining
-        pool or wallet product), or None."""
+        """The actor this one belongs to, as a product or division of the same
+        organisation (e.g. an exchange's mining pool), or None."""
         return self.context.get("sub_service_of") or None
+
+    @property
+    def nested_in(self):
+        """Actors whose addresses or accounts this one runs on, as a separate
+        organisation (e.g. an exchange using a custodian, a service using an
+        exchange's accounts)."""
+        return self.context.get("nested_in", []) or []
 
     @property
     def identifier(self):

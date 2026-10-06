@@ -73,6 +73,7 @@ def _seed(engine):
             ("rebrand_new", None),
             ("rebrand_old", '{"same_as": ["rebrand_new"]}'),
             ("rebrand_pool", '{"sub_service_of": "rebrand_new"}'),
+            ("rebrand_client", '{"nested_in": ["rebrand_new"]}'),
         ):
             c.execute(
                 text(
@@ -217,6 +218,8 @@ def _seed(engine):
         add_tag("1Rebrand", "New Name", c50, "gambling", "rebrand_new")
         add_tag("1SubService", "New Name", c50, "gambling", "rebrand_new")
         add_tag("1SubService", "New Name Pool", c50, "gambling", "rebrand_pool")
+        add_tag("1Nested", "New Name", c50, "gambling", "rebrand_new")
+        add_tag("1Nested", "Client", c50, "gambling", "rebrand_client")
 
         # an exchange-categorised mention is no exchange attribution
         add_tag("1Mention", "Dark Web", c20, "exchange", tag_type="mention")
@@ -313,9 +316,10 @@ async def test_actor_conflicts_and_groups(rc_db):
     assert clusters[CLUSTER_GAMBLING].n_addresses == 1003
 
     # rebrand_old / rebrand_new are declared same_as in the actorpack,
-    # rebrand_pool is sub_service_of rebrand_new
+    # rebrand_pool is sub_service_of rebrand_new, rebrand_client nested_in it
     assert "1Rebrand" not in by_addr
     assert "1SubService" not in by_addr
+    assert "1Nested" not in by_addr
 
     # the exchange_b tag on 1Multi is private
     public_only = await _detect(

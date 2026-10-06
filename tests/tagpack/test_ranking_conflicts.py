@@ -324,6 +324,37 @@ def test_sub_service_is_no_conflict_and_not_hidden():
     assert evaluate_address("BTC", ADDR, tags, None, EXCHANGES, relations=rel)
 
 
+def test_nested_service_counts_one_way():
+    rel = ActorRelations(
+        nested=[("service_x", "exchange_a"), ("exchange_b", "custodian")]
+    )
+
+    # a gambling service running on exchange_a's accounts is shown on an
+    # exchange_a deposit address: the more specific operator, nothing hidden
+    nested_shown = [
+        tag("Service X", 90, actor="service_x", category="gambling"),
+        tag("Exchange A Deposit", 20, actor="exchange_a", category="exchange"),
+    ]
+    assert evaluate_address("BTC", ADDR, nested_shown, None, EXCHANGES) is not None
+    assert (
+        evaluate_address("BTC", ADDR, nested_shown, None, EXCHANGES, relations=rel)
+        is None
+    )
+
+    # exchange_b keeps its funds with a custodian; showing the custodian hides
+    # the exchange, so it stays a finding
+    host_shown = [
+        tag("Custodian", 90, actor="custodian", category="wallet_service"),
+        tag("Exchange B", 20, actor="exchange_b", category="exchange"),
+    ]
+    assert evaluate_address("BTC", ADDR, host_shown, None, EXCHANGES, relations=rel)
+
+    # either way the pair is no actor conflict
+    for tags in (nested_shown, host_shown):
+        assert address_actor_conflict("BTC", ADDR, tags) is not None
+        assert address_actor_conflict("BTC", ADDR, tags, rel) is None
+
+
 def test_cluster_without_definer_members_disagree():
     ctx = ClusterContext(cluster_id=7, n_addresses=10, selected=None)
     members = {"a": ActorStats(actor="a"), "b": ActorStats(actor="b")}
