@@ -168,8 +168,8 @@ go beyond the question, and three shared skills they load.
 
 | Skill | What it does |
 | --- | --- |
-| `investigate-strict` | Answers exactly what was asked. No suggestions, no extra leads, no unrequested exports. |
-| `investigate-advisor` | The default. Answers, then suggests one next step or a Pathfinder export. |
+| `investigate-strict` | The default. Answers exactly what was asked. No suggestions, no extra leads, no unrequested exports. |
+| `investigate-advisor` | Answers, then suggests one next step or a Pathfinder export. |
 | `investigate-autonomous` | Follows the obvious leads itself, one or two hops beyond the finding, and ends with findings instead of suggestions. |
 | `identifier-integrity` | Shared: never write an address, hash or link from memory or complete a truncated one. |
 | `trace-funds` | Shared: which tools to use and how to follow funds hop by hop without closing a trace on a guess. |
@@ -195,8 +195,8 @@ call an investigator directly:
 ```
 
 or just ask ("trace the funds from bc1q..."): Claude picks the investigator
-from the skill descriptions, `investigate-advisor` unless you ask for no more
-than an answer or for Claude to keep going on its own. Pull updates with
+from the skill descriptions, `investigate-strict` unless you ask for advice on
+next steps or for Claude to keep going on its own. Pull updates with
 `claude plugin marketplace update graphsense`.
 
 **Claude app (claude.ai, Desktop).** Add GraphSense as a connector, then

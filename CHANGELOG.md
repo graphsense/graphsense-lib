@@ -15,10 +15,12 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Fixed
+- **Investigations start with an investigator, not with `trace-funds`.** With the Claude Code plugin, Claude picked the shared `trace-funds` skill directly for "trace the funds from …" and skipped the investigators, so no investigator set how far to go. The shared skills' descriptions now say an investigator loads them and to pick one first.
 - **`tagpack add-actors` keeps `!include`d headers and the file's formatting (#33).** It used to write back the merged in-memory pack, inlining the header's fields along with defaults filled in on load (`confidence`, `network`) and JSON-encoded `context` values. It now edits the file as written: it inserts the new `actor` lines and updates `lastmod`, and leaves everything else, including comments and the `header: !include …` reference, unchanged. When a change can't be made as a line edit (tags in `{…}` flow style), it warns and rewrites the whole file: the header stays an `!include`, but comments are lost.
 - **`tagpack add-actors` no longer moves a shared actor to pack level.** When every tag it asked about got the same actor, it moved that actor to the pack and removed `actor` from all tags. That also hit tags it hadn't asked about: with `--categories` it raised `KeyError` on tags outside the filter, and it silently replaced an actor a tag already had. Each tag now keeps the actor assigned to it.
 
 #### Changed
+- **`investigate-strict` is the default investigator** (was `investigate-advisor`). Without a hint on how far to go, an investigation answers what was asked and stops. Ask for next steps to get the advisor.
 - **sqlmodel is no longer capped `<0.0.45`.** The tagstore's datetime columns (`lastmod` on tagpack, actorpack, actor and tag; `created` on address) are now declared as `DateTime(timezone=False)` explicitly, so sqlmodel 0.0.45+ no longer maps them to `timestamptz` and rejects naive values. The generated column type is unchanged (`TIMESTAMP WITHOUT TIME ZONE`), so existing tagstores need no migration.
 
 ## [2.17.0] - 2026-09-30

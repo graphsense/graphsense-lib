@@ -1,6 +1,6 @@
 ---
 name: investigate-strict
-description: "Investigate a crypto address, transaction, cluster or named service with GraphSense and answer exactly what was asked - no suggested next steps, no leads pursued beyond the task, no unrequested exports. Use when the user wants just the facts or a direct answer to a narrow question."
+description: "Investigate a crypto address, transaction, cluster or named service with GraphSense and answer exactly what was asked - no suggested next steps, no leads pursued beyond the task, no unrequested exports. The default investigator: use when the user asks to investigate, trace or attribute on-chain activity without saying how far to go, or wants just the facts."
 argument-hint: "<address, tx hash, or question>"
 ---
 

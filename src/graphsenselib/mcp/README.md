@@ -267,8 +267,8 @@ re-enable later.
 `skills/` holds agent skills (one `<name>/SKILL.md` folder each) that
 teach a client how to *use* the tool surface. They compose: three shared
 skills - `identifier-integrity`, `trace-funds`, `investigation-reporting` -
-carry the rules, and three thin investigators - `investigate-strict`,
-`investigate-advisor` (the default), `investigate-autonomous` - load them
+carry the rules, and three thin investigators - `investigate-strict` (the default),
+`investigate-advisor`, `investigate-autonomous` - load them
 and add only how far to go beyond the asked task. The three automation
 levels follow the ones AI-Tracer offers. The directory is published two
 ways from one source:

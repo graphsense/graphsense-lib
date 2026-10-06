@@ -1,6 +1,6 @@
 ---
 name: investigate-advisor
-description: "Investigate a crypto address, transaction, cluster or named service with GraphSense, answer, then suggest one next investigative step or a Pathfinder export. The default investigator: use when the user asks to investigate, trace or attribute on-chain activity without saying how far to go."
+description: "Investigate a crypto address, transaction, cluster or named service with GraphSense, answer, then suggest one next investigative step or a Pathfinder export. Use when the user asks what to look at next or wants advice on where to take the investigation."
 argument-hint: "<address, tx hash, or question>"
 ---
 

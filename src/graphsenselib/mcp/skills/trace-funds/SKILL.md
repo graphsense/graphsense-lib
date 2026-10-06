@@ -1,6 +1,6 @@
 ---
 name: trace-funds
-description: "How to follow funds hop by hop and attribute counterparties with the GraphSense tools without ending a trace on a guess - tags vs transfers, empty and partial results, date-to-block edges, swaps, consolidation, and what counts as an endpoint. Use when following the money from an address or transaction, or when attributing where funds went."
+description: "How to follow funds hop by hop and attribute counterparties with the GraphSense tools without ending a trace on a guess - tags vs transfers, empty and partial results, date-to-block edges, swaps, consolidation, and what counts as an endpoint. Not a starting point: investigators load it. To trace funds or attribute where they went, pick an investigator first (investigate-strict by default)."
 metadata:
   graphsense-tools: search get_statistics lookup_address lookup_cluster lookup_tx_details list_neighbors list_txs_for list_tx_flows list_tags_by_address get_actor get_block_by_date
 ---
