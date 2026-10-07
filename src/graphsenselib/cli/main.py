@@ -27,9 +27,10 @@ try:
 
     tagpacktool_cli_available = True
 
-except ImportError:
+except ImportError as e:
     logger.debug("Tagpack tool or tagstore CLI not available.")
     tagpacktool_cli_available = False
+    tagpacktool_import_error = e
 
 try:
     from ..web.cli import web_cli
@@ -54,6 +55,32 @@ try:
 except ImportError:
     logger.debug("MCP CLI not available.")
     mcp_cli_available = False
+
+
+def _unavailable_cli(names, error, extra):
+    """Stand-in commands for an optional CLI that failed to import, so that
+    calling it reports why instead of "No such command"."""
+
+    @click.group()
+    def stub():
+        pass
+
+    for name in names:
+
+        @stub.command(
+            name=name,
+            context_settings={"ignore_unknown_options": True},
+            add_help_option=False,
+        )
+        @click.argument("args", nargs=-1, type=click.UNPROCESSED)
+        def _unavailable(args, _name=name):
+            raise click.ClickException(
+                f"'{_name}' is not available: {error}. "
+                f"Install it with: pip install 'graphsense-lib[{extra}]'"
+            )
+
+    return stub
+
 
 __author__ = "iknaio"
 __copyright__ = "iknaio"
@@ -87,7 +114,15 @@ def version_cmd():
             watch_cli,
             version,
         ]
-        + ([tagpacktool_cli, tagstore_cli] if tagpacktool_cli_available else [])
+        + (
+            [tagpacktool_cli, tagstore_cli]
+            if tagpacktool_cli_available
+            else [
+                _unavailable_cli(
+                    ["tagpack-tool", "tagstore"], tagpacktool_import_error, "tagpacks"
+                )
+            ]
+        )
         + ([web_cli] if web_cli_available else [])
         + ([transformation_cli] if transformation_cli_available else [])
         + ([mcp_cli] if mcp_cli_available else [])

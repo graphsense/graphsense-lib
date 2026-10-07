@@ -118,6 +118,10 @@ tagstore = [
     # naive values. The tagstore models therefore declare their datetime
     # columns as DateTime(timezone=False), matching the existing databases.
     "sqlmodel>=0.0.22",
+    # The tagstore uses SQLAlchemy's asyncio engine, which needs greenlet.
+    # SQLAlchemy 2.0 installed it by default; since 2.1 only the [asyncio]
+    # extra does.
+    "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.3",
     "colorama>=0.4.6",

@@ -113,10 +113,32 @@ Actorpacks are validated against the [actorpack schema](../../src/graphsenselib/
 
 Values in the field jurisdictions are validated against a set of [country codes](../../src/graphsenselib/tagpack/db/countries.csv).
 
+### Aliases
+
+`aliases` lists other ids or spellings under which **this same actor
+entry** appears in tagpacks, e.g. after a rename or for common variants:
+
+```yaml
+- id: woonetwork
+  label: Woo Network
+  aliases:
+  - woofi
+  - woox
+  ...
+```
+
+When a tagpack is inserted, a tag whose `actor` is an alias is stored with
+the actor's id (`woofi` → `woonetwork`), so all its tags end up on one
+actor. `aliases` can be written at actor level (as above) or inside
+`context`; both are read. An alias must not be the id of another actor:
+validation rejects that ("Collision detected: Actor ids and aliases share
+…").
+
 ### Relations between actors
 
 Four optional `context` fields record that two actor entries may tag the
-same addresses without that being a conflict:
+same addresses without that being a conflict. Unlike aliases, both entries
+stay separate actors with their own tags:
 
 - `same_as`: the other actor is the same organisation, e.g. after a rebrand
   or for a duplicate entry. Use it instead of deleting the old entry: tags
@@ -149,6 +171,8 @@ same addresses without that being a conflict:
   context:
     nested_in:
     - custodian       # keeps its funds with this custodian
+    notes:
+    - 'nested_in custodian: deposits swept into the custodian''s wallets'
 - id: wrappedtoken
   label: Wrapped Token
   ...
@@ -156,6 +180,9 @@ same addresses without that being a conflict:
     related_actors:
     - custodian       # holds the token's reserves
 ```
+
+Relations must name **actor ids, not aliases**: tags are stored with the
+resolved actor id, so a relation to an alias never matches a tag.
 
 Declaring a pair on one of the two actors is enough; `sub_service_of` and
 `nested_in` go on the product or the nested service. Validation rejects an
@@ -177,6 +204,19 @@ fields changes the tag summary itself.
 Like all context fields, they are only read by tools that know them: older
 graphsense-lib versions ignore them, so adding them to an actorpack does not
 break validation or insertion anywhere.
+
+### Which one to use
+
+| Situation | Use |
+|---|---|
+| Same entry, other spelling or old id; tags should merge onto one actor | `aliases` on the actor that stays |
+| Rebrand or duplicate where both entries are kept (each has tags, history) | `same_as` |
+| A product or division of the same company (mining pool, wallet product) | `sub_service_of` on the product |
+| A separate company running on another's addresses or accounts (exchange at a custodian, service using exchange accounts) | `nested_in` on that company |
+| Separate companies legitimately on the same addresses for another reason (token and its custodian) | `related_actors` |
+
+Record the evidence for a relation next to it, e.g. in `context.notes` and
+`context.refs`.
 
 ## View available taxonomies and concepts <a name="taxonomies"></a>
 
