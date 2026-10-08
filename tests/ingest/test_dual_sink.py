@@ -442,15 +442,9 @@ ZEC_600000_PREVOUTS = {
 }
 
 
-def test_transform_with_cassandra_resolver_recomputes_fee():
-    """Inputs resolved through Cassandra get a fee from the resolved values (#183).
-
-    ZEC mainnet block 600,000: a coinbase, four txs that spend transparent
-    outputs and six shielded-only txs. With resolve_inputs_via_cassandra the
-    exporter leaves the transparent inputs unresolved, so the fee it computes
-    leaves them out (-1,097,948,894,611 instead of 2,640 for 8b231f95...).
-    The expected fees are the ones the RPC resolver computes for this block.
-    """
+def _transform_zec_600000_via_cassandra_resolver():
+    """ZEC block 600,000 through TransformerUTXO with resolve_inputs_via_cassandra,
+    the db serving the real previous outputs in the db/utxo.py shape."""
     path = importlib.resources.files(ingest_resources).joinpath(
         "zcash_block_600000.json.gz"
     )
@@ -476,6 +470,19 @@ def test_transform_with_cassandra_resolver_recomputes_fee():
             end_block=600000,
         )
     )
+    return db, result
+
+
+def test_transform_with_cassandra_resolver_recomputes_fee():
+    """Inputs resolved through Cassandra get a fee from the resolved values (#183).
+
+    ZEC mainnet block 600,000: a coinbase, four txs that spend transparent
+    outputs and six shielded-only txs. With resolve_inputs_via_cassandra the
+    exporter leaves the transparent inputs unresolved, so the fee it computes
+    leaves them out (-1,097,948,894,611 instead of 2,640 for 8b231f95...).
+    The expected fees are the ones the RPC resolver computes for this block.
+    """
+    db, result = _transform_zec_600000_via_cassandra_resolver()
 
     rows = {tx["tx_hash"].hex(): tx for tx in result.table_contents["transaction"]}
     assert len(rows) == 11
@@ -501,6 +508,28 @@ def test_transform_with_cassandra_resolver_recomputes_fee():
         assert rows[tx_hash]["fee"] == fee
     tx = rows["8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"]
     assert tx["total_input"] == 1097948897251
+
+
+def test_cassandra_resolved_inputs_write_to_delta(tmp_path):
+    """Cassandra stores the input type as an int; the parquet schema wants the
+    name. The Delta write used to fail with ArrowTypeError (#189)."""
+    from graphsenselib.ingest.delta.sink import DeltaDumpSinkFactory, read_table
+
+    _, result = _transform_zec_600000_via_cassandra_resolver()
+    rows = {tx["tx_hash"].hex(): tx for tx in result.table_contents["transaction"]}
+    tx = rows["8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"]
+    assert [i["type"] for i in tx["inputs"]] == ["pubkeyhash"]
+    # The Cassandra rows keep the int.
+    assert tx["inputs_cassandra"][0][2] == 3
+
+    sink = DeltaDumpSinkFactory.create_writer(
+        network="zec",
+        s3_credentials=None,
+        write_mode="overwrite",
+        directory=str(tmp_path),
+    )
+    sink.write(result)
+    assert len(read_table(str(tmp_path), "transaction")) == 11
 
 
 def test_cassandra_sink_lock_name_is_raw_keyspace_only():
