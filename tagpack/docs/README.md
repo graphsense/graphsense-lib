@@ -1,17 +1,17 @@
 # GraphSense TagPack Management Tool
 
-[![Test and Build Status](https://github.com/graphsense/graphsense-tagpack-tool/actions/workflows/test_and_build.yaml/badge.svg)](https://github.com/graphsense/graphsense-tagpack-tool/actions) [![PyPI version](https://badge.fury.io/py/tagpack-tool.svg)](https://badge.fury.io/py/graphsense-lib) [![Python](https://img.shields.io/pypi/pyversions/tagpack-tool)](https://pypi.org/project/tagpack-tool/) [![Downloads](https://static.pepy.tech/badge/tagpack-tool)](https://pepy.tech/project/tagpack-tool)
+[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions) [![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib) [![Python](https://img.shields.io/pypi/pyversions/graphsense-lib)](https://pypi.org/project/graphsense-lib/) [![Downloads](https://static.pepy.tech/badge/graphsense-lib)](https://pepy.tech/project/graphsense-lib)
 
-This repository provides a command line tool for managing [GraphSense TagPacks](https://github.com/graphsense/graphsense-tagpacks/wiki/GraphSense-TagPacks). It can be used for
+`graphsense-cli tagpack-tool`, part of [graphsense-lib](https://github.com/graphsense/graphsense-lib), manages [GraphSense TagPacks](https://github.com/graphsense/graphsense-tagpacks/wiki/GraphSense-TagPacks). It can be used for
 
 1. [validating TagPacks against the TagPack schema](#validation)
 2. [finding suitable actors for tags](#actors-for-tags-and-tagpacks)
 3. [validating ActorPacks against the ActorPack schema](#actorpack_validation)
 4. [handling taxonomies and concepts](#taxonomies)
 5. [ingesting TagPacks and related data into a TagStore](#tagstore)
-6. [calculating the quality of the tags in the TagStore](#quality)
+6. [checking the quality of the tags in the TagStore](#quality)
 
-Please note that the last feature requires (installation of) a [Postgresql](https://www.postgresql.org/) database.
+Suggesting actors and the last two features require a [PostgreSQL](https://www.postgresql.org/) database with a TagStore.
 
 # Quickstart
 
@@ -24,10 +24,10 @@ Check out the options as described [below](#prerequisites-tagstore---postgresql-
 
 Create a file containing the repositories you want to manage, one repository per line (commenting out lines is possible):
 
-    git@github.com:graphsense/graphsense-tagpacks.git develop public
+    git@github.com:graphsense/graphsense-tagpacks.git master public
     # git@github.com:mycompany/graphsense-tagpacks-special.git master
 
-If you want to import a certain branch add the branch name separated by a white-space as shown above. To indicate that the repository should be imported to seen by everybody then add the keyword after the branch specification. If no branch or public keyword is specified the default branch is used and the tags are treated as private.
+To import a certain branch, add the branch name separated by a space as shown above. To make the repository's tags visible to everybody, add the keyword `public` after the branch. Without a branch the default branch is used; without `public` the tags are private.
 
 Then run
 
@@ -35,7 +35,7 @@ Then run
 
 to populate the TagStore with Actors and TagPacks.
 
-Re-run the command to add newly aundded tagpack files from the repositories.
+Re-run the command to add new or changed tagpack files from the repositories.
 
 Add the `--force` option to re-insert TagPacks.
 
@@ -102,10 +102,12 @@ Check a pack with both: `validate` and `validate --use-pyyaml` must agree.
 
 ## Actors for tags and TagPacks
 
-[Actors](https://github.com/graphsense/graphsense-tagpacks/wiki/Graphsense-Actors) are defined in a curated actor tagpack.
+[Actors](https://github.com/graphsense/graphsense-tagpacks/wiki/Graphsense-Actors) are defined in a curated ActorPack, [`actors/graphsense.actorpack.yaml`](https://github.com/graphsense/graphsense-tagpacks/blob/master/actors/graphsense.actorpack.yaml) in graphsense-tagpacks.
 
 It is highly encouraged to add suitable actors to TagPacks whenever possible,
-and the tagpack-tool offers support for doing so.
+and the tagpack-tool offers support for doing so. Both commands below look up
+the actors in a TagStore (`-u`/`--url` or the `POSTGRES_*` variables, see
+[below](#export-env-variables)).
 
 ### List suitable actors for a tag
 
@@ -137,9 +139,9 @@ File by file, for each label, the tagpack-tool will suggest suitable actors if a
 
 The ``--max`` option is available again to limit the number of candidate suggestions:
 
-    graphsense-cli tagpack-tool tagpack add_actors --max 1 path/to/tagpacks
+    graphsense-cli tagpack-tool tagpack add-actors --max 1 path/to/tagpacks
 
-If any actors have been selected, an updated TagPack is written that contains the users' selected actors:
+If any actors have been selected, an updated TagPack is written next to the original, with the selected actors (`--inplace` overwrites the original instead):
 
     Writing updated Tagpack defi-protocols_instadapp_with_actors.yaml
 
@@ -148,9 +150,9 @@ If any actors have been selected, an updated TagPack is written that contains th
 
 Validate a single ActorPack file
 
-    graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/ex_actorpack.yaml
+    graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/ex.actorpack.yaml
 
-Recursively validate all TagPacks in (a) given folder(s).
+Recursively validate all ActorPacks in (a) given folder(s).
 
     graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/
 
@@ -341,7 +343,7 @@ If a config.yaml already exists, it will not be replaced.
 
 Show the contents of the config file:
 
-   graphsense-cli tagpack-tool config -v
+    graphsense-cli tagpack-tool config -v
 
 To use a specific config file pass the file's location:
 
@@ -349,20 +351,21 @@ To use a specific config file pass the file's location:
 
 ### Initialize the tagstore database
 
-To initialize the database with all the taxonomies needed for ingesting the tagpacks, use:
+Create the tables and views with `graphsense-cli tagstore init` (see
+[above](#option-1-start-a-dockerized-postgresql-database)). It reads the
+database URL from `GS_TAGSTORE_DB_URL` or `--db-url`:
 
-    graphsense-cli tagpack-tool tagstore init
+    graphsense-cli tagstore init --db-url "postgresql://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@localhost:5432/tagstore"
 
-set the db to connect to via the environment variable
-
-    GS_TAGSTORE_DB_URL='postgresql://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@localhost:5432/tagstore'
+The older `graphsense-cli tagpack-tool tagstore init` is retired and only
+points to this command.
 
 ### Ingest taxonomies and confidence scores
 To insert all configured taxonomies at once, simply omit taxonomy name
 
     graphsense-cli tagpack-tool taxonomy insert
 
-Not tagpack-tool sync inserts taxonomies automatically
+Note: `tagpack-tool sync` inserts the taxonomies automatically.
 
 ### Ingest TagPacks
 
@@ -383,28 +386,28 @@ To force **re-insertion** (if tagpack file contents have been modified), add the
 
     graphsense-cli tagpack-tool tagpack insert --force tests/testfiles/
 
-To ingest **new** tagpacks and **skip** over already ingested tagpacks, add the `--add_new` flag to  your arguments:
+To ingest **new** tagpacks and **skip** over already ingested tagpacks, add the `--add-new` flag to your arguments:
 
-    graphsense-cli tagpack-tool tagpack insert --add_new tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --add-new tests/testfiles/
 
 By default, trying to insert tagpacks from a repository with **local** modifications will **fail**.
-To force insertion despite local modifications, add the ``--no_strict_check`` command-line parameter
+To force insertion despite local modifications, add the ``--no-strict-check`` command-line parameter
 
-    graphsense-cli tagpack-tool tagpack insert --no_strict_check tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --no-strict-check tests/testfiles/
 
 By default, tagpacks in the TagStore provide a backlink to the original tagpack file in their remote git repository.
-To write local file paths instead, add the ``--no_git`` command-line parameter
+To write local file paths instead, add the ``--no-git`` command-line parameter
 
-    graphsense-cli tagpack-tool tagpack insert --no_git --add_new tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --no-git --add-new tests/testfiles/
 
 ### Ingest ActorPacks
 
 Insert a single ActorPack file or all ActorPacks from a given folder:
 
-    graphsense-cli tagpack-tool actorpack insert tests/testfiles/simple/ex_addr_actorpack.yaml
-    graphsense-cli tagpack-tool actorpack insert tests/testfiles/
+    graphsense-cli tagpack-tool actorpack insert tests/testfiles/actors/ex.actorpack.yaml
+    graphsense-cli tagpack-tool actorpack insert tests/testfiles/actors/
 
-You can use the parameters `--force`, `--add_new`, `--no_strict_check` and `--no_git` options in the same way as with the `tagpack` command.
+You can use the options `--force`, `--add-new`, `--no-strict-check` and `--no-git` in the same way as with the `tagpack` command.
 
 ### Align ingested attribution tags with GraphSense cluster Ids
 
@@ -482,7 +485,7 @@ to update all materialized views.
 Depending on the amount of tags contained in the tagstore, this may take a while.
 
 
-## Calculate the quality of the tags in the TagStore <a name="quality"></a>
+## Check the quality of the tags in the TagStore <a name="quality"></a>
 
 To assess on the quality of address tags we define a quality measure.
 For an address tag, it is calculated as the **weighted similarity distance** between all pairs of distinct tags assigned to the same address.
@@ -493,15 +496,30 @@ To calculate the quality measure for all the tags in the database, run:
 
     graphsense-cli tagpack-tool quality calculate
 
-To show the quality measures of all the tags in the database, or those of a specific crypto-currency, run:
+To show the quality measures of all the tags in the database, or those of a specific network, run:
 
-    graphsense-cli tagpack-tool quality show [--network [BCH|BTC|ETH|LTC|ZEC|...]]
+    graphsense-cli tagpack-tool quality [--network BTC] show
+
+Further read-only checks under `graphsense-cli tagpack-tool quality`:
+
+- `ranking-conflicts --network BTC`: exchange-tagged addresses whose tag
+  summary shows something other than their exchange tag, with a reason per
+  address, and clusters whose label goes against their own tags.
+- `actor-conflicts --network BTC`: addresses and clusters attributed to more
+  than one actor (pairs declared in the actorpack, see
+  [Relations between actors](#relations-between-actors), are skipped).
+- `list-bad-text`: garbled (mis-encoded) or non-printable text in tags and
+  actors, with the probably intended text.
+- `list-labels-without-actor`, `list-actors-without-jur`,
+  `list-addresses-with-actor-collisions`, `list-addresses-with-low-quality`.
+
+The checks write CSV or JSON (`--format`, `--out`); see `--help` of each.
 
 ## Show tagstore contents/contributions
 
 To list all tagpack creators and their contributions to a tagstore's content use:
 
-    graphsense-cli tagpack-tool tagstore show_composition
+    graphsense-cli tagpack-tool tagstore show-composition
 
 # For developers
 
@@ -518,7 +536,7 @@ Create and activate a python environment for required dependencies and activate 
 
 ### Linting and Formatting
 
-The code in this repos will be autoformated via black and linted via a pre-commit hook. To manually format and lint the code run:
+The code is formatted and linted with ruff in a pre-commit hook (`make dev` installs it). To format and lint manually run:
 
     make format && make pre-commit
 
@@ -529,13 +547,12 @@ The code in this repos will be autoformated via black and linted via a pre-commi
 
 ### Testing
 
-Run tests
+Run the fast subset (what the pre-commit hook runs) or the whole suite, which
+needs Docker for the database tests:
 
-    make test
+    make test-fast
+    make test-ci
 
-Check test coverage (optional)
-
-    make test
-    coverage report
+`make test` runs the whole suite with coverage.
 
 [docker]: https://www.docker.com
