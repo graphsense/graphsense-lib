@@ -55,6 +55,51 @@ TagPacks are validated against the [tagpack schema](../../src/graphsenselib/tagp
 
 Confidence settings are validated against a set of acceptable [confidence](../../src/graphsenselib/tagpack/db/confidence.csv) values.
 
+Validate many packs in parallel with `--jobs N` (`0` = one process per CPU).
+With more than one job every pack is validated and every failure reported; the
+default `1` stops at the first invalid pack. Each process holds one pack in
+memory, up to 1–2 GB for packs of several 100k tags, so prefer a small number
+on a laptop.
+
+    graphsense-cli tagpack-tool tagpack validate --jobs 4 packs/
+
+### How TagPack files are parsed <a name="yaml-parsers"></a>
+
+Two YAML parsers read TagPack files, the same way for `validate` and for
+`insert`/`sync`:
+
+- **PyYAML** for every pack in a directory tree with a `header.yaml`, for packs
+  with an `!include`, and for all packs with `--use-pyyaml`.
+- **rapidyaml** (faster) for all other packs, if it is installed.
+
+They read most files identically, but not all. rapidyaml hands its result over
+as JSON, which changes some unquoted values:
+
+| In the file (unquoted) | PyYAML | rapidyaml |
+| --- | --- | --- |
+| `12E34` or `12e345678` (digits with an `e`, no dot) | text `"12E34"` | a number, or `inf` if too large |
+| `inf`, `nan` | text `"inf"`, `"nan"` | text `".inf"`, `".nan"` |
+| `.inf`, `.nan` | the float `inf`, `nan` | text `".inf"`, `".nan"` |
+| `yes`, `no`, `on`, `off` | `True` / `False` | text |
+| `0x1A`, `012`, `1_000` | the numbers 26, 10, 1000 | text |
+| `~` | `None` | text `"~"` |
+| an alias `*id001` (written by `yaml.dump` for repeated lists or dicts) | the anchored value | the text `"*id001"` |
+| `'2025-03-24'` (a quoted date) | text (`lastmod`: read as midnight that day) | a date |
+
+Unquoted `true`/`false`, `null` and `YYYY-MM-DD` dates are read the same by
+both. A comparison over a large repository also found a few `context` fields
+whose JSON text differed; the cause is not yet known.
+
+To make a pack read the same by both parsers:
+
+- quote every string that is not plain text, in particular addresses, hashes
+  and labels that look like numbers;
+- write booleans as `true`/`false`;
+- generators: dump without anchors, e.g. with a `yaml.SafeDumper` subclass
+  whose `ignore_aliases` returns `True`.
+
+Check a pack with both: `validate` and `validate --use-pyyaml` must agree.
+
 ## Actors for tags and TagPacks
 
 [Actors](https://github.com/graphsense/graphsense-tagpacks/wiki/Graphsense-Actors) are defined in a curated actor tagpack.

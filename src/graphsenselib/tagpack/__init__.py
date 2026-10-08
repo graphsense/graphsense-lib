@@ -125,10 +125,18 @@ RYML_AVAILABLE = _ryml_available()
 def load_yaml_fast(file_path):
     """Load YAML using rapidyaml if available, otherwise fall back to PyYAML.
 
-    Note: When using rapidyaml, this produces slightly different types than PyYAML:
-    - 'yes'/'no'/'on'/'off' remain as strings (PyYAML converts to bool)
-    - 'YYYY-MM-DD' dates are converted to datetime.date (same as PyYAML)
-    - 'true'/'false' are converted to bool (same as PyYAML)
+    rapidyaml's result goes through JSON, so unquoted values can differ from
+    PyYAML (YAML 1.1):
+    - 'yes'/'no'/'on'/'off', '0x1A', '012', '1_000' and '~' remain strings
+    - digits with an 'e' and no dot ('12E34') become numbers, or inf if too
+      large (PyYAML keeps the string)
+    - 'inf'/'nan' and '.inf'/'.nan' become the strings '.inf'/'.nan'
+    - aliases ('*id001') are not resolved and remain strings
+    - 'YYYY-MM-DD' becomes a datetime.date, also when quoted (PyYAML keeps a
+      quoted date as a string)
+    - 'true'/'false' and 'null' are read as by PyYAML
+    The table in tagpack/docs/README.md ("How TagPack files are parsed") lists
+    them for pack authors.
     """
     import json
 
