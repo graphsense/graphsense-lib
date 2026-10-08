@@ -38,12 +38,50 @@ def load_zcash_block(height):
         return json.loads(gzip.decompress(fh.read()))
 
 
+def load_zcash_tx(txid):
+    """Return the verbatim ``getrawtransaction(<txid>, 1)`` response of a txid.
+
+    Stored like the block fixtures, unmodified and only gzipped. These are the
+    transactions whose outputs a fixture transaction spends, as a Zebra 6.4.2
+    node returns them.
+    """
+    path = importlib.resources.files(ingest_resources).joinpath(
+        f"zcash_tx_{txid}.json.gz"
+    )
+    with path.open("rb") as fh:
+        return json.loads(gzip.decompress(fh.read()))
+
+
 def tx_by_hash(txs, tx_hash):
     return next(tx for tx in txs if tx["hash"] == tx_hash)
 
 
 def shielded(inoutputs):
     return [x for x in inoutputs if x["type"] == "shielded"]
+
+
+class FakeRpcClient:
+    """Stands in for BatchRpcClient: answers getrawtransaction from a dict.
+
+    Only the transport is replaced, so the exporter's own batching, output
+    parsing and caching run on whatever responses the test supplies.
+    """
+
+    def __init__(self, raw_txs):
+        self.raw_txs = raw_txs
+        self.requested = []
+
+    def make_batch_request(self, rpc_requests):
+        results = []
+        for request in rpc_requests:
+            assert request["method"] == "getrawtransaction"
+            txid, verbose = request["params"]
+            assert verbose == 1
+            self.requested.append(txid)
+            results.append(
+                {"id": request["id"], "result": self.raw_txs.get(txid), "error": None}
+            )
+        return results
 
 
 class TestBtcToSatoshi:
@@ -354,6 +392,104 @@ class TestParseOutput:
             "1BDvQZjaAJH4ecZ8aL3fYgTi7rnn3o2thE"
         ]
 
+    @pytest.mark.parametrize("network", ["btc", "ltc", "bch"])
+    @pytest.mark.parametrize("value", ["absent", "null"])
+    def test_output_without_value_raises(self, network, value):
+        """An output with no value must not vanish from output_value.
+
+        No node omits it on an output that passes field validation, and that
+        validation cannot catch its absence: a missing known key never raises,
+        and the sums skip a value of None.
+        """
+        vout = {
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 abc OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a914abc88ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"],
+            },
+        }
+        if value == "null":
+            vout["value"] = None
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            _parse_output(vout, network=network)
+
+    def _zcash_vout(self):
+        """vout 0 of 8b231f95...4011 @ 600,000 — value 59.995, valueZat 5,999,500,000."""
+        tx = next(
+            tx
+            for tx in load_zcash_block(600_000)["tx"]
+            if tx["txid"]
+            == "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"
+        )
+        vout = copy.deepcopy(tx["vout"][0])
+        assert (vout["value"], vout["valueZat"]) == (59.995, 5_999_500_000)
+        return vout
+
+    def test_zcash_output_reads_value_zat_not_the_float(self):
+        """ZEC outputs take the integer valueZat when the node gives one.
+
+        Swapping the float for a different value must not change the result,
+        which is what keeps a revert to the float from passing unnoticed.
+        """
+        vout = self._zcash_vout()
+        vout["value"] = 1.0
+
+        assert _parse_output(vout, network="zec")["value"] == 5_999_500_000
+
+    def test_zcash_output_without_value_zat_reads_the_float(self):
+        """The integer is preferred, not required: without it the float is read."""
+        vout = self._zcash_vout()
+        del vout["valueZat"]
+
+        assert _parse_output(vout, network="zec")["value"] == 5_999_500_000
+
+    @pytest.mark.parametrize("network", ["btc", "ltc", "bch"])
+    def test_value_zat_is_only_read_for_zcash(self, network):
+        """Other networks keep reading the float, whatever else the output holds."""
+        vout = self._zcash_vout()
+        vout["value"] = 1.0
+
+        assert _parse_output(vout, network=network)["value"] == 100_000_000
+
+    @pytest.mark.parametrize("value", ["absent", "null"])
+    def test_zcash_output_without_value_raises(self, value):
+        """A missing value raises on ZEC too, even with valueZat in place."""
+        vout = self._zcash_vout()
+        del vout["value"]
+        if value == "null":
+            vout["value"] = None
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            _parse_output(vout, network="zec")
+
+    @pytest.mark.parametrize("network", ["btc", "zec"])
+    def test_zero_value_output_is_valid(self, network):
+        """A value of 0 is an amount, not a missing one.
+
+        vout 0 of 574040a3...ee8e @ 3,479,931 (Zebra 6.4.2), a nulldata
+        output of 0 zat.
+        """
+        vout = {
+            "value": 0.0,
+            "valueZat": 0,
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_RETURN 00010074657374696e672e2e2e2e2e2e07",
+                "hex": "6a1100010074657374696e672e2e2e2e2e2e07",
+                "type": "nulldata",
+            },
+        }
+
+        result = _parse_output(vout, network=network)
+
+        assert result["value"] == 0
+        assert result["type"] == "nulldata"
+        assert result["addresses"] == []
+
 
 class TestParseBlockAndTxs:
     SAMPLE_BLOCK = {
@@ -482,7 +618,11 @@ class TestParseBlockAndTxs:
         assert regular["fee"] == 0 - 99_000_000  # input(0) - output
 
     def test_zcash_shielded_joinsplit(self):
-        """ZCash vjoinsplit creates shielded inputs/outputs."""
+        """ZCash vjoinsplit creates shielded inputs/outputs.
+
+        The amounts are read from the integer vpub_oldZat/vpub_newZat, which
+        nodes emit next to the floats.
+        """
         block_raw = {
             "hash": "zcash_block",
             "height": 100,
@@ -512,7 +652,18 @@ class TestParseBlockAndTxs:
                         }
                     ],
                     "vjoinsplit": [
-                        {"vpub_old": 0.0, "vpub_new": 10.0},
+                        {
+                            "vpub_old": 0.0,
+                            "vpub_oldZat": 0,
+                            "vpub_new": 10.0,
+                            "vpub_newZat": 1_000_000_000,
+                        },
+                        {
+                            "vpub_old": 2.5,
+                            "vpub_oldZat": 250_000_000,
+                            "vpub_new": 0.0,
+                            "vpub_newZat": 0,
+                        },
                     ],
                 }
             ],
@@ -523,6 +674,10 @@ class TestParseBlockAndTxs:
         shielded_inputs = [i for i in tx["inputs"] if i.get("type") == "shielded"]
         assert len(shielded_inputs) == 1
         assert shielded_inputs[0]["value"] == 1_000_000_000
+        # vpub_old (t→z) > 0 → shielded OUTPUT (takes value from the transaction)
+        shielded_outputs = [o for o in tx["outputs"] if o["type"] == "shielded"]
+        assert len(shielded_outputs) == 1
+        assert shielded_outputs[0]["value"] == 250_000_000
 
     def test_zcash_value_balance(self):
         """ZCash valueBalanceZat creates shielded inputs or outputs."""
@@ -593,6 +748,47 @@ class TestParseBlockAndTxs:
         assert tx["input_value"] == 40_000
         assert tx["output_value"] == 0
         assert tx["fee"] == 40_000
+
+    def test_zcash_transparent_outputs_are_their_value_zat(self):
+        """Every transparent output of a ZEC block is its valueZat, verbatim.
+
+        Mainnet block 600,000 — ten transparent outputs over five
+        transactions, each carrying the float value and the integer valueZat.
+        """
+        raw = load_zcash_block(600_000)
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+
+        seen = 0
+        for raw_tx, tx in zip(raw["tx"], txs):
+            transparent = [o for o in tx["outputs"] if o["type"] != "shielded"]
+            assert [o["value"] for o in transparent] == [
+                vout["valueZat"] for vout in raw_tx["vout"]
+            ]
+            seen += len(transparent)
+        assert seen == 10
+
+    def test_zcash_output_without_value_raises(self):
+        """8b231f95...4011 @ 600,000 — outputs of 5,999,500,000 and 1,091,949,394,611.
+
+        Without the first output's value the transaction's output_value would
+        read 1,091,949,394,611 instead of 1,097,948,894,611, so the parse is
+        aborted instead.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"
+        )
+        assert [vout["valueZat"] for vout in target["vout"]] == [
+            5_999_500_000,
+            1_091_949_394_611,
+        ]
+        del target["vout"][0]["value"]
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            _parse_btc_block_and_txs(raw, network="zec")
 
     def test_regular_tx_with_prevout(self):
         """Verbosity 3: prevout resolves input_value and fee correctly."""
@@ -813,6 +1009,44 @@ class TestZcashShieldedPools:
         assert tx["output_value"] == 300_000_000
         assert tx["fee"] == 15_000
 
+    def test_shielded_coinbase_reward_is_a_shielded_output(self):
+        """d2f91598...e42b @ 1,687,119 — a coinbase that pays the miner into Sapling.
+
+        The only transaction of its block, captured from Zebra 6.4.2. The
+        3.125 ZEC subsidy goes to three transparent funding-stream outputs
+        (62,500,000 zat together) and one Sapling output holding the miner's
+        2.5 ZEC, so the Sapling balance is -250,000,000 with nothing spent.
+        The shielded reward has to appear as a shielded output: the coinbase's
+        output_value is then the whole subsidy, and its fee stays 0.
+        """
+        raw = load_zcash_block(1_687_119)
+        (raw_tx,) = raw["tx"]
+        assert raw_tx["vShieldedSpend"] == []
+        assert len(raw_tx["vShieldedOutput"]) == 1
+
+        block, (tx,) = _parse_btc_block_and_txs(raw, network="zec")
+
+        assert block["coinbase_param"] == "034fbe1900"
+        assert (
+            tx["hash"]
+            == "d2f915983054efb9b8af88671f323fa444e0b7af4974dd3cc92105c6b94ee42b"
+        )
+        assert tx["is_coinbase"] is True
+        assert tx["inputs"] == []
+        assert tx["sapling_value_balance"] == -250_000_000
+        assert tx["orchard_value_balance"] == 0
+        assert tx["ironwood_value_balance"] == 0
+        assert [o["value"] for o in tx["outputs"]] == [
+            21_875_000,
+            25_000_000,
+            15_625_000,
+            250_000_000,
+        ]
+        assert shielded(tx["outputs"]) == [tx["outputs"][3]]
+        assert tx["input_value"] == 0
+        assert tx["output_value"] == 312_500_000
+        assert tx["fee"] == 0
+
     def test_empty_orchard_bundle_contributes_nothing(self):
         """Every NU5+ transaction carries an ``orchard`` key, usually empty.
 
@@ -963,15 +1197,143 @@ class TestZcashShieldedPools:
             _parse_btc_block_and_txs(raw, network="zec")
 
     def test_missing_value_balance_pair_is_zero(self):
-        """With both fields absent there is no amount to lose, so no error."""
+        """An empty Sapling bundle with both fields absent has no amount to lose.
+
+        Mainnet block 600,000 — five of its eleven transactions have no
+        Sapling spends or outputs. Dropping the pair from those changes
+        nothing: their balance is still 0 and every fee in the block is what
+        it was. The other six are the Sprout-to-Sapling migrations, whose
+        bundles are not empty and keep their pair, so each still pays its
+        10,000 zat.
+        """
         raw = copy.deepcopy(load_zcash_block(600_000))
-        for tx in raw["tx"]:
-            tx.pop("valueBalance", None)
-            tx.pop("valueBalanceZat", None)
+        empty = [
+            tx
+            for tx in raw["tx"]
+            if not tx["vShieldedSpend"] and not tx["vShieldedOutput"]
+        ]
+        assert len(empty) == 5
+        for tx in empty:
+            del tx["valueBalance"]
+            del tx["valueBalanceZat"]
+
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+        parsed = {tx["hash"]: tx for tx in txs}
+
+        assert all(parsed[tx["txid"]]["sapling_value_balance"] == 0 for tx in empty)
+        assert [tx["fee"] for tx in txs] == [tx["fee"] for tx in self.parse(600_000)]
+        assert [tx["fee"] for tx in txs[5:]] == [10_000] * 6
+
+    @pytest.mark.parametrize(
+        "height, txid, content",
+        [
+            (
+                600_000,
+                "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10",
+                "vShieldedOutput",
+            ),
+            (
+                1_687_194,
+                "bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517",
+                "vShieldedSpend and vShieldedOutput",
+            ),
+        ],
+        ids=["output", "spend and output"],
+    )
+    @pytest.mark.parametrize("float_field", ["absent", "null"])
+    def test_non_empty_sapling_bundle_without_integer_raises(
+        self, height, txid, content, float_field
+    ):
+        """Sapling spends or outputs with no integer balance must not become 0.
+
+        00c8e2ed...af10 @ 600,000 has one Sapling output and a balance of
+        -91,990,000; bd84ece1...6517 @ 1,687,194 has one spend, one output and
+        +89,000. Without the pair, or with a null float in its place, the
+        balance is unknown rather than 0: the first transaction's fee would
+        read 92,000,000 instead of 10,000.
+        """
+        raw = copy.deepcopy(load_zcash_block(height))
+        target = next(tx for tx in raw["tx"] if tx["txid"] == txid)
+        del target["valueBalanceZat"]
+        if float_field == "absent":
+            del target["valueBalance"]
+        else:
+            target["valueBalance"] = None
+
+        with pytest.raises(ValueError, match=f"transaction has {content} but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    def test_sapling_spends_alone_make_the_bundle_non_empty(self):
+        """The guard looks at spends as well as outputs.
+
+        bd84ece1...6517 @ 1,687,194 with its output list emptied still has a
+        Sapling spend, so a missing balance pair raises.
+        """
+        raw = copy.deepcopy(load_zcash_block(1_687_194))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517"
+        )
+        assert len(target["vShieldedSpend"]) == 1
+        target["vShieldedOutput"] = []
+        del target["valueBalance"]
+        del target["valueBalanceZat"]
+
+        with pytest.raises(ValueError, match="transaction has vShieldedSpend but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    @pytest.mark.parametrize("pool", ["orchard", "ironwood"])
+    @pytest.mark.parametrize("float_field", ["absent", "null"])
+    def test_non_empty_bundle_without_integer_raises(self, pool, float_field):
+        """Same for an Orchard or Ironwood bundle that has actions.
+
+        3115796d...9e53 @ 3,479,000 carries two Orchard actions (+1,020,000)
+        and two Ironwood actions (-1,000,000). Losing either balance would
+        turn its 20,000 zat fee into -1,000,000 or 1,020,000.
+        """
+        raw = copy.deepcopy(load_zcash_block(3_479_000))
+        target = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "3115796d7ebd1f35d270229221166f2318888587153a294dfb712ef620899e53"
+        )[pool]
+        assert len(target["actions"]) == 2
+        del target["valueBalanceZat"]
+        if float_field == "absent":
+            del target["valueBalance"]
+        else:
+            target["valueBalance"] = None
+
+        with pytest.raises(ValueError, match=f"{pool} bundle has actions but no"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
+    @pytest.mark.parametrize("shape", ["pair absent", "null float", "no bundle"])
+    def test_empty_or_absent_orchard_bundle_is_zero(self, shape):
+        """A bundle with no actions, or no bundle at all, still reads as 0.
+
+        Mainnet block 1,687,194 — four of its five transactions carry an empty
+        ``orchard`` object. Dropping its balance pair, nulling the float, or
+        dropping the object changes nothing in the parsed block.
+        """
+        raw = copy.deepcopy(load_zcash_block(1_687_194))
+        empty = [tx for tx in raw["tx"] if not tx["orchard"]["actions"]]
+        assert len(empty) == 4
+        for tx in empty:
+            if shape == "no bundle":
+                del tx["orchard"]
+                continue
+            del tx["orchard"]["valueBalanceZat"]
+            if shape == "pair absent":
+                del tx["orchard"]["valueBalance"]
+            else:
+                tx["orchard"]["valueBalance"] = None
 
         _, txs = _parse_btc_block_and_txs(raw, network="zec")
 
-        assert all(tx["sapling_value_balance"] == 0 for tx in txs)
+        assert txs == self.parse(1_687_194)
 
     def test_pre_nu5_transactions_carry_an_empty_orchard_bundle(self):
         """Mainnet block 600,000 — every transaction is v4 and long pre-NU5.
@@ -1009,14 +1371,76 @@ class TestZcashShieldedPools:
         assert [o["value"] for o in shielded(tx["outputs"])] == [91_990_000]
         assert tx["fee"] == 10_000
 
+    def test_sprout_reads_the_integer_fields_not_the_floats(self):
+        """Sprout amounts are vpub_oldZat/vpub_newZat, read verbatim.
+
+        Mainnet block 600,000 — its six Sprout-to-Sapling migrations carry one
+        joinsplit each, with vpub_newZat from 81,000,000 to 9,100,000,000 and
+        vpub_oldZat 0. Swapping every float for a different value must not
+        change the result, which is what keeps a revert to the floats from
+        passing unnoticed.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        joinsplits = {
+            tx["txid"]: tx["vjoinsplit"] for tx in raw["tx"] if tx["vjoinsplit"]
+        }
+        assert len(joinsplits) == 6
+        for (js,) in joinsplits.values():
+            assert round(js["vpub_new"] * 1e8) == js["vpub_newZat"]
+            js["vpub_old"] = 1.0
+            js["vpub_new"] = 2.0
+
+        _, txs = _parse_btc_block_and_txs(raw, network="zec")
+
+        for txid, (js,) in joinsplits.items():
+            tx = tx_by_hash(txs, txid)
+            assert [i["value"] for i in shielded(tx["inputs"])] == [js["vpub_newZat"]]
+        assert txs == self.parse(600_000)
+
+    @pytest.mark.parametrize("key", ["vpub_old", "vpub_new"])
+    @pytest.mark.parametrize("float_field", ["kept", "null"])
+    def test_sprout_float_without_integer_raises(self, key, float_field):
+        """A joinsplit float with no integer beside it must not become 0.
+
+        00c8e2ed...af10 @ 600,000 — one joinsplit, vpub_new 0.92 and
+        vpub_newZat 92,000,000. No node emits a float alone, but validation
+        cannot catch it: the float is blacklisted and a missing known key
+        never raises. Without the guard this transaction would lose its
+        Sprout input and report a fee of -91,990,000.
+        """
+        raw = copy.deepcopy(load_zcash_block(600_000))
+        (js,) = next(
+            tx
+            for tx in raw["tx"]
+            if tx["txid"]
+            == "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10"
+        )["vjoinsplit"]
+        del js[f"{key}Zat"]
+        if float_field == "null":
+            js[key] = None
+
+        with pytest.raises(ValueError, match=f"vjoinsplit has {key} but no {key}Zat"):
+            _parse_btc_block_and_txs(raw, network="zec")
+
 
 class TestZcashShieldedFieldValidation:
     """The bundle is enumerated strictly, so a new field fails loudly."""
 
     # Every stored block, oldest first. The four NU6.3 ones were picked so that
-    # between them they carry all seven distinct transaction key sets observed
-    # over the whole NU6.3 range.
-    BLOCKS = (600_000, 1_687_194, 2_501_409, 3_442_130, 3_442_400, 3_463_373, 3_479_000)
+    # between them they carry seven of the eight distinct transaction key sets
+    # observed over the NU6.3 range; the eighth is described in
+    # test_distinct_transaction_key_sets_are_covered. 1,687,119 was captured
+    # from Zebra 6.4.2, the others from Zebra 6.3.0.
+    BLOCKS = (
+        600_000,
+        1_687_119,
+        1_687_194,
+        2_501_409,
+        3_442_130,
+        3_442_400,
+        3_463_373,
+        3_479_000,
+    )
     NU63_BLOCKS = (3_442_130, 3_442_400, 3_463_373, 3_479_000)
 
     def test_validation_runs_at_every_level(self):
@@ -1038,14 +1462,14 @@ class TestZcashShieldedFieldValidation:
                 _parse_btc_block_and_txs(load_zcash_block(height), network="zec")
 
         assert contexts == {
-            "block": 7,
-            "transaction": 40,
-            "vin": 102,
+            "block": 8,
+            "transaction": 41,
+            "vin": 103,
             "scriptSig": 95,
-            "vout": 96,
-            "scriptPubKey": 96,
+            "vout": 99,
+            "scriptPubKey": 99,
             "vjoinsplit": 8,
-            "orchard bundle": 40,
+            "orchard bundle": 41,
             "ironwood bundle": 8,
             "orchard action": 11,
             "ironwood action": 15,
@@ -1054,15 +1478,18 @@ class TestZcashShieldedFieldValidation:
         }
 
     def test_distinct_transaction_key_sets_are_covered(self):
-        """The NU6.3 fixtures carry every transaction shape the range contains.
+        """The NU6.3 fixtures carry seven of the range's eight transaction shapes.
 
-        A census of all 52,157 blocks from NU6.3 activation to the chain tip
-        (328,134 transactions) found exactly seven distinct transaction key
+        A census of the 74,647 blocks from NU6.3 activation at 3,428,143 up to
+        3,502,789 (597,145 transactions) found eight distinct transaction key
         sets. ``ironwood``, ``authdigest``, ``bindingSig``, ``joinSplitPubKey``
-        and ``joinSplitSig`` are each optional and vary independently, and the
-        transaction-level validation has to accept all seven combinations —
-        including the rarest, Sprout joinsplits still appearing in the NU6.3
-        range, which numbered 14 transactions in that census.
+        and ``joinSplitSig`` are each optional, and the transaction-level
+        validation has to accept every combination that occurs. The fixtures
+        hold seven of them, including the rarest of those: Sprout joinsplits
+        next to a Sapling bundle, on 52 transactions in that census. The
+        eighth occurs once, 73204371...3f57 @ 3,493,704: joinsplits with no
+        Sapling spends or outputs, so ``joinSplitSig`` without ``bindingSig``.
+        Its block of 113 transactions is not stored.
         """
         key_sets = set()
         for height in self.NU63_BLOCKS:
@@ -1355,6 +1782,153 @@ class TestResolveUnresolvedInputs:
             mock_rpc.assert_not_called()
 
         assert transactions[1]["inputs"][0]["value"] == 100
+
+    def test_fetched_output_without_value_raises(self):
+        """A previous output with no value aborts the resolution outright.
+
+        8b231f95...4011 @ 600,000 stands in for the getrawtransaction response
+        of a spent transaction, with the value of its output 0 removed. The
+        error must come from the output parser, through the fetch thread pool,
+        rather than surface later as an unresolved input blamed on a missing
+        txindex.
+        """
+        prev = copy.deepcopy(
+            next(
+                tx
+                for tx in load_zcash_block(600_000)["tx"]
+                if tx["txid"]
+                == "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"
+            )
+        )
+        del prev["vout"][0]["value"]
+
+        exp = self._make_exporter()
+        exp.network = "zec"
+        exp.client = FakeRpcClient({prev["txid"]: prev})
+        transactions = [
+            {
+                "hash": "spender",
+                "is_coinbase": False,
+                "inputs": [
+                    {
+                        "spent_transaction_hash": prev["txid"],
+                        "spent_output_index": 0,
+                        "value": None,
+                        "addresses": [],
+                        "type": None,
+                    },
+                ],
+                "outputs": [],
+                "input_value": 0,
+                "output_value": 0,
+                "fee": 0,
+            },
+        ]
+
+        with pytest.raises(ValueError, match="vout has no value"):
+            exp._resolve_unresolved_inputs(transactions)
+
+        assert exp.client.requested == [prev["txid"]]
+        assert transactions[0]["inputs"][0]["value"] is None
+
+    @pytest.mark.parametrize(
+        "height, txid, spent, fee_before, input_value, output_value, fee",
+        [
+            # Orchard -362,999,000, one transparent input, no transparent output
+            (
+                2_501_409,
+                "7bd7717f8897e323840ac0f6b09518e580dbca1fa77dbd20ed0b90fc56d2fe69",
+                [
+                    (
+                        "fa436b021b15c9ad965ea25e53acb18622db1219dd4fc8020734db42bef8a4ef",
+                        0,
+                        363_000_000,
+                    ),
+                ],
+                -362_999_000,
+                363_000_000,
+                362_999_000,
+                1_000,
+            ),
+            # Sapling -2,821,000,000, two transparent inputs, one transparent output
+            (
+                3_442_130,
+                "c30b8b7e014599442ff851f7c6bda59ab88b6a79048f4754f365bb50ab7999dc",
+                [
+                    (
+                        "bae8c7aca322619a554640da7351426ce99341a95a974015bb7b0fb6c2c9a11b",
+                        1,
+                        1_500_000_000,
+                    ),
+                    (
+                        "eaade029f99936d10862f4c6613e7a1207c5f38b1b4595d08ee098201156c095",
+                        1,
+                        1_500_000_000,
+                    ),
+                ],
+                -2_999_985_000,
+                3_000_000_000,
+                2_999_985_000,
+                15_000,
+            ),
+            # Ironwood -135,028, one transparent input, one transparent output
+            (
+                3_442_400,
+                "b1a00ede11a2dabd31d9465d969454f152980bc85aa92bdbf5425640a39cb857",
+                [
+                    (
+                        "0982413a27b031ea711a57f247d65acafa7c4291bd7fb97fc9cb2d7e175d0c77",
+                        0,
+                        4_260_000,
+                    ),
+                ],
+                -4_245_000,
+                4_260_000,
+                4_245_000,
+                15_000,
+            ),
+        ],
+        ids=["orchard", "sapling", "ironwood"],
+    )
+    def test_zcash_transparent_inputs_resolve_next_to_a_shielded_leg(
+        self, height, txid, spent, fee_before, input_value, output_value, fee
+    ):
+        """Real ZEC transactions with transparent inputs and a shielded leg.
+
+        7bd7717f...fe69 @ 2,501,409 shields into Orchard, c30b8b7e...99dc @
+        3,442,130 into Sapling and b1a00ede...b857 @ 3,442,400 into Ironwood.
+        At parse time their transparent inputs have no value, so the fee is
+        the negated output_value. Resolving the inputs from the transactions
+        they spend must keep the shielded output and give the fee each one
+        paid: 1,000, 15,000 and 15,000 zat.
+        """
+        _, txs = _parse_btc_block_and_txs(load_zcash_block(height), network="zec")
+        tx = tx_by_hash(txs, txid)
+        assert [
+            (i["spent_transaction_hash"], i["spent_output_index"]) for i in tx["inputs"]
+        ] == [(prev_txid, index) for prev_txid, index, _ in spent]
+        assert tx["input_value"] == 0
+        assert tx["fee"] == fee_before
+        shielded_outputs = shielded(tx["outputs"])
+        assert len(shielded_outputs) == 1
+
+        prev_txs = {prev_txid: load_zcash_tx(prev_txid) for prev_txid, _, _ in spent}
+        exp = self._make_exporter()
+        exp.network = "zec"
+        exp.client = FakeRpcClient(prev_txs)
+
+        exp._resolve_unresolved_inputs([tx])
+
+        assert sorted(exp.client.requested) == sorted(prev_txs)
+        for inp, (prev_txid, index, value) in zip(tx["inputs"], spent):
+            prev_out = prev_txs[prev_txid]["vout"][index]
+            assert inp["value"] == value == prev_out["valueZat"]
+            assert inp["addresses"] == prev_out["scriptPubKey"]["addresses"]
+            assert inp["type"] == "pubkeyhash"
+        assert shielded(tx["outputs"]) == shielded_outputs
+        assert tx["input_value"] == input_value
+        assert tx["output_value"] == output_value
+        assert tx["fee"] == fee
 
 
 class TestTxVersionToInt32:

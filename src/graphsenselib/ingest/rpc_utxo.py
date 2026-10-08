@@ -101,6 +101,11 @@ _TX_KNOWN_KEYS = frozenset(
         # present or absent together — the integer is therefore no less
         # available than the float, and avoids the lossy float round-trip.
         "valueBalanceZat",
+        # Sapling spend and output descriptions. Only their emptiness is read:
+        # a transaction that has any must also carry valueBalanceZat (see
+        # _value_balance_zat). The descriptions themselves are not parsed.
+        "vShieldedSpend",
+        "vShieldedOutput",
         # NU5 Orchard and NU6.3 Ironwood bundles. Optional: validate_rpc_fields
         # works by set difference, so a known key that is absent never raises.
         # Zebra emits "orchard" on every transaction, including pre-NU5 v1-v4
@@ -121,8 +126,6 @@ _TX_BLACKLIST = frozenset(
         "hex",  # raw transaction hex, not stored
         "fee",  # convenience field at verbosity 3, we compute it ourselves
         # ZCash extras we don't parse
-        "vShieldedSpend",
-        "vShieldedOutput",
         "bindingSig",
         "overwintered",
         "expiryheight",
@@ -199,6 +202,7 @@ _PREVOUT_BLACKLIST = frozenset(
 _VOUT_KNOWN_KEYS = frozenset(
     {
         "value",
+        "valueZat",  # ZEC: integer zatoshi value, preferred to value when present
         "n",
         "scriptPubKey",
     }
@@ -208,7 +212,6 @@ _VOUT_BLACKLIST = frozenset(
     {
         "ismweb",  # LTC: flags vout from MimbleWimble Extension Block
         "valueSat",  # ZEC: integer satoshi value, redundant with value
-        "valueZat",  # ZEC: integer zatoshi value, redundant with value
         "tokenData",  # BCH: CashTokens data (category, amount, nft)
     }
 )
@@ -236,8 +239,8 @@ _SCRIPT_PUB_KEY_BLACKLIST = frozenset(
 
 _JOINSPLIT_KNOWN_KEYS = frozenset(
     {
-        "vpub_old",
-        "vpub_new",
+        "vpub_oldZat",
+        "vpub_newZat",
     }
 )
 
@@ -251,8 +254,10 @@ _JOINSPLIT_BLACKLIST = frozenset(
         "randomSeed",
         "macs",
         "proof",
-        "vpub_oldZat",
-        "vpub_newZat",
+        # Float ZEC renderings of the "vpub_oldZat" and "vpub_newZat" this
+        # parser reads, as with the "valueBalance" floats.
+        "vpub_old",
+        "vpub_new",
         "anchor",  # Sprout anchor hash
         "ciphertexts",  # encrypted note ciphertexts
     }
@@ -318,22 +323,51 @@ _ORCHARD_FLAGS_BLACKLIST = frozenset(
 )
 
 
-def _value_balance_zat(obj, context):
-    """Return ``obj``'s integer ``valueBalanceZat``, or 0 if it has none.
+def _value_balance_zat(obj, context, content_keys):
+    """Return ``obj``'s integer ``valueBalanceZat``, or 0 for an empty bundle.
 
     Every node emits the float ``valueBalance`` and ``valueBalanceZat``
     together, and only the integer is read. A float without its integer would
     otherwise pass validation (the float is blacklisted, and a missing known
     key never raises) and turn a real shielded amount into 0, so that case
     raises instead.
+
+    So does a bundle that is not empty but has no integer, whether the float
+    is absent or null. ``content_keys`` names the lists that make it non-empty:
+    the Sapling spends and outputs of a transaction, or the actions of an
+    Orchard or Ironwood bundle. Its balance is then unknown rather than 0.
+    Only an empty or absent bundle has no amount to lose, and reads as 0.
     """
     balance = obj.get("valueBalanceZat")
-    if balance is None and obj.get("valueBalance") is not None:
+    if balance is None:
+        if obj.get("valueBalance") is not None:
+            raise ValueError(
+                f"{context} has valueBalance but no valueBalanceZat; "
+                "refusing to drop the shielded amount."
+            )
+        content = [key for key in content_keys if obj.get(key)]
+        if content:
+            raise ValueError(
+                f"{context} has {' and '.join(content)} but no valueBalanceZat; "
+                "refusing to drop the shielded amount."
+            )
+    return balance or 0
+
+
+def _vpub_zat(joinsplit, key):
+    """Return a joinsplit's integer ``<key>Zat``, or 0 if it has none.
+
+    Same rule as ``_value_balance_zat``: only the integer is read, and a
+    joinsplit that carries the float ``<key>`` without it raises instead of
+    turning a Sprout amount into 0.
+    """
+    amount = joinsplit.get(f"{key}Zat")
+    if amount is None and key in joinsplit:
         raise ValueError(
-            f"{context} has valueBalance but no valueBalanceZat; "
+            f"vjoinsplit has {key} but no {key}Zat; "
             "refusing to drop the shielded amount."
         )
-    return balance or 0
+    return amount or 0
 
 
 def _btc_to_satoshi(value):
@@ -543,6 +577,16 @@ def _parse_output(vout_entry, network="btc"):
             output_type = "nonstandard"
             addresses = [_script_hex_to_non_standard_address(script_hex)]
 
+    # No node omits "value" on an output that passes the validation above. One
+    # without it would not fail there either (a missing known key never
+    # raises) and would then be skipped by the None-tolerant sums, so it
+    # raises instead. A value of 0 is valid.
+    value = vout_entry.get("value")
+    if value is None:
+        raise ValueError("vout has no value; refusing to drop the output amount.")
+    # ZEC nodes also give the amount as an integer, which avoids the float.
+    value_zat = vout_entry.get("valueZat") if network == "zec" else None
+
     return {
         "index": vout_entry.get("n"),
         "script_asm": script_pub_key.get("asm"),
@@ -550,7 +594,7 @@ def _parse_output(vout_entry, network="btc"):
         "required_signatures": required_signatures,
         "type": output_type,
         "addresses": addresses,
-        "value": _btc_to_satoshi(vout_entry.get("value")),
+        "value": value_zat if value_zat is not None else _btc_to_satoshi(value),
     }
 
 
@@ -624,6 +668,8 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
         # vpub_old = value from transparent → shielded (consumed) = OUTPUT
         # vpub_new = value from shielded → transparent (produced) = INPUT
         # Same convention as Sapling valueBalance: z→t = input, t→z = output
+        # Both are read from the integer vpub_oldZat/vpub_newZat, already in
+        # zatoshi like the value balances below.
         vjoinsplit = raw_tx.get("vjoinsplit")
         if vjoinsplit:
             for js in vjoinsplit:
@@ -633,15 +679,17 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     _JOINSPLIT_BLACKLIST,
                     "vjoinsplit",
                 )
-                vpub_old = _btc_to_satoshi(js.get("vpub_old")) or 0
-                vpub_new = _btc_to_satoshi(js.get("vpub_new")) or 0
+                vpub_old = _vpub_zat(js, "vpub_old")
+                vpub_new = _vpub_zat(js, "vpub_new")
                 if vpub_new > 0:
                     inputs.append(_make_shielded_input(len(inputs), vpub_new))
                 if vpub_old > 0:
                     outputs.append(_make_shielded_output(len(outputs), vpub_old))
 
         # ZCash: Sapling value balance, already in zatoshi like the bundles below.
-        sapling_value_balance = _value_balance_zat(raw_tx, "transaction")
+        sapling_value_balance = _value_balance_zat(
+            raw_tx, "transaction", ("vShieldedSpend", "vShieldedOutput")
+        )
         if sapling_value_balance > 0:
             inputs.append(_make_shielded_input(len(inputs), sapling_value_balance))
         elif sapling_value_balance < 0:
@@ -681,7 +729,7 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     _ORCHARD_FLAGS_BLACKLIST,
                     f"{pool} flags",
                 )
-            balance = _value_balance_zat(bundle, f"{pool} bundle")
+            balance = _value_balance_zat(bundle, f"{pool} bundle", ("actions",))
             pool_value_balance[pool] = balance
             if balance > 0:
                 inputs.append(_make_shielded_input(len(inputs), balance))
