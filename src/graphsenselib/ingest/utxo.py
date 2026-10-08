@@ -162,6 +162,10 @@ class CassandraOutputResolver(OutputResolverBase):
             tx_bucket_size=self.tx_bucket_size,
             tx_prefix_length=self.tx_prefix_length,
         )
+        # Cassandra stores the type as an int; return the name, like the cache
+        # does, since the parquet schema and delta-to-raw expect the name (#189).
+        for o in (outputs or {}).values():
+            o["type"] = _address_type_names.get(o["type"], o["type"])
         return outputs
 
     def add_output(self, tx_hash, output) -> None:
@@ -227,6 +231,9 @@ _address_types = {  # based on BlockSci values (type 0 .. 10)
     "shielded": 12,
     "anchor": 13,
 }
+
+# Inverse of _address_types; for aliased ints the first name wins.
+_address_type_names = {v: k for k, v in reversed(_address_types.items())}
 
 
 def addresstype_to_int(addr_type: str) -> int:
