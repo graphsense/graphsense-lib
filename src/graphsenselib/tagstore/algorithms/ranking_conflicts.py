@@ -491,10 +491,13 @@ class ActorStats:
 
 
 def actor_stats_from_tags(tags: Iterable[TagPublic]) -> Dict[str, ActorStats]:
+    """Per actor, stats over the actor-type tags. Like the tag summary's actor,
+    mentions and events do not count: their actor names whom the label refers
+    to, not who controls the address."""
     acc: Dict[str, dict] = {}
     for t in tags:
         actor = tag_actor(t)
-        if actor is None:
+        if actor is None or t.tag_type != "actor":
             continue
         a = acc.setdefault(
             actor,

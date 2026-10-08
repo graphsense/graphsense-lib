@@ -221,7 +221,12 @@ class ServiceContainer:
     ):
         tsdb = tagstore_db if tagstore_db is not None else MockTagstoreDb()
         if not hasattr(tsdb, "search_labels"):
-            tsdb = TagstoreDbAsync(tsdb)
+            tsdb = TagstoreDbAsync(
+                tsdb,
+                only_actor_tags_in_actor_lists=getattr(
+                    config, "tag_summary_only_propagate_high_confidence_actors", True
+                ),
+            )
         self.config = config
         self.db = db
         self.tagstore_db = (

@@ -459,6 +459,7 @@ async def load_member_actor_stats(
             WHERE a.network = :network
               AND a.gs_cluster_no_addr > 1
               AND tp.acl_group = ANY(:groups)
+              AND t.tag_type = 'actor'  -- see actor_stats_from_tags
               AND NULLIF(t.actor, '') IS NOT NULL
               {only}
             GROUP BY a.gs_cluster_id, t.actor
@@ -516,6 +517,7 @@ _MULTI_ACTOR_CANDIDATES_SQL = """
     JOIN tagpack tp ON tp.id = t.tagpack
     WHERE t.network = :network
       AND tp.acl_group = ANY(:groups)
+      AND t.tag_type = 'actor'  -- see actor_stats_from_tags
       AND NULLIF(t.actor, '') IS NOT NULL
     GROUP BY t.identifier
     HAVING count(DISTINCT t.actor) > 1

@@ -615,7 +615,12 @@ async def setup_database(app: FastAPI):
             pool_pre_ping=True,
         )
 
-        tagstore_db = TagstoreDbAsync(engine)
+        tagstore_db = TagstoreDbAsync(
+            engine,
+            only_actor_tags_in_actor_lists=(
+                config.tag_summary_only_propagate_high_confidence_actors
+            ),
+        )
         await ConceptsCacheServiceFastAPI.setup_cache(tagstore_db, app)
 
         app.state.tagstore_engine = engine

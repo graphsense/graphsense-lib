@@ -211,7 +211,10 @@ class GSRestConfig(BaseSettings):
     )
     tag_summary_only_propagate_high_confidence_actors: bool = Field(
         default=True,
-        description="Only propagate high confidence actors in tag summaries",
+        description=(
+            "Only propagate high confidence actors in tag summaries; also limits "
+            "the actors lists of addresses and clusters to actor-type tags"
+        ),
     )
     user_tag_reporting_acl_group: str = Field(
         default="develop",
