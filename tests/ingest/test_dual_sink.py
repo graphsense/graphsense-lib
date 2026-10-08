@@ -6,6 +6,9 @@ Verifies that _transform_with_cassandra produces a neutral format
 both sinks consume the data correctly.
 """
 
+import gzip
+import importlib.resources
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,10 +17,13 @@ pytest.importorskip("pyarrow")
 
 from graphsenselib.ingest.cassandra.sink import CassandraSink
 from graphsenselib.ingest.common import BlockRangeContent
+from graphsenselib.ingest.rpc_utxo import _parse_btc_block_and_txs
 from graphsenselib.ingest.transform import TransformerUTXO
 from graphsenselib.ingest.utxo import TX_BUCKET_SIZE, TX_HASH_PREFIX_LENGTH
 from graphsenselib.schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
 from graphsenselib.utils.account import get_id_group
+
+from . import resources as ingest_resources
 
 
 def _make_raw_blocks_and_txs():
@@ -392,6 +398,109 @@ def test_delta_only_vs_dual_sink_parquet_equivalence():
                 assert dt.get(field) == du.get(field), (
                     f"Field '{field}' differs: delta={dt.get(field)!r} vs dual={du.get(field)!r}"
                 )
+
+
+# Previous outputs spent by the transparent inputs of ZEC mainnet block
+# 600,000, as the raw keyspace returns them (get_tx_outputs: output index ->
+# addresses, value in zatoshi, address type id; 3 is pubkeyhash).
+ZEC_600000_PREVOUTS = {
+    "fd829d593bb5c3b6f852eaabc1b73206ebdbf0e6120a20926e809b44f486d845": {
+        1: {
+            "addresses": ["t1eMwFKLzrBe1GPM9uxEyLJSic6LxJTmFbP"],
+            "value": 1097948897251,
+            "type": 3,
+        }
+    },
+    "d4e944af7819a3bd6aaf0a111ae719dd35f2eca41ceb013678ec0b1a60252889": {
+        343: {
+            "addresses": ["t1VkP59Ff9291iwoMWMSN9PnZUMFAmJ1LUx"],
+            "value": 12562982,
+            "type": 3,
+        }
+    },
+    "8a6f840beb2962e90fe71458170bd0b59db0c7a4800ec1c1c50fb22bd2b2746c": {
+        338: {
+            "addresses": ["t1VkP59Ff9291iwoMWMSN9PnZUMFAmJ1LUx"],
+            "value": 11876773,
+            "type": 3,
+        }
+    },
+    "3268692740ad890bbeca29919354674fee3b1359b05eddcc2a3c7a0cf253ef31": {
+        1: {
+            "addresses": ["t1JhrLymPK9FSE7L1xgyxfvvjD3jmUK95gn"],
+            "value": 10399643000,
+            "type": 3,
+        }
+    },
+    "e40a8c28d99f4687b538362899303622e6bed212b13ab0388d7014ac0899d12a": {
+        1: {
+            "addresses": ["t1StbYhooGGBYC1FBY9FwKNuves8VG3bEXn"],
+            "value": 22216324,
+            "type": 3,
+        }
+    },
+}
+
+
+def test_transform_with_cassandra_resolver_recomputes_fee():
+    """Inputs resolved through Cassandra get a fee from the resolved values (#183).
+
+    ZEC mainnet block 600,000: a coinbase, four txs that spend transparent
+    outputs and six shielded-only txs. With resolve_inputs_via_cassandra the
+    exporter leaves the transparent inputs unresolved, so the fee it computes
+    leaves them out (-1,097,948,894,611 instead of 2,640 for 8b231f95...).
+    The expected fees are the ones the RPC resolver computes for this block.
+    """
+    path = importlib.resources.files(ingest_resources).joinpath(
+        "zcash_block_600000.json.gz"
+    )
+    with path.open("rb") as fh:
+        block, txs = _parse_btc_block_and_txs(
+            json.loads(gzip.decompress(fh.read())), network="zec"
+        )
+
+    db = _make_mock_db()
+    db.raw.get_tx_outputs.side_effect = lambda tx_hash, **kwargs: (
+        ZEC_600000_PREVOUTS.get(tx_hash)
+    )
+    transformer = TransformerUTXO(
+        partition_batch_size=10000,
+        network="zec",
+        db=db,
+        resolve_inputs_via_cassandra=True,
+    )
+    result = transformer.transform(
+        BlockRangeContent(
+            table_contents={"blocks": [block], "txs": txs},
+            start_block=600000,
+            end_block=600000,
+        )
+    )
+
+    rows = {tx["tx_hash"].hex(): tx for tx in result.table_contents["transaction"]}
+    assert len(rows) == 11
+    assert db.raw.get_tx_outputs.call_count == 5
+    for tx in rows.values():
+        if tx["coinbase"]:
+            assert tx["fee"] == 0
+        else:
+            assert tx["fee"] == tx["total_input"] - tx["total_output"]
+
+    fees = {
+        # coinbase
+        "99c678be78dcceaad8f8719917a315614610886f2036dbb4bc5c6ace129f0a28": 0,
+        # transparent inputs resolved through the db
+        "8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011": 2640,
+        "a9444d3678eb6987f0044b94302a21e9a67074a027182b72a99bf21ae1a6d0d5": 1870,
+        "b75bfcb69fa70f226467691312bbc22a8b43cfb1597310345045b2e2fa76238b": 7000,
+        "6dd71b588cf4e5fc74d49be6da7e7f1bd739b884904e47b0aaba6f2b7fc44c79": 2270,
+        # shielded only
+        "00c8e2ede256065b03a37936f97e85fd67206273cb3d9464d2cfc5b45911af10": 10000,
+    }
+    for tx_hash, fee in fees.items():
+        assert rows[tx_hash]["fee"] == fee
+    tx = rows["8b231f950ee915d65baf74eef6eb969e3cb031d50b6477cf66440004af004011"]
+    assert tx["total_input"] == 1097948897251
 
 
 def test_cassandra_sink_lock_name_is_raw_keyspace_only():
