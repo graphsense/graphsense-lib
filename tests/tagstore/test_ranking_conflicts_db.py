@@ -27,6 +27,7 @@ CLUSTER_GAMBLING = 200
 CLUSTER_OVERRIDE = 300
 CLUSTER_SWARM = 400
 CLUSTER_VOTE_TIE = 600
+CLUSTER_LINKED = 700
 FRESH_RAW = 5
 
 
@@ -81,6 +82,15 @@ def _seed(engine):
                     "VALUES (:a, 'u', :a, :ctx, 'ap')"
                 ),
                 {"a": actor, "ctx": context},
+            )
+        # actors that mentions and events link to (no exchange concept)
+        for actor in ("dice_c", "locker_d"):
+            c.execute(
+                text(
+                    "INSERT INTO actor (id, uri, label, context, actorpack) "
+                    "VALUES (:a, 'u', :a, NULL, 'ap')"
+                ),
+                {"a": actor},
             )
         for tp, group in (
             ("tp0", "public"),
@@ -197,7 +207,18 @@ def _seed(engine):
         )
         vote_tie_members = ["1VoteA", "1VoteZ"]
 
+        # an owner tag next to a mention and an event that link other actors;
+        # only the owner tag counts as attribution
+        add_tag("1Linked", "New Name", c50, "gambling", "rebrand_new")
+        add_tag("1Linked", "Forum post", c20, "gambling", "dice_c", tag_type="mention")
+        add_tag(
+            "1Linked", "Ransom paid", c50, "ransomware", "locker_d", tag_type="event"
+        )
+        add_tag("1LinkedM", "Forum post", c20, "gambling", "dice_c", tag_type="mention")
+        linked_members = ["1Linked", "1LinkedM"]
+
         for table, cid, members in (
+            ("address_cluster_mapping", CLUSTER_LINKED, linked_members),
             ("address_cluster_mapping", CLUSTER_TIE, tie_members),
             ("address_cluster_mapping", CLUSTER_GAMBLING, gambling_members),
             ("address_cluster_mapping", CLUSTER_OVERRIDE, override_members),
@@ -321,6 +342,10 @@ async def test_actor_conflicts_and_groups(rc_db):
     assert "1SubService" not in by_addr
     assert "1Nested" not in by_addr
 
+    # mentions and events link actors but do not attribute the address
+    assert "1Linked" not in by_addr
+    assert CLUSTER_LINKED not in clusters
+
     # the exchange_b tag on 1Multi is private
     public_only = await _detect(
         rc_db, ranking=False, clustering="legacy", groups=["public"]
@@ -389,6 +414,37 @@ def test_cli_ranking_conflicts(rc_db, tmp_path):
     header, *lines = res.stdout.splitlines()
     assert header.startswith("level,network,clustering,cluster_id")
     assert any("1Multi" in line for line in lines)
+
+
+async def test_actor_lists_count_actor_tags_only(rc_db):
+    # as in the tag summary, a mention's or event's actor is no attribution
+    db = TagstoreDbAsync.from_url(rc_db["async_url"])
+    groups = ["public", "private"]
+    try:
+        single = await db.get_actors_by_subjectid("1Linked", groups)
+        batch = await db.get_actors_by_subjectids(["1Linked", "1LinkedM"], groups)
+        cluster = await db.get_actors_by_clusterid(CLUSTER_LINKED, "BTC", groups)
+        clusters = await db.get_actors_for_clusters([CLUSTER_LINKED], "BTC", groups)
+    finally:
+        await db.engine.dispose()
+    assert [a.id for a in single] == ["rebrand_new"]
+    assert {k: [a.id for a in v] for k, v in batch.items()} == {
+        "1Linked": ["rebrand_new"]
+    }
+    assert [a.id for a in cluster] == ["rebrand_new"]
+    assert [a.id for a in clusters[CLUSTER_LINKED]] == ["rebrand_new"]
+
+    # with the tag summary's filter switched off, every tag's actor is listed
+    db = TagstoreDbAsync.from_url(rc_db["async_url"])
+    db.only_actor_tags_in_actor_lists = False
+    try:
+        single = await db.get_actors_by_subjectid("1Linked", groups)
+        clusters = await db.get_actors_for_clusters([CLUSTER_LINKED], "BTC", groups)
+    finally:
+        await db.engine.dispose()
+    everyone = ["dice_c", "locker_d", "rebrand_new"]
+    assert sorted(a.id for a in single) == everyone
+    assert sorted(a.id for a in clusters[CLUSTER_LINKED]) == everyone
 
 
 async def test_best_cluster_tag_tie_break(rc_db):

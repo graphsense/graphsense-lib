@@ -701,8 +701,21 @@ def _get_similar_tag_labels_view_stmt(query: str, limit: int, groups: List[str])
     )
 
 
-def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
-    return (
+# Actors lists count the same tags as the tag summary's actor: with
+# `only_actor_tags` (REST: tag_summary_only_propagate_high_confidence_actors,
+# on by default) actor-type tags only. A mention or event names whom the label
+# refers to, not who controls the address.
+ACTOR_TAG_TYPE = "actor"
+
+
+def _only_actor_tags(stmt, only_actor_tags: bool):
+    return stmt.where(Tag.tag_type_id == ACTOR_TAG_TYPE) if only_actor_tags else stmt
+
+
+def _get_actors_for_subject_stmt(
+    subject_id: str, groups: List[str], only_actor_tags: bool = True
+):
+    stmt = (
         select(Actor.id, Actor.label)
         .where(Tag.identifier == subject_id)
         .where(Actor.id.isnot(None))
@@ -712,11 +725,14 @@ def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
         .order_by(Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
-def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[str]):
+def _get_actors_for_clusterid_stmt(
+    cluster_id: int, network: int, groups: List[str], only_actor_tags: bool = True
+):
     AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
-    return (
+    stmt = (
         select(Actor.id, Actor.label)
         .where(AddressClusterMap.gs_cluster_id == cluster_id)
         .where(AddressClusterMap.address == Tag.identifier)
@@ -728,14 +744,19 @@ def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[s
         .order_by(Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
 def _get_actors_for_clusterids_batch_stmt(
-    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
+    cluster_ids: List[int],
+    network: str,
+    groups: List[str],
+    fresh: bool,
+    only_actor_tags: bool = True,
 ):
     # Raw ids of one regime; see _routed_id_batches.
     AddressClusterMap, _, _ = _cluster_models(fresh)
-    return (
+    stmt = (
         select(AddressClusterMap.gs_cluster_id, Actor.id, Actor.label)
         .where(AddressClusterMap.gs_cluster_id.in_(cluster_ids))
         .where(AddressClusterMap.address == Tag.identifier)
@@ -747,10 +768,13 @@ def _get_actors_for_clusterids_batch_stmt(
         .order_by(AddressClusterMap.gs_cluster_id, Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
-def _get_actors_for_subjects_batch_stmt(identifiers: List[str], groups: List[str]):
-    return (
+def _get_actors_for_subjects_batch_stmt(
+    identifiers: List[str], groups: List[str], only_actor_tags: bool = True
+):
+    stmt = (
         select(Tag.identifier, Actor.id, Actor.label)
         .where(Tag.identifier.in_(identifiers))
         .where(Actor.id.isnot(None))
@@ -760,6 +784,7 @@ def _get_actors_for_subjects_batch_stmt(identifiers: List[str], groups: List[str
         .order_by(Tag.identifier, Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
 def _get_labels_by_subjectid_stmt(subject_id: str, groups: List[str]):
@@ -861,8 +886,12 @@ def _inject_session(f):
 class TagstoreDbAsync:
     engine = None
 
-    def __init__(self, engine):
+    def __init__(self, engine, only_actor_tags_in_actor_lists: bool = True):
         self.engine = engine
+        # Actors lists of addresses and clusters: actor-type tags only, like
+        # the tag summary (see _only_actor_tags). REST sets it from
+        # tag_summary_only_propagate_high_confidence_actors.
+        self.only_actor_tags_in_actor_lists = only_actor_tags_in_actor_lists
 
     @staticmethod
     def from_url(db_url):
@@ -972,7 +1001,11 @@ class TagstoreDbAsync:
         self, subject_id: str, groups: List[str], session=None
     ) -> List[HumanReadableId]:
         results = await session.exec(
-            _get_actors_for_subject_stmt(_normalize_subject_id(subject_id), groups)
+            _get_actors_for_subject_stmt(
+                _normalize_subject_id(subject_id),
+                groups,
+                self.only_actor_tags_in_actor_lists,
+            )
         )
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
 
@@ -987,7 +1020,9 @@ class TagstoreDbAsync:
             return {}
         by_norm = _normalize_subject_ids(subject_ids)
         results = await session.exec(
-            _get_actors_for_subjects_batch_stmt(list(by_norm), groups)
+            _get_actors_for_subjects_batch_stmt(
+                list(by_norm), groups, self.only_actor_tags_in_actor_lists
+            )
         )
         out: Dict[str, List[HumanReadableId]] = {}
         for identifier, idt, lbl in results:
@@ -1163,7 +1198,9 @@ class TagstoreDbAsync:
         if not is_representable_entity_id(int(cluster_id)):
             return []
         results = await session.exec(
-            _get_actors_for_clusterid_stmt(cluster_id, network, groups)
+            _get_actors_for_clusterid_stmt(
+                cluster_id, network, groups, self.only_actor_tags_in_actor_lists
+            )
         )
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
 
@@ -1269,7 +1306,13 @@ class TagstoreDbAsync:
             if not raw_ids:
                 continue
             results = await session.exec(
-                _get_actors_for_clusterids_batch_stmt(raw_ids, network, groups, fresh)
+                _get_actors_for_clusterids_batch_stmt(
+                    raw_ids,
+                    network,
+                    groups,
+                    fresh,
+                    self.only_actor_tags_in_actor_lists,
+                )
             )
             for cid, idt, lbl in results:
                 out.setdefault(cid + shift, []).append(

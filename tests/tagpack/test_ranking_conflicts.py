@@ -303,6 +303,19 @@ def test_address_actor_conflict_and_relations():
     assert address_actor_conflict("BTC", ADDR, tags, allow) is None
 
 
+def test_address_actor_conflict_counts_actor_tags_only():
+    # a mention or event names whom its label refers to, not the owner
+    tags = [
+        tag("Exchange A", 90, actor="exchange_a", category="exchange"),
+        tag("Forum post about Dice B", 20, actor="dice_b", tag_type="mention"),
+        tag("Ransom paid to Locker C", 50, actor="locker_c", tag_type="event"),
+    ]
+    assert address_actor_conflict("BTC", ADDR, tags) is None
+    tags.append(tag("Exchange D", 70, actor="exchange_d", category="exchange"))
+    f = address_actor_conflict("BTC", ADDR, tags)
+    assert sorted(a.actor for a in f.actors) == ["exchange_a", "exchange_d"]
+
+
 def test_sub_service_is_no_conflict_and_not_hidden():
     # the address's exchange tag names the parent; a stronger tag names its
     # sub-service, which therefore wins the summary
