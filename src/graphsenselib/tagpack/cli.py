@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import time
+from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Pool, cpu_count
 
 import click
@@ -655,6 +656,58 @@ def _sync_impl(
         logger.error(f"Repos to sync file {repos} does not exist.")
 
 
+def _validate_tagpack_file(
+    tagpack_file, headerfile_dir, schema, taxonomies, no_address_validation, use_pyyaml
+) -> set:
+    """Load and validate one tagpack file; returns the actors it references.
+    Raises ValidationError / TagPackFileError if the pack is invalid."""
+    tagpack = TagPack.load_from_file(
+        tagpack_file, tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
+    )
+    logger.info(f"Validating {tagpack_file}")
+    tagpack.validate()
+    # verify valid blocknetwork addresses using internal checksum
+    if not no_address_validation:
+        tagpack.verify_addresses()
+    actors = set()
+    header_actor = tagpack.all_header_fields.get("actor")
+    if header_actor:
+        actors.add(header_actor)
+    for tag in tagpack.tags:
+        tag_actor = tag.all_fields.get("actor")
+        if tag_actor:
+            actors.add(tag_actor)
+    return actors
+
+
+# Per-process state of the parallel validation (set once per worker).
+_validation_worker_args: tuple = ()
+
+
+def _init_validation_worker(schema, taxonomies, no_address_validation, use_pyyaml):
+    global _validation_worker_args
+    _validation_worker_args = (schema, taxonomies, no_address_validation, use_pyyaml)
+
+
+def _validate_tagpack_file_in_worker(item):
+    """(actors, None) or (set(), error message); errors are returned, not
+    raised, so one invalid pack does not stop the others."""
+    tagpack_file, headerfile_dir = item
+    schema, taxonomies, no_address_validation, use_pyyaml = _validation_worker_args
+    try:
+        actors = _validate_tagpack_file(
+            tagpack_file,
+            headerfile_dir,
+            schema,
+            taxonomies,
+            no_address_validation,
+            use_pyyaml,
+        )
+        return actors, None
+    except (ValidationError, TagPackFileError) as e:
+        return set(), str(e)
+
+
 def validate_tagpack(
     config,
     path,
@@ -663,8 +716,11 @@ def validate_tagpack(
     strict_actor_references=True,
     actorpack_path=None,
     use_pyyaml=False,
+    jobs=1,
 ):
     t0 = time.time()
+    if jobs < 1:
+        jobs = os.cpu_count() or 1
     logger.info("TagPack validation starts")
     logger.info(f"Path: {path}")
 
@@ -710,80 +766,78 @@ def validate_tagpack(
     unique_known_actors = set()
     unique_unknown_actors = {}  # {actor: [(similar_id, score), ...]}
 
+    def check_actors(tagpack_file, actors_to_check) -> bool:
+        """Resolve a pack's actors; False if strict mode rejects the pack."""
+        file_ok = True
+        for actor in actors_to_check:
+            if actorpack.resolve_actor(actor) is not None:
+                unique_known_actors.add(actor)
+                continue
+            if actor not in unique_unknown_actors:
+                similar = find_similar_actors(
+                    actor, existing_actor_ids, similarity_threshold
+                )
+                unique_unknown_actors[actor] = similar
+                msg = f"  Actor '{actor}' NOT FOUND in actorpack"
+                if similar:
+                    suggestions = ", ".join(
+                        [f"{sid} ({score}%)" for sid, score in similar[:3]]
+                    )
+                    msg += f" (existing actors with similar names: {suggestions})"
+                else:
+                    msg += " (no existing actors with similar names found)"
+                if strict_actor_references:
+                    logger.error(msg)
+                else:
+                    logger.warning(msg)
+            if strict_actor_references:
+                file_ok = False
+        if not file_ok:
+            logger.error(
+                f"FAILED: {tagpack_file} - Actor validation failed in strict mode"
+            )
+        return file_ok
+
+    work = [
+        (tagpack_file, headerfile_dir)
+        for headerfile_dir, files in tagpack_files.items()
+        for tagpack_file in files
+    ]
+    check = check_actor_references and actorpack is not None
     no_passed = 0
-    try:
-        for headerfile_dir, files in tagpack_files.items():
-            for tagpack_file in files:
-                strict_file_failed = False
-                tagpack = TagPack.load_from_file(
+    if jobs == 1:
+        # Sequential: stops at the first pack that fails validation.
+        try:
+            for tagpack_file, headerfile_dir in work:
+                actors = _validate_tagpack_file(
                     tagpack_file,
-                    tagpack_file,
+                    headerfile_dir,
                     schema,
                     taxonomies,
-                    headerfile_dir,
+                    no_address_validation,
                     use_pyyaml,
                 )
-
-                logger.info(f"Validating {tagpack_file}")
-
-                tagpack.validate()
-                # verify valid blocknetwork addresses using internal checksum
-                if not no_address_validation:
-                    tagpack.verify_addresses()
-
-                # Check actors if enabled
-                if check_actor_references and actorpack:
-                    # Collect actors from header level and tag level
-                    actors_to_check = set()
-                    header_actor = tagpack.all_header_fields.get("actor")
-                    if header_actor:
-                        actors_to_check.add(header_actor)
-                    for tag in tagpack.tags:
-                        tag_actor = tag.all_fields.get("actor")
-                        if tag_actor:
-                            actors_to_check.add(tag_actor)
-
-                    for actor in actors_to_check:
-                        resolved = actorpack.resolve_actor(actor)
-                        if resolved is None:
-                            # Unknown actor
-                            if actor not in unique_unknown_actors:
-                                similar = find_similar_actors(
-                                    actor, existing_actor_ids, similarity_threshold
-                                )
-                                unique_unknown_actors[actor] = similar
-                                msg = f"  Actor '{actor}' NOT FOUND in actorpack"
-
-                                if similar:
-                                    suggestions = ", ".join(
-                                        [
-                                            f"{sid} ({score}%)"
-                                            for sid, score in similar[:3]
-                                        ]
-                                    )
-                                    msg += f" (existing actors with similar names: {suggestions})"
-                                else:
-                                    msg += (
-                                        " (no existing actors with similar names found)"
-                                    )
-                                if strict_actor_references:
-                                    logger.error(msg)
-                                else:
-                                    logger.warning(msg)
-                            if strict_actor_references:
-                                strict_file_failed = True
-                        else:
-                            unique_known_actors.add(actor)
-
-                if strict_file_failed:
-                    logger.error(
-                        f"FAILED: {tagpack_file} - Actor validation failed in strict mode"
-                    )
-                else:
+                if not check or check_actors(tagpack_file, actors):
                     logger.info(f"PASSED: {tagpack_file}")
                     no_passed += 1
-    except (ValidationError, TagPackFileError) as e:
-        logger.error(f"FAILED: {e}")
+        except (ValidationError, TagPackFileError) as e:
+            logger.error(f"FAILED: {e}")
+    else:
+        # Parallel: every pack is validated, every failure reported. Results
+        # are consumed in input order, so the log reads like a sequential run.
+        logger.info(f"Validating with {jobs} worker processes")
+        with ProcessPoolExecutor(
+            max_workers=jobs,
+            initializer=_init_validation_worker,
+            initargs=(schema, taxonomies, no_address_validation, use_pyyaml),
+        ) as pool:
+            results = pool.map(_validate_tagpack_file_in_worker, work, chunksize=1)
+            for (tagpack_file, _), (actors, error) in zip(work, results):
+                if error is not None:
+                    logger.error(f"FAILED: {error}")
+                elif not check or check_actors(tagpack_file, actors):
+                    logger.info(f"PASSED: {tagpack_file}")
+                    no_passed += 1
 
     failed = no_passed < n_tagpacks
 
@@ -1131,6 +1185,17 @@ def tagpack():
     is_flag=True,
     help="Use PyYAML instead of rapidyaml for YAML parsing",
 )
+@click.option(
+    "--jobs",
+    "-j",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Validate this many packs in parallel (0 = one per CPU). With 1 the "
+    "run stops at the first invalid pack; with more, every pack is validated "
+    "and every failure reported. Each process holds one pack in memory, up to "
+    "1-2 GB for packs of several 100k tags, so prefer a small number locally.",
+)
 @click.pass_context
 def validate_tagpack_cli(
     ctx,
@@ -1140,6 +1205,7 @@ def validate_tagpack_cli(
     strict_actor_references,
     actorpack_path,
     use_pyyaml,
+    jobs,
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
@@ -1151,6 +1217,7 @@ def validate_tagpack_cli(
         strict_actor_references,
         actorpack_path,
         use_pyyaml,
+        jobs,
     )
 
 
