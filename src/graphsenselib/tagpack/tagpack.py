@@ -755,11 +755,15 @@ class TagPack(object):
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
 
-        # Check first 4KB for !include directives
+        # the whole file: an include missed here would reach the fast loader,
+        # which leaves tags to a PyYAML without the include constructor
         with open(pathname, "rb") as f:
-            has_include = b"!include" in f.read(4096)
+            has_include = b"!include" in f.read()
 
-        if use_pyyaml or header_dir is not None or has_include:
+        # The fast loader reads files as PyYAML does (see load_yaml_fast);
+        # PyYAML itself is needed only to resolve includes. A header
+        # directory alone no longer means PyYAML.
+        if use_pyyaml or has_include:
             # Resolution order:
             #   1. explicit `header_dir` (batch path via collect_tagpack_files);
             #   2. the tagpack repo root inferred by walking up from the file;

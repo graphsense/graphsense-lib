@@ -65,40 +65,38 @@ on a laptop.
 
 ### How TagPack files are parsed <a name="yaml-parsers"></a>
 
-Two YAML parsers read TagPack files, the same way for `validate` and for
-`insert`/`sync`:
+TagPack files are read with **rapidyaml** (fast) if it is installed, for
+`validate` as for `insert`/`sync`. Only packs with an `!include` and runs with
+`--use-pyyaml` use **PyYAML**. Both give the same result: rapidyaml only
+parses, and every unquoted value is then interpreted with PyYAML's YAML 1.1
+rules, so `yes`/`no`, `~`, `.inf`, `2025-03-24` and so on mean the same in
+both. Quoted values and block scalars (`|`, `>`) are always text. Files with
+other YAML tags, merge keys (`<<`) or several documents, and files rapidyaml
+cannot parse, are handed to PyYAML.
 
-- **PyYAML** for every pack in a directory tree with a `header.yaml`, for packs
-  with an `!include`, and for all packs with `--use-pyyaml`.
-- **rapidyaml** (faster) for all other packs, if it is installed.
+One rule differs from plain YAML 1.1, in both loaders: an unquoted `0x…` stays
+text (an address or hash), where YAML 1.1 would read a hexadecimal number.
 
-They read most files identically, but not all. rapidyaml hands its result over
-as JSON, which changes some unquoted values:
+Still, quote every string that is not plain text (addresses, hashes, labels
+that look like numbers): an unquoted `1_000`, `012` or `1.5` is a number,
+as in any YAML 1.1 reader. Compare a pack with `validate` and `validate --use-pyyaml`.
 
-| In the file (unquoted) | PyYAML | rapidyaml |
+**Older graphsense-lib versions** read files differently: PyYAML for every
+pack in a directory tree with a `header.yaml`, rapidyaml (through JSON) for
+all others, and that rapidyaml path differed from PyYAML for some unquoted
+values. Tags inserted by those versions from packs without a `header.yaml`
+may carry these readings:
+
+| In the file (unquoted) | PyYAML | old rapidyaml path |
 | --- | --- | --- |
-| `12E34` or `12e345678` (digits with an `e`, no dot) | text `"12E34"` | a number, or `inf` if too large |
-| `inf`, `nan` | text `"inf"`, `"nan"` | text `".inf"`, `".nan"` |
-| `.inf`, `.nan` | the float `inf`, `nan` | text `".inf"`, `".nan"` |
+| `12E34` or `12e345678` (digits with an `e`, no dot) | text | a number, or `inf` |
+| `inf`, `nan` / `.inf`, `.nan` | text / float | text `".inf"`, `".nan"` |
 | `yes`, `no`, `on`, `off` | `True` / `False` | text |
-| `0x1A`, `012`, `1_000` | the numbers 26, 10, 1000 | text |
+| `012`, `1_000` | the numbers 10, 1000 | text |
+| `0x1A` | the number 26 (now text in both) | text |
 | `~` | `None` | text `"~"` |
-| an alias `*id001` (written by `yaml.dump` for repeated lists or dicts) | the anchored value | the text `"*id001"` |
-| `'2025-03-24'` (a quoted date) | text (`lastmod`: read as midnight that day) | a date |
-
-Unquoted `true`/`false`, `null` and `YYYY-MM-DD` dates are read the same by
-both. A comparison over a large repository also found a few `context` fields
-whose JSON text differed; the cause is not yet known.
-
-To make a pack read the same by both parsers:
-
-- quote every string that is not plain text, in particular addresses, hashes
-  and labels that look like numbers;
-- write booleans as `true`/`false`;
-- generators: dump without anchors, e.g. with a `yaml.SafeDumper` subclass
-  whose `ignore_aliases` returns `True`.
-
-Check a pack with both: `validate` and `validate --use-pyyaml` must agree.
+| an alias `*id001` | the anchored value | the text `"*id001"` |
+| `'2025-03-24'` (a quoted date) | text | a date |
 
 ## Actors for tags and TagPacks
 

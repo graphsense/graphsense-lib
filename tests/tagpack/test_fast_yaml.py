@@ -75,72 +75,72 @@ class TestLoadYamlFast:
         assert "label" in str(exc_info.value)
 
 
+# Every value the old JSON-based fast loader read differently from PyYAML.
+SAME_AS_PYYAML = {
+    "digits with an exponent": "a: 12E34\nb: 38e1618118121767477645871397668758\n",
+    "inf and nan": "a: inf\nb: .inf\nc: nan\nd: .NaN\ne: -.inf\n",
+    "aliases": "x: &id001\n- one\n- two\ny: *id001\nz: {c: *id001}\n",
+    "booleans": "a: yes\nb: 'yes'\nc: true\nd: On\ne: NO\nf: off\n",
+    "numbers": "a: 0x1A\nb: 012\nc: 1_000\nd: '0x1A'\ne: 0b101\nf: 1:30\n",
+    "nulls": "a: ~\nb: null\nc:\nd: ''\n",
+    "dates": "a: '2025-03-24'\nb: 2025-03-24\nc: 2025-03-24 10:00:00\n"
+    "d: 2025-03-24T10:00:00Z\n",
+    "floats": "a: 1.5\nb: -3\nc: 1e3\nd: 1.5e3\n",
+    "block scalars": 'a: |\n  12E34\n  yes\nb: >\n  folded\n  text\nc: "x\\ty"\n',
+    "json text": 'a: \'{"name": "caf\\u00e9", "v": 1.0}\'\n',
+    "non-string keys": "1: one\nfalse: f\n'2': two\n",
+    "sequences": "- a\n- 1\n- [x, 2]\n- {k: v}\n",
+    "scalar document": "plain text\n",
+    "empty document": "",
+    "explicit tag": "a: !!str 12\n",
+}
+
+
+@pytest.mark.parametrize("text", SAME_AS_PYYAML.values(), ids=SAME_AS_PYYAML.keys())
+def test_fast_loader_reads_as_pyyaml(tmp_path, text):
+    yaml_file = tmp_path / "pack.yaml"
+    yaml_file.write_text(text, encoding="utf-8")
+    fast = load_yaml_fast(str(yaml_file))
+    slow = yaml.load(text, UniqueKeyLoader)
+    assert repr(fast) == repr(slow)  # repr: also the types (1 vs True vs '1')
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "base: &b {x: 1}\nd:\n  <<: *b\n  y: 2\n",  # merge key
+        "a: =\n",  # value tag
+    ],
+)
+def test_fast_loader_leaves_errors_to_pyyaml(tmp_path, text):
+    yaml_file = tmp_path / "pack.yaml"
+    yaml_file.write_text(text)
+    with pytest.raises(yaml.YAMLError) as fast:
+        load_yaml_fast(str(yaml_file))
+    with pytest.raises(yaml.YAMLError) as slow:
+        yaml.load(text, UniqueKeyLoader)
+    assert type(fast.value) is type(slow.value)
+
+
 @pytest.mark.skipif(not RYML_AVAILABLE, reason="rapidyaml not installed")
-class TestYamlParserDifferences:
-    """Tests documenting the differences between PyYAML and rapidyaml.
+def test_fast_loader_does_not_parse_with_pyyaml(tmp_path, monkeypatch):
+    yaml_file = tmp_path / "pack.yaml"
+    yaml_file.write_text("a: yes\nb: 2025-03-24\nc: [1, '2']\n")
+    import graphsenselib.tagpack as tagpack_module
 
-    These tests document the intentional differences in behavior between the
-    two YAML parsers. The concept_mapping module handles both gracefully.
-    """
+    def no_pyyaml(*a, **k):
+        raise AssertionError("PyYAML parsed the file")
 
-    def test_yes_no_parsing_differs(self, tmp_path):
-        """Document that yes/no are parsed differently by the two loaders.
-
-        - PyYAML SafeLoader: yes/no -> True/False (YAML 1.1 behavior)
-        - rapidyaml: yes/no -> "yes"/"no" (keeps as strings)
-        """
-        yaml_content = "value_yes: yes\nvalue_no: no\n"
-        yaml_file = tmp_path / "yesno.yaml"
-        yaml_file.write_text(yaml_content)
-
-        # rapidyaml keeps as strings
-        rapid_result = load_yaml_fast(str(yaml_file))
-        assert rapid_result["value_yes"] == "yes"
-        assert rapid_result["value_no"] == "no"
-        assert isinstance(rapid_result["value_yes"], str)
-
-        # PyYAML converts to booleans
-        with open(yaml_file, "r") as f:
-            pyyaml_result = yaml.load(f, UniqueKeyLoader)
-        assert pyyaml_result["value_yes"] is True
-        assert pyyaml_result["value_no"] is False
-
-    def test_date_parsing_matches_pyyaml(self, tmp_path):
-        """Verify that dates are parsed the same by both loaders.
-
-        Both convert YYYY-MM-DD -> datetime.date object
-        """
-        yaml_content = "lastmod: 2021-04-21\nother: 2023-12-25\n"
-        yaml_file = tmp_path / "date.yaml"
-        yaml_file.write_text(yaml_content)
-
-        rapid_result = load_yaml_fast(str(yaml_file))
-        with open(yaml_file, "r") as f:
-            pyyaml_result = yaml.load(f, UniqueKeyLoader)
-
-        # Both should produce date objects
-        assert rapid_result["lastmod"] == date(2021, 4, 21)
-        assert rapid_result["other"] == date(2023, 12, 25)
-        assert isinstance(rapid_result["lastmod"], date)
-
-        # And match PyYAML exactly
-        assert rapid_result == pyyaml_result
-
-    def test_true_false_parsed_same(self, tmp_path):
-        """Verify that true/false are parsed the same by both loaders."""
-        yaml_content = "bool_true: true\nbool_false: false\n"
-        yaml_file = tmp_path / "bool.yaml"
-        yaml_file.write_text(yaml_content)
-
-        rapid_result = load_yaml_fast(str(yaml_file))
-        with open(yaml_file, "r") as f:
-            pyyaml_result = yaml.load(f, UniqueKeyLoader)
-
-        # Both should produce booleans for true/false
-        assert rapid_result["bool_true"] is True
-        assert rapid_result["bool_false"] is False
-        assert pyyaml_result["bool_true"] is True
-        assert pyyaml_result["bool_false"] is False
+    monkeypatch.setattr(
+        tagpack_module.yaml if hasattr(tagpack_module, "yaml") else yaml,
+        "load",
+        no_pyyaml,
+    )
+    assert load_yaml_fast(str(yaml_file)) == {
+        "a": True,
+        "b": date(2025, 3, 24),
+        "c": [1, "2"],
+    }
 
 
 class TestPyYamlFallback:
@@ -212,3 +212,57 @@ class TestRapidyamlFallback:
         yaml_file.write_text("title: a\ntitle: b\n")
         with pytest.raises(Exception, match="title"):
             load_yaml_fast(str(yaml_file))
+
+
+HEADER = "title: T\ncreator: C\nsource: http://example.com\ncurrency: BTC\n"
+TAGS = "tags:\n- address: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\n  label: x\n"
+
+
+@pytest.fixture
+def pack_args():
+    pytest.importorskip("yaml_include")
+    from graphsenselib.tagpack.cli import DEFAULT_CONFIG
+    from graphsenselib.tagpack.tagpack_schema import TagPackSchema
+    from graphsenselib.tagpack.taxonomy import _load_taxonomies
+
+    return TagPackSchema(), _load_taxonomies(DEFAULT_CONFIG)
+
+
+@pytest.mark.skipif(not RYML_AVAILABLE, reason="rapidyaml not installed")
+def test_pack_below_a_header_dir_uses_the_fast_loader(tmp_path, pack_args, monkeypatch):
+    from graphsenselib.tagpack.tagpack import TagPack
+
+    (tmp_path / "header.yaml").write_text(HEADER)
+    pack = tmp_path / "plain.yaml"
+    pack.write_text(HEADER + TAGS)
+
+    def no_pyyaml(*a, **k):
+        raise AssertionError("PyYAML parsed the pack")
+
+    monkeypatch.setattr(yaml, "load", no_pyyaml)
+    tagpack = TagPack.load_from_file(None, str(pack), *pack_args, str(tmp_path))
+    assert tagpack.contents["title"] == "T"
+
+
+def test_include_after_the_first_4kb_is_resolved(tmp_path, pack_args):
+    from graphsenselib.tagpack.tagpack import TagPack
+
+    (tmp_path / "header.yaml").write_text(HEADER)
+    pack = tmp_path / "late.yaml"
+    comments = "".join(
+        f"# comment {i:04d} padding padding padding\n" for i in range(200)
+    )
+    pack.write_text(comments + "header: !include header.yaml\n" + TAGS)
+    tagpack = TagPack.load_from_file(None, str(pack), *pack_args, str(tmp_path))
+    assert tagpack.contents["title"] == "T"
+
+
+def test_unquoted_hex_stays_text_in_both_loaders(tmp_path, monkeypatch):
+    text = "address: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\nn: 012\n"
+    yaml_file = tmp_path / "pack.yaml"
+    yaml_file.write_text(text)
+    expected = {"address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "n": 10}
+    assert yaml.load(text, UniqueKeyLoader) == expected
+    assert load_yaml_fast(str(yaml_file)) == expected
+    # plain PyYAML is not changed
+    assert yaml.load("a: 0x1A\n", yaml.SafeLoader) == {"a": 26}
