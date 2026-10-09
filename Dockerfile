@@ -15,8 +15,8 @@
 # line, the weekly docker updater opens a normal bump PR (tag for uv, digest
 # for temurin) and CI proves it before it reaches prod.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.12.19 AS uv
-FROM eclipse-temurin:11-jre-jammy@sha256:703b6fe9df7ce218567fbe59d2ecf7a5d5313000b6ff5c9d2c77a45b34ceda2d AS java11
+FROM ghcr.io/astral-sh/uv:0.12.24 AS uv
+FROM eclipse-temurin:11-jre-jammy@sha256:1adc4db6079f9a35c45f36b0907dd94232a0b9b409a4088a7fe0c77b14e99294 AS java11
 
 # =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
