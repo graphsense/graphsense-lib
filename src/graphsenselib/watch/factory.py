@@ -1,4 +1,5 @@
 import os
+import warnings
 
 from ..config import (
     ConfigError,
@@ -8,6 +9,7 @@ from ..config import (
 )
 from ..db import DbFactory
 from ..ingest.utxo import CassandraOutputResolver
+from . import WATCH_DEPRECATION_MESSAGE
 from .account import AccountNodeFlowProvider
 from .flatfile import JsonWatcherState, JsonWatchpointProvider
 from .logging import LoggingEventNotifier
@@ -17,6 +19,9 @@ from .watcher import FlowWatcher
 
 
 class FlowWatcherFactory:
+    def __init__(self):
+        warnings.warn(WATCH_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
+
     def file_based_from_config(
         self, env, currency, state_file, watchpoints_file
     ) -> FlowWatcher:

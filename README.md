@@ -608,7 +608,10 @@ graphsense-cli monitoring notify \
     --message "BTC ingestion completed"
 ```
 
-### Event Watching (Alpha)
+### Event Watching (Deprecated)
+
+> **Deprecated:** `graphsense-cli watch` will be removed in a release after
+> 2027-04-09.
 
 Watch for cryptocurrency events and generate notifications.
 
@@ -616,12 +619,12 @@ Watch for cryptocurrency events and generate notifications.
 # Show watch options
 graphsense-cli watch --help
 
-# Watch for money flows on specific addresses
+# Watch for money flows on the addresses listed in a watchpoints file
 graphsense-cli watch money-flows \
     -e dev \
     -c btc \
-    --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa \
-    --threshold 1000000  # satoshis
+    --watchpoints-file watchpoints.json \
+    --state-file watcher-state.json
 ```
 
 ### File Conversion Tools
