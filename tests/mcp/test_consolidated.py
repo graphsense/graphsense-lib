@@ -46,7 +46,7 @@ def stub_app_with_cluster() -> FastAPI:
             "status": "clean",
         }
 
-    @app.get("/{currency}/addresses/{address}/entity")
+    @app.get("/{currency}/addresses/{address}/cluster")
     async def _cluster(currency: str, address: str):
         return {
             "entity": 42,
@@ -97,14 +97,14 @@ def stub_app_with_cluster() -> FastAPI:
 
 @pytest.fixture
 def stub_app_no_cluster() -> FastAPI:
-    """Stub where /addresses/{addr}/entity returns 404."""
+    """Stub where /addresses/{addr}/cluster returns 404."""
     app = FastAPI()
 
     @app.get("/{currency}/addresses/{address}")
     async def _addr(currency: str, address: str):
         return {"address": address}
 
-    @app.get("/{currency}/addresses/{address}/entity")
+    @app.get("/{currency}/addresses/{address}/cluster")
     async def _cluster_missing(currency: str, address: str):
         raise HTTPException(status_code=404, detail="no cluster")
 
@@ -170,7 +170,7 @@ async def test_lookup_address_strips_legacy_fields(stub_app_with_cluster):
 
 
 async def test_lookup_address_tolerates_missing_cluster(stub_app_no_cluster):
-    """A 404 on /addresses/{addr}/entity must not fail the whole call;
+    """A 404 on /addresses/{addr}/cluster must not fail the whole call;
     `cluster` should be absent, and the base address body and
     `tag_summary` must still come back.
     """
@@ -1075,7 +1075,7 @@ def recording_tag_app() -> tuple[FastAPI, list[dict]]:
     async def _addr(currency: str, address: str):
         return {"address": address}
 
-    @app.get("/{currency}/addresses/{address}/entity")
+    @app.get("/{currency}/addresses/{address}/cluster")
     async def _cluster(currency: str, address: str):
         raise HTTPException(status_code=404, detail="no cluster")
 

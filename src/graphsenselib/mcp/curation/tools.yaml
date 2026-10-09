@@ -124,6 +124,7 @@ consolidated_tools:
     replaces:
       - get_address
       - get_address_entity
+      - get_address_cluster
       - get_tag_summary_by_address
       - list_related_addresses
     module: graphsenselib.mcp.tools.consolidated:register_lookup_address

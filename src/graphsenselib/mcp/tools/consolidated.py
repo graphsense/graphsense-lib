@@ -350,7 +350,7 @@ def register_lookup_address(mcp, app, stack) -> None:
                 # some non-UTXO cases) — a 404 here must not fail the whole
                 # call, so we use the 404-tolerant variant.
                 cluster_body = await _get_json_optional(
-                    client, f"/{currency}/addresses/{address}/entity"
+                    client, f"/{currency}/addresses/{address}/cluster"
                 )
                 if cluster_body is not None:
                     result["cluster"] = _slim(_strip_cluster_legacy(cluster_body))
