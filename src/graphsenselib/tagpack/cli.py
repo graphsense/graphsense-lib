@@ -2633,15 +2633,28 @@ def _run_on_async_tagstore(ctx, fn):
     """Run ``fn(TagstoreDbAsync)`` against the quality group's --url/--schema."""
     import asyncio
 
-    from graphsenselib.tagstore.db.database import get_db_engine_async
+    from graphsenselib.tagstore.db.database import (
+        enable_tcp_keepalive,
+        get_db_engine_async,
+    )
     from graphsenselib.tagstore.db.queries import TagstoreDbAsync
 
     url = ctx.obj["url"]
     for prefix in ("postgresql://", "postgres://", "postgresql+psycopg2://"):
         if url.startswith(prefix):
             url = "postgresql+asyncpg://" + url[len(prefix) :]
-    engine = get_db_engine_async(
-        url, connect_args={"server_settings": {"search_path": ctx.obj["schema"]}}
+    # Quality runs hold pooled connections idle through long client-side
+    # phases. pool_pre_ping replaces one that died meanwhile (e.g. over a VPN
+    # outage), and keepalive fails a dead one mid-query instead of hanging.
+    engine = enable_tcp_keepalive(
+        get_db_engine_async(
+            url,
+            pool_pre_ping=True,
+            connect_args={
+                "server_settings": {"search_path": ctx.obj["schema"]},
+                "timeout": 30,
+            },
+        )
     )
 
     async def run():
