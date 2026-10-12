@@ -93,13 +93,15 @@ def _raise_backend_http_error(response: httpx.Response, path: str) -> None:
     `graphsenselib.mcp` (see `web/app.py:setup_logging`) then picks up
     the 5xx records but stays quiet for 4xx — those are model-side
     mistakes (`tx not found`, `bad address`, ...) and would just be
-    noise.
+    noise. 501 stays quiet too: the external backend of a lite network
+    answers it by contract for features it does not offer (clusters,
+    neighbors; see `/capabilities`), so it is no incident either.
     """
     try:
         detail = response.json().get("detail")
     except Exception:
         detail = response.text
-    if response.status_code >= 500:
+    if response.status_code >= 500 and response.status_code != 501:
         logger.error(
             "graphsense backend returned HTTP %d for %s: %s | User: %s",
             response.status_code,
@@ -128,14 +130,15 @@ async def _get_json_optional(
     path: str,
     params: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Like _get_json, but returns None on 404 instead of raising.
+    """Like _get_json, but returns None on 404 and 501 instead of raising.
 
     Use when the absence of a resource is a valid, expected outcome —
     e.g. an address that has no cluster association shouldn't fail the
-    whole lookup_address call.
+    whole lookup_address call. 501 is the same outcome on a lite network
+    whose external backend does not offer the feature (no clusters on EVM).
     """
     response = await client.get(path, params=params)
-    if response.status_code == 404:
+    if response.status_code in (404, 501):
         return None
     if response.status_code >= 400:
         _raise_backend_http_error(response, path)
