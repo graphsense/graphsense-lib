@@ -7,6 +7,7 @@ from collections import Counter
 from functools import reduce
 from typing import Callable, Iterator, Optional, Union, List
 
+import base58
 from bitarray import bitarray
 from bitarray.util import ba2int
 from graphsenselib.utils.bch import InvalidAddress as BCHInvalidAddress
@@ -18,7 +19,11 @@ from .accountmodel import (
     is_hex_string,
     strip_0x,
 )
-from .bch import bch_address_to_legacy, try_bch_address_to_legacy
+from .bch import (
+    bch_address_to_legacy,
+    checked_bch_address_to_legacy,
+    try_bch_address_to_legacy,
+)
 from .tron import (
     evm_to_tron_address_string,
     tron_address_to_evm,
@@ -323,9 +328,37 @@ def address_to_str(network: str, address: bytes) -> str:
         raise ValueError("No address converter configured for network {network}")
 
 
+# Uppercase bech32 human-readable parts per network. BIP173 allows an
+# all-uppercase address (QR codes use it); the stored form is lowercase.
+_UPPERCASE_BECH32_PREFIXES = {
+    "btc": ("BC1", "TB1", "BCRT1"),
+    "ltc": ("LTC1", "TLTC1", "RLTC1"),
+}
+
+_TRX_HEX_ADDRESS = re.compile(r"41[0-9a-fA-F]{40}")
+
+
+def _trx_address_to_bytes(address: str) -> bytes:
+    """User-supplied TRX address (base58 ``T…`` or hex ``41…``) to its stored
+    bytes, verifying the base58 checksum (which also rejects a truncated or
+    extended string) and, on a full-length address, the 0x41 prefix."""
+    if _TRX_HEX_ADDRESS.fullmatch(address):
+        return bytes.fromhex(address[2:])
+    raw = base58.b58decode(address)
+    if len(raw) < 5 or (len(raw) == 25 and raw[0] != 0x41):
+        raise ValueError(f"{address} is not a TRX address")
+    return tron_address_to_evm(address, validate=True)
+
+
 def cannonicalize_address(currency, address: str):
     if currency == "trx":
-        return tron_address_to_evm(address, validate=False)
+        return _trx_address_to_bytes(address)
+    elif currency in _UPPERCASE_BECH32_PREFIXES and isinstance(address, str):
+        if address.isupper() and address.startswith(
+            _UPPERCASE_BECH32_PREFIXES[currency]
+        ):
+            return address.lower()
+        return address
     elif currency == "bch":
         return try_bch_address_to_legacy(address)
     elif currency == "eth":
@@ -618,15 +651,13 @@ def validate_bch_address(address: str) -> bool:
     if not address:
         return False
 
-    # CashAddr format
-    if ":" in address:
-        try:
-            from graphsenselib.utils.bch import bch_address_to_legacy
-
-            bch_address_to_legacy(address)
-            return True
-        except Exception:
-            return False
+    # CashAddr format, with or without the bitcoincash: prefix
+    try:
+        legacy = checked_bch_address_to_legacy(address)
+    except BCHInvalidAddress:
+        return False
+    if legacy != address:
+        return True
 
     # Legacy format
     return base58_check_validate(address)

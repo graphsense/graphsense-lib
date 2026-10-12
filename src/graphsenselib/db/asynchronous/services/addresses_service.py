@@ -6,6 +6,7 @@ from graphsenselib.datatypes.common import NodeType
 from graphsenselib.db.asynchronous.cassandra import MAX_ROW_LOOKUP_CONCURRENCY
 from graphsenselib.errors import (
     AddressNotFoundException,
+    BadUserInputException,
     NetworkNotFoundException,
     ClusterNotFoundException,
     DBInconsistencyException,
@@ -13,7 +14,7 @@ from graphsenselib.errors import (
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.bch import (
     InvalidAddress as BCHInvalidAddress,
-    bch_address_to_legacy,
+    checked_bch_address_to_legacy,
 )
 from graphsenselib.utils.rest_utils import is_eth_like
 from graphsenselib.utils.tron import (
@@ -193,7 +194,7 @@ class AddressesService:
             other = b if network == a else a
 
             try:
-                lookup_address = bch_address_to_legacy(address)
+                lookup_address = checked_bch_address_to_legacy(address)
             except BCHInvalidAddress:
                 continue
 
@@ -495,10 +496,15 @@ class AddressesService:
         address = cannonicalize_address(currency, address)
 
         if isinstance(only_ids, list):
-            aws = [
-                self.db.get_address_id(currency, cannonicalize_address(currency, id))
-                for id in only_ids
-            ]
+            # A malformed id cannot match a neighbor: drop it like an
+            # unknown one instead of failing the whole request.
+            canonical_ids = []
+            for id in only_ids:
+                try:
+                    canonical_ids.append(cannonicalize_address(currency, id))
+                except BadUserInputException:
+                    continue
+            aws = [self.db.get_address_id(currency, id) for id in canonical_ids]
             only_ids = await asyncio.gather(*aws)
             only_ids = [id for id in only_ids if id is not None]
 
