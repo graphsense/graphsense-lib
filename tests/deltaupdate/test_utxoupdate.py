@@ -216,3 +216,42 @@ def test_zero_net_flow_counts_on_neither_side():
     assert len(rows) == 1
     assert rows[0].value == 0
     assert not rows[0].is_outgoing
+
+
+def _batch_address_delta():
+    rates = get_exchange_rates_per_block()
+    return [dbdelta_from_utxo_transaction(tx, rates[tx.block_id]) for tx in get_txs()]
+
+
+def test_merge_matches_pairwise_concat():
+    # merge() used to fold the per-tx deltas with concat(), which is quadratic;
+    # the one-pass version must produce the same merged delta.
+    from functools import reduce
+
+    per_tx = _batch_address_delta()
+    expected = reduce(lambda x, y: x.concat(y), per_tx).compress()
+    assert DbDelta.merge(per_tx) == expected
+
+
+def test_to_cluster_delta_leaves_address_delta_untouched():
+    # to_cluster_delta() builds re-keyed copies instead of deep-copying the
+    # whole batch; the address delta must stay exactly as it was, and the
+    # cluster delta must match the deep-copy result.
+    from copy import deepcopy
+
+    address_delta = DbDelta.merge(_batch_address_delta())
+    before = deepcopy(address_delta)
+    # Two clusters, so relations and entity updates merge on the cluster side.
+    addresses = sorted({u.identifier for u in address_delta.entity_updates})
+    cluster_of = {a: 1 + (i % 2) for i, a in enumerate(addresses)}
+
+    cluster_delta = address_delta.to_cluster_delta(cluster_of.__getitem__)
+
+    assert address_delta == before
+    reference = deepcopy(before)
+    for u in reference.entity_updates + reference.new_entity_txs:
+        u.identifier = cluster_of[u.identifier]
+    for r in reference.relation_updates:
+        r.src_identifier = cluster_of[r.src_identifier]
+        r.dst_identifier = cluster_of[r.dst_identifier]
+    assert cluster_delta == reference.compress()

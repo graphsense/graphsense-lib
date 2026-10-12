@@ -350,33 +350,69 @@ class DbWriterMixin:
         nr_retries=100,
         initial_concurrency: int = 100,
         min_concurrency: int = 5,
+        chunk_size: int = 10_000,
     ) -> ApplyChangesResult:
-        """Apply db changes and return retry/warning metadata."""
-        statements = [
-            (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
-            for chng in changes
-        ]
-        unique_statements = {stmt for stmt, _ in statements}
+        """Apply db changes and return retry/warning metadata.
 
-        prepared_statements = {
-            stmt: self._db.get_prepared_statement(stmt) for stmt in unique_statements
-        }
+        Non-atomic changes are bound and written ``chunk_size`` at a time: a
+        bound statement plus the driver's per-statement bookkeeping costs a few
+        KB, so binding a whole batch up front held several GB per million
+        changes. An atomic set goes out as one batch, so it is bound at once.
+        """
+        prepared_statements = {}
 
-        change_stmts = [
-            prepared_statements[
-                chng.get_cql_statement(keyspace=self.get_keyspace())
-            ].bind(chng.data)
-            for chng in changes
-        ]
+        def bind(chng):
+            stmt = chng.get_cql_statement(keyspace=self.get_keyspace())
+            if stmt not in prepared_statements:
+                prepared_statements[stmt] = self._db.get_prepared_statement(stmt)
+            return prepared_statements[stmt].bind(chng.data)
+
+        if atomic:
+            chunks = [changes]
+        else:
+            chunks = (
+                changes[i : i + chunk_size] for i in range(0, len(changes), chunk_size)
+            )
 
         attempts_made = 0
         total_retry_wait_seconds = 0.0
-        # change_stmts are bound once above with literal values, so every
-        # attempt re-submits identical upserts (no Cassandra counters, no
-        # re-read). Retrying is therefore idempotent. Unavailable /
-        # NoHostAvailable are included so a recoverable database outage is
-        # waited out (bounded by stop_after_attempt) instead of aborting a
-        # half-flushed batch and leaving the keyspace inconsistent.
+        for chunk in chunks:
+            change_stmts = [bind(chng) for chng in chunk]
+            chunk_attempts, chunk_wait = self._execute_with_write_retries(
+                change_stmts, atomic, nr_retries, initial_concurrency, min_concurrency
+            )
+            attempts_made = max(attempts_made, chunk_attempts)
+            total_retry_wait_seconds += chunk_wait
+
+        warning_threshold = None
+        warning_text = None
+        if total_retry_wait_seconds > 30:
+            warning_threshold = "retry_wait_gt_30s"
+            warning_text = (
+                "Total retry wait time exceeded threshold: "
+                f"{total_retry_wait_seconds:.1f}s > 30.0s "
+                f"(attempts={attempts_made})"
+            )
+
+        return ApplyChangesResult(
+            attempts_made=attempts_made,
+            total_retry_wait_seconds=total_retry_wait_seconds,
+            warning_threshold=warning_threshold,
+            warning_text=warning_text,
+        )
+
+    def _execute_with_write_retries(
+        self, change_stmts, atomic, nr_retries, initial_concurrency, min_concurrency
+    ):
+        """Write one set of bound statements; return (attempts, retry wait s)."""
+        attempts_made = 0
+        retry_wait_seconds = 0.0
+        # change_stmts are bound once with literal values, so every attempt
+        # re-submits identical upserts (no Cassandra counters, no re-read).
+        # Retrying is therefore idempotent. Unavailable / NoHostAvailable are
+        # included so a recoverable database outage is waited out (bounded by
+        # stop_after_attempt) instead of aborting a half-flushed batch and
+        # leaving the keyspace inconsistent.
         for attempt in Retrying(
             retry=retry_if_exception_type(
                 (WriteTimeout, OperationTimedOut, Unavailable, NoHostAvailable)
@@ -405,26 +441,10 @@ class DbWriterMixin:
                     self._db.execute_statements(
                         change_stmts, concurrency=current_concurrency
                     )
-                total_retry_wait_seconds = max(
-                    total_retry_wait_seconds, float(attempt.retry_state.idle_for or 0.0)
+                retry_wait_seconds = max(
+                    retry_wait_seconds, float(attempt.retry_state.idle_for or 0.0)
                 )
-
-        warning_threshold = None
-        warning_text = None
-        if total_retry_wait_seconds > 30:
-            warning_threshold = "retry_wait_gt_30s"
-            warning_text = (
-                "Total retry wait time exceeded threshold: "
-                f"{total_retry_wait_seconds:.1f}s > 30.0s "
-                f"(attempts={attempts_made})"
-            )
-
-        return ApplyChangesResult(
-            attempts_made=attempts_made,
-            total_retry_wait_seconds=total_retry_wait_seconds,
-            warning_threshold=warning_threshold,
-            warning_text=warning_text,
-        )
+        return attempts_made, retry_wait_seconds
 
     def ensure_table_exists(
         self,
