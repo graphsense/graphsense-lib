@@ -209,10 +209,17 @@ class ParallelDbPool:
             initializer=_init_worker_signal_inert,
             initargs=(initializer, initargs),
         )
+        # Start every worker now, before submit() starts the executor's
+        # manager thread. Spawned on demand instead, submit() wakes that
+        # thread before it starts the new worker, so the thread can go back
+        # to waiting without watching it -- and if that worker then dies
+        # (e.g. OOM-killed) and no other result arrives, the pool never
+        # notices and future.result() waits forever.
+        self._executor._launch_processes()
         # Our own record of the worker processes, for abort(): the executor's
         # bookkeeping may already be cleared by the time a broken pool is
         # torn down.
-        self._workers = {}
+        self._workers = dict(self._executor._processes)
 
     def map_chunked(self, fn, items: list) -> list:
         """Run fn over near-equal chunks of items in the workers.
@@ -226,8 +233,6 @@ class ParallelDbPool:
         futures = [
             self._executor.submit(_run_task_picklable, fn, chunk) for chunk in chunks
         ]
-        # Workers are spawned on demand by submit().
-        self._workers.update(self._executor._processes or {})
         results = []
         for future in futures:
             results.extend(future.result())
