@@ -178,9 +178,26 @@ def retry_on_deadlock(times=1):
     return innerfun
 
 
+# libpq TCP keepalive and user timeout: a connection whose server side is
+# gone (VPN outage, NAT timeout) fails within about two minutes instead of
+# hanging forever.
+_LIBPQ_KEEPALIVE = {
+    "keepalives": 1,
+    "keepalives_idle": 60,
+    "keepalives_interval": 15,
+    "keepalives_count": 4,
+    "tcp_user_timeout": 120_000,
+}
+
+
 class TagStore(object):
     def __init__(self, url, schema):
-        self.conn = connect(url, options=f"-c search_path={schema}")
+        self.conn = connect(
+            url,
+            options=f"-c search_path={schema}",
+            connect_timeout=30,
+            **_LIBPQ_KEEPALIVE,
+        )
         self.cursor = self.conn.cursor()
 
         self.schema = schema
