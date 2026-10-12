@@ -123,3 +123,33 @@ async def test_resource_and_prompt_handlers_are_guarded(caplog) -> None:
     assert len(errors) == 2
     assert "resource" in errors[0].getMessage()
     assert "prompt" in errors[1].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_log_names_the_gateway_user(
+    caplog, monkeypatch
+) -> None:
+    """The Slack alert must say who triggered it: the user the gateway sends
+    in `X-Consumer-Username` on the originating /mcp request."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.error_logging.get_http_headers",
+        lambda: {"x-consumer-username": "alice@example.org"},
+    )
+    middleware = ErrorLoggingMiddleware()
+
+    async def boom(context: MiddlewareContext) -> None:
+        raise RuntimeError("upstream blew up")
+
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.error_logging"):
+        with pytest.raises(RuntimeError):
+            await middleware.on_call_tool(_ctx("lookup_address"), boom)
+
+    [record] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert "User: alice@example.org" in record.getMessage()
+
+
+def test_request_user_is_unknown_without_http_request() -> None:
+    """stdio transport and in-process clients carry no headers."""
+    from graphsenselib.mcp.error_logging import request_user
+
+    assert request_user() == "unknown"

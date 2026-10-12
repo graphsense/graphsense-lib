@@ -10,6 +10,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import Field
 
+from graphsenselib.mcp.error_logging import request_user
 from graphsenselib.mcp.pagesize import resolve_pagesize
 
 logger = logging.getLogger(__name__)
@@ -100,10 +101,11 @@ def _raise_backend_http_error(response: httpx.Response, path: str) -> None:
         detail = response.text
     if response.status_code >= 500:
         logger.error(
-            "graphsense backend returned HTTP %d for %s: %s",
+            "graphsense backend returned HTTP %d for %s: %s | User: %s",
             response.status_code,
             path,
             detail,
+            request_user(),
         )
     raise ToolError(
         f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"

@@ -1279,6 +1279,43 @@ async def test_backend_5xx_logs_at_error_before_raising_tool_error(caplog):
 
 
 @pytest.mark.asyncio
+async def test_backend_5xx_log_names_the_gateway_user(caplog, monkeypatch):
+    """The Slack alert for a backend 5xx must say who triggered it: the user
+    gateway sends in `X-Consumer-Username` on the originating /mcp request."""
+    import logging
+
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_lookup_address
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.error_logging.get_http_headers",
+        lambda: {"x-consumer-username": "alice@example.org"},
+    )
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}")
+    async def _boom(currency: str, address: str):
+        raise HTTPException(status_code=503, detail="upstream cassandra timed out")
+
+    mcp = _tool(app, register_lookup_address)
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.tools.consolidated"):
+        async with Client(mcp) as c:
+            with pytest.raises(ToolError, match="HTTP 503"):
+                await c.call_tool(
+                    "lookup_address", {"currency": "btc", "address": "abc"}
+                )
+
+    [record] = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+        and r.name == "graphsenselib.mcp.tools.consolidated"
+    ]
+    assert "User: alice@example.org" in record.getMessage()
+
+
+@pytest.mark.asyncio
 async def test_backend_4xx_does_not_log_at_error(caplog):
     """4xx is model-side feedback ('tx not found', 'bad address') — not
     an incident, so the ERROR log + Slack alert path must stay quiet.
