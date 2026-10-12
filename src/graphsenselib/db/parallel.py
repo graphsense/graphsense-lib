@@ -247,12 +247,16 @@ class ParallelDbPool:
         chunk runs: hours, holding the caller's locks. So kill the workers
         outright. A batch cut short this way is a torn batch, which the
         delta-update WAL replays on the next run.
+
+        Kill before shutdown(): from Python 3.12 on, even
+        shutdown(wait=False) blocks while the executor is still joining
+        the workers of a broken pool.
         """
-        self._executor.shutdown(wait=False, cancel_futures=True)
         for worker in self._workers.values():
             worker.kill()
         for worker in self._workers.values():
             worker.join()
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def __enter__(self):
         return self
