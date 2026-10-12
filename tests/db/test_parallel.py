@@ -359,3 +359,95 @@ def test_plainrow_serializes_identically_to_driver_udt_value():
     native = CurrencyUdt(value=12345, fiat_values=[1.5, 2.5])
     flattened = flatten_value(native)
     assert udt_class.serialize_safe(flattened, 4) == udt_class.serialize_safe(native, 4)
+
+
+# --- Worker death (e.g. OOM kill) ------------------------------------------
+
+
+def _sigkill_first_chunk(chunk):
+    import os
+    import signal as _signal
+
+    # Stand-in for the kernel OOM killer: SIGKILL cannot be ignored.
+    if chunk == [0]:
+        os.kill(os.getpid(), _signal.SIGKILL)
+    return chunk
+
+
+def _sleep_chunk(chunk):
+    import time
+
+    # A sibling stuck in a long call (e.g. a stalled Cassandra request).
+    time.sleep(600)
+    return chunk
+
+
+def _sigkill_or_sleep_chunk(chunk):
+    return _sigkill_first_chunk(chunk) if chunk == [0] else _sleep_chunk(chunk)
+
+
+def _broken_pool_scenario(task):
+    """Child-process body: a worker dies while the pool is in use.
+
+    Exit 0 only if the BrokenProcessPool reaches the caller and no worker
+    outlives the pool. Run in its own process so a regression shows up as
+    a timeout instead of hanging pytest (and its interpreter exit, which
+    joins the executor's manager thread too).
+    """
+    import sys
+    from concurrent.futures.process import BrokenProcessPool
+
+    from graphsenselib.db.parallel import ParallelDbPool
+
+    workers = []
+    try:
+        with ParallelDbPool(
+            num_workers=2, initializer=_ignore_signals_init, initargs=()
+        ) as pool:
+            try:
+                pool.map_chunked(task, [0, 1])
+            finally:
+                workers.extend(pool._workers.values())
+    except BrokenProcessPool:
+        pass
+    else:
+        sys.exit(2)
+    # Not Process.is_alive(): the executor's manager thread may reap a worker
+    # first, after which is_alive() wrongly reports it as running.
+    sys.exit(3 if any(_pid_exists(p.pid) for p in workers) else 0)
+
+
+def _pid_exists(pid):
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    "task",
+    [_sigkill_first_chunk, _sigkill_or_sleep_chunk],
+    ids=["idle-sibling", "busy-sibling"],
+)
+def test_worker_death_raises_instead_of_hanging(task):
+    # Regression: an OOM-killed worker left the delta updater hung for a
+    # day, holding its Redis locks. The executor tears a broken pool down
+    # with SIGTERM, which our workers ignore by design, and then joins them,
+    # so a sibling still busy with its chunk blocked the pool's __exit__.
+    # The caller must instead see BrokenProcessPool promptly, with every
+    # worker gone.
+    import multiprocessing
+
+    child = multiprocessing.get_context("spawn").Process(
+        target=_broken_pool_scenario, args=(task,)
+    )
+    child.start()
+    child.join(timeout=60)
+    if child.is_alive():
+        child.kill()
+        child.join()
+        pytest.fail("pool teardown hung after a worker was killed")
+    assert child.exitcode == 0
