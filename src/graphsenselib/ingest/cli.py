@@ -15,7 +15,11 @@ from graphsenselib.utils.memory import release_unused_memory
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config, supported_fiat_currencies
-from ..config.config import EXCHANGE_RATES_PROVIDERS, KeyspaceConfig
+from ..config.config import (
+    EXCHANGE_RATES_PROVIDERS,
+    KeyspaceConfig,
+    is_account_based_currency,
+)
 from ..db import DbFactory
 from ..monitoring.monitoring import check_raw_ingest_staleness
 from ..schema import GraphsenseSchemas
@@ -611,7 +615,11 @@ def _run_exchange_rates_ingest(
             raise
 
     # Refresh per-token rates for unpegged tokens alongside native rates.
+    # Only account-based networks have tokens: UTXO keyspaces have no
+    # token_configuration table, so the query would fail on every run.
     # Best-effort: token rate issues must never abort block ingestion.
+    if not is_account_based_currency(currency):
+        return
     try:
         from ..rates.token_rates import ingest_token_rates
 
