@@ -1279,6 +1279,43 @@ async def test_backend_5xx_logs_at_error_before_raising_tool_error(caplog):
 
 
 @pytest.mark.asyncio
+async def test_backend_5xx_log_names_the_gateway_user(caplog, monkeypatch):
+    """The Slack alert for a backend 5xx must say who triggered it: the user
+    gateway sends in `X-Consumer-Username` on the originating /mcp request."""
+    import logging
+
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_lookup_address
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.error_logging.get_http_headers",
+        lambda: {"x-consumer-username": "alice@example.org"},
+    )
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}")
+    async def _boom(currency: str, address: str):
+        raise HTTPException(status_code=503, detail="upstream cassandra timed out")
+
+    mcp = _tool(app, register_lookup_address)
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.tools.consolidated"):
+        async with Client(mcp) as c:
+            with pytest.raises(ToolError, match="HTTP 503"):
+                await c.call_tool(
+                    "lookup_address", {"currency": "btc", "address": "abc"}
+                )
+
+    [record] = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+        and r.name == "graphsenselib.mcp.tools.consolidated"
+    ]
+    assert "User: alice@example.org" in record.getMessage()
+
+
+@pytest.mark.asyncio
 async def test_backend_4xx_does_not_log_at_error(caplog):
     """4xx is model-side feedback ('tx not found', 'bad address') — not
     an incident, so the ERROR log + Slack alert path must stay quiet.
@@ -1309,6 +1346,79 @@ async def test_backend_4xx_does_not_log_at_error(caplog):
         if r.levelno == logging.ERROR
         and r.name == "graphsenselib.mcp.tools.consolidated"
     ] == []
+
+
+@pytest.mark.asyncio
+async def test_backend_501_does_not_log_at_error(caplog):
+    """A lite network's external backend answers 501 by contract for what
+    it does not offer (here: neighbors). The model still gets a ToolError,
+    but no ERROR log, so no Slack alert."""
+    import logging
+
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_list_neighbors
+
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}/neighbors")
+    async def _not_offered(currency: str, address: str):
+        raise HTTPException(
+            status_code=501,
+            detail="Not implemented: /{currency}/addresses/{address}/neighbors",
+        )
+
+    mcp = _tool(app, register_list_neighbors)
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.tools.consolidated"):
+        async with Client(mcp) as c:
+            with pytest.raises(ToolError, match="HTTP 501"):
+                await c.call_tool(
+                    "list_neighbors", {"currency": "pol", "address": "abc"}
+                )
+
+    assert [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+        and r.name == "graphsenselib.mcp.tools.consolidated"
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_lookup_address_without_cluster_support_omits_cluster(caplog):
+    """On a lite network the cluster route answers 501. lookup_address must
+    still return the address (no cluster key), not fail the whole call."""
+    import logging
+
+    from graphsenselib.mcp.tools.consolidated import register_lookup_address
+
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}")
+    async def _addr(currency: str, address: str):
+        return {"currency": currency, "address": address}
+
+    @app.get("/{currency}/addresses/{address}/cluster")
+    async def _cluster(currency: str, address: str):
+        raise HTTPException(
+            status_code=501,
+            detail="Not implemented: /{currency}/addresses/{address}/cluster",
+        )
+
+    @app.get("/{currency}/addresses/{address}/tag_summary")
+    async def _ts(currency: str, address: str):
+        return {"broad_category": "unknown", "tag_count": 0}
+
+    mcp = _tool(app, register_lookup_address)
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.tools.consolidated"):
+        async with Client(mcp) as c:
+            res = await c.call_tool(
+                "lookup_address", {"currency": "pol", "address": "abc"}
+            )
+
+    assert res.data["address"]["address"] == "abc"
+    assert "cluster" not in res.data
+    assert [r for r in caplog.records if r.levelno == logging.ERROR] == []
 
 
 def test_params_from_defaults_but_does_not_cap_pagesize():
