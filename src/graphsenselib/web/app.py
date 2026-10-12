@@ -59,6 +59,7 @@ from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
+from graphsenselib.web.routes.notifications import register_notifications_routes
 from graphsenselib.web.routes import (
     addresses,
     blocks,
@@ -680,6 +681,12 @@ async def teardown_database(app: FastAPI):
         await external_client.aclose()
         logger.info("Closed external backends HTTP client.")
 
+    # Close the notifications HTTP client if the feature is enabled
+    notifications_client = getattr(app.state, "notifications_client", None)
+    if notifications_client is not None:
+        await notifications_client.client.aclose()
+        logger.info("Closed notifications HTTP client.")
+
 
 class ConceptsCacheServiceFastAPI(ConceptProtocol):
     """FastAPI-compatible concepts cache service"""
@@ -1277,6 +1284,8 @@ def create_app(
     )
 
     _register_exception_handlers(app)
+    # Before the /{currency} routers, so no network path can shadow them.
+    register_notifications_routes(app, config.notifications)
     _register_routers(app)
     _register_download_route(app, config.file_store)
     _setup_custom_openapi(app)
@@ -1658,6 +1667,8 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     )
 
     _register_exception_handlers(app)
+    # Before the /{currency} routers, so no network path can shadow them.
+    register_notifications_routes(app, config.notifications)
     _register_routers(app)
     _setup_custom_openapi(app)
 

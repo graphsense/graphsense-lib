@@ -138,6 +138,47 @@ class ExternalBackendsConfig(BaseSettings):
     )
 
 
+class NotificationsConfig(BaseSettings):
+    """Address notifications: the /notifications/* routes, forwarded to the
+    gs-notifications service (web/routes/notifications.py).
+
+    The service owns the data and the rules; this app only adds typed routes
+    in front of it, so the dashboard and API clients talk to one API. When
+    disabled (the default) no route is registered.
+    """
+
+    enabled: bool = Field(
+        default=False, description="Register the /notifications/* routes."
+    )
+    url: Optional[str] = Field(
+        default=None,
+        description="Base URL of the gs-notifications service on the internal "
+        "network, e.g. http://gs-notifications:8000. Required when enabled.",
+    )
+    timeout_s: float = Field(
+        default=30.0,
+        description="HTTP timeout towards the service. Subscribing looks the "
+        "address up in this API first, so allow for a slow lookup.",
+    )
+    forward_headers: List[str] = Field(
+        default_factory=lambda: ["X-Username", "X-User-Roles"],
+        description="Gateway headers passed on to the service: the user "
+        "identity and the roles it gates networks with. Nothing else is "
+        "forwarded.",
+    )
+    include_in_schema: bool = Field(
+        default=False,
+        description="List the routes in the OpenAPI spec (and so in the "
+        "generated clients). Off: dashboard-only, the contract stays private.",
+    )
+
+    @model_validator(mode="after")
+    def _url_when_enabled(self) -> "NotificationsConfig":
+        if self.enabled and not self.url:
+            raise ValueError("notifications.url is required when enabled")
+        return self
+
+
 class CurrencyRolesConfig(BaseSettings):
     """Gate externally served currencies on the gateway's roles header (see
     middleware/currency_roles.py). The role names are an IAM contract: a new
@@ -338,6 +379,10 @@ class GSRestConfig(BaseSettings):
 
     file_store: Optional[FileStoreConfig] = Field(
         default=None, description="Download file store configuration"
+    )
+
+    notifications: Optional[NotificationsConfig] = Field(
+        default=None, description="Address notifications (gs-notifications)"
     )
 
     external_backends: Optional[ExternalBackendsConfig] = Field(

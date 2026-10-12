@@ -64,6 +64,11 @@ Without any setting changed:
 - **The `actors` lists of addresses and clusters count only actor-type tags,** the same tags the tag summary's best actor is chosen from. A mention or event tag keeps its actor as a link (it still appears in the tag list and under the actor), but no longer lists that actor as one of the address's or cluster's actors: a forum post about a gambling site or a ransom payment to an exchange deposit address names whom the label refers to, not who controls the address. REST ties this to the tag summary's setting `tag_summary_only_propagate_high_confidence_actors` (on by default): with it off, the lists show every tag's actor as before. `quality actor-conflicts` always applies the rule.
 - **sqlmodel is no longer capped `<0.0.45`.** The tagstore's datetime columns (`lastmod` on tagpack, actorpack, actor and tag; `created` on address) are now declared as `DateTime(timezone=False)` explicitly, so sqlmodel 0.0.45+ no longer maps them to `timestamptz` and rejects naive values. The generated column type is unchanged (`TIMESTAMP WITHOUT TIME ZONE`), so existing tagstores need no migration.
 
+### Web API + Python client
+
+#### Added
+- **Address notifications: `/notifications/*` routes, off by default.** With `notifications.enabled` and `notifications.url` set, the API serves typed routes for subscriptions to addresses (`/notifications/subscriptions`), the feed of notified transactions (`/notifications/feed`, `/feed/read`, `/feed/unread_count`), per-user settings (`/notifications/settings`) and deleting one's data (`DELETE /notifications/me`). They forward to the gs-notifications service, which keeps the data; only the gateway's identity and roles headers are passed on (`notifications.forward_headers`). The service's errors reach the client unchanged, and an unreachable service is a 502. The routes stay out of the OpenAPI spec and the Python client unless `notifications.include_in_schema` is set. Without the `notifications` section nothing changes.
+
 ## [2.17.0] - 2026-09-30
 
 ### Upgrade notes

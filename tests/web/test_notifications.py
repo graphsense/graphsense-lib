@@ -1,0 +1,349 @@
+"""The /notifications/* routes forwarding to gs-notifications
+(web/routes/notifications.py), against a recording mock service."""
+
+import json
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from graphsenselib.web.app import _register_exception_handlers
+from graphsenselib.web.config import GSRestConfig, NotificationsConfig
+from graphsenselib.web.routes.notifications import register_notifications_routes
+
+SERVICE_URL = "http://gs-notifications:8000"
+GENESIS = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+
+SUBSCRIPTION = {
+    "id": 7,
+    "network": "btc",
+    "address": GENESIS,
+    "frequency": "daily",
+    "filters": {"v": 1, "direction": "both", "min_value": None, "tokens": None},
+    "label": "Genesis",
+    "paused_reason": None,
+    "created_at": "2026-10-12T10:00:00Z",
+}
+
+FEED_ITEM = {
+    "id": 3,
+    "subscription_id": 7,
+    "label": "Genesis",
+    "network": "btc",
+    "address": GENESIS,
+    "tx_hash": "0" * 64,
+    "height": 900000,
+    "timestamp": "2026-10-12T10:00:00Z",
+    "direction": "in",
+    "currency": "btc",
+    "token": False,
+    "value": "50000000",
+    "amount": "0.5",
+    "fiat": {"eur": 30000.0, "usd": 32500.0},
+    "counterparty": None,
+    "read": False,
+}
+
+GATEWAY_HEADERS = {
+    "X-Username": "alice",
+    "X-User-Roles": "currency-bnb,ikn-dashboard",
+    "X-Consumer-Username": "alice",
+    "Authorization": "api-key-of-alice",
+    "Cookie": "session=secret",
+}
+
+
+def make_client(answer=None, include_in_schema=False, enabled=True):
+    """App with the routes behind a recording mock service. ``answer(request)``
+    overrides the service's response."""
+    seen: list[httpx.Request] = []
+
+    def service(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if answer is not None:
+            return answer(request)
+        path, method = request.url.path, request.method
+        if path == "/subscriptions" and method == "GET":
+            return httpx.Response(
+                200, json={"items": [SUBSCRIPTION], "next_cursor": "7"}
+            )
+        if path == "/subscriptions" and method == "POST":
+            return httpx.Response(201, json=SUBSCRIPTION)
+        if path.startswith("/subscriptions/") and method in ("GET", "PATCH"):
+            return httpx.Response(200, json=SUBSCRIPTION)
+        if method == "DELETE":
+            return httpx.Response(204)
+        if path == "/feed":
+            return httpx.Response(200, json={"items": [FEED_ITEM], "next_cursor": None})
+        if path == "/feed/read":
+            return httpx.Response(200, json={"marked": 2})
+        if path == "/feed/unread_count":
+            return httpx.Response(200, json={"count": 1, "capped": False})
+        if path == "/settings":
+            return httpx.Response(
+                200,
+                json={
+                    "email_enabled": True,
+                    "default_frequency": "daily",
+                    "timezone": "Europe/Vienna",
+                },
+            )
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    app = FastAPI()
+    _register_exception_handlers(app)
+    config = NotificationsConfig(
+        enabled=enabled, url=SERVICE_URL, include_in_schema=include_in_schema
+    )
+    register_notifications_routes(
+        app,
+        config,
+        client=httpx.AsyncClient(
+            base_url=SERVICE_URL, transport=httpx.MockTransport(service)
+        ),
+    )
+
+    # A network route registered after, as create_app does: must not shadow.
+    @app.get("/{currency}/feed")
+    async def network_route(currency: str):
+        return {"served": "network"}
+
+    return TestClient(app, raise_server_exceptions=False), seen
+
+
+def body_of(request: httpx.Request) -> dict:
+    return json.loads(request.content)
+
+
+def test_disabled_registers_nothing():
+    client, seen = make_client(enabled=False)
+    assert client.get("/notifications/subscriptions").status_code == 404
+    assert seen == []
+
+
+def test_only_identity_and_roles_headers_are_forwarded():
+    client, seen = make_client()
+    response = client.get("/notifications/subscriptions", headers=GATEWAY_HEADERS)
+    assert response.status_code == 200
+    forwarded = seen[0].headers
+    assert forwarded["x-username"] == "alice"
+    assert forwarded["x-user-roles"] == "currency-bnb,ikn-dashboard"
+    for header in ("authorization", "cookie", "x-consumer-username"):
+        assert header not in forwarded
+
+
+def test_missing_identity_is_not_invented():
+    client, seen = make_client()
+    client.get("/notifications/settings")
+    assert "x-username" not in seen[0].headers
+
+
+def test_list_subscriptions_passes_paging():
+    client, seen = make_client()
+    response = client.get("/notifications/subscriptions?cursor=9&limit=20")
+    assert response.json() == {"items": [SUBSCRIPTION], "next_cursor": "7"}
+    assert seen[0].url.path == "/subscriptions"
+    assert dict(seen[0].url.params) == {"cursor": "9", "limit": "20"}
+
+
+def test_unset_query_params_are_left_out():
+    client, seen = make_client()
+    client.get("/notifications/feed")
+    assert dict(seen[0].url.params) == {"unread": "false", "limit": "50"}
+
+
+def test_limit_is_validated_here():
+    client, seen = make_client()
+    assert client.get("/notifications/feed?limit=500").status_code == 422
+    assert seen == []
+
+
+def test_create_subscription():
+    client, seen = make_client()
+    response = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "label": "Genesis"},
+        headers=GATEWAY_HEADERS,
+    )
+    assert response.status_code == 201
+    assert response.json() == SUBSCRIPTION
+    sent = body_of(seen[0])
+    assert (sent["network"], sent["address"], sent["label"]) == (
+        "btc",
+        GENESIS,
+        "Genesis",
+    )
+
+
+def test_unknown_body_fields_are_rejected_before_forwarding():
+    client, seen = make_client()
+    response = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "colour": "red"},
+    )
+    assert response.status_code == 422
+    assert seen == []
+
+
+def test_patch_sends_only_the_fields_given():
+    client, seen = make_client()
+    client.patch("/notifications/subscriptions/7", json={"label": None})
+    assert seen[0].method == "PATCH"
+    assert seen[0].url.path == "/subscriptions/7"
+    assert body_of(seen[0]) == {"label": None}
+
+
+def test_delete_subscription_is_204():
+    client, seen = make_client()
+    response = client.delete("/notifications/subscriptions/7")
+    assert response.status_code == 204
+    assert response.content == b""
+    assert (seen[0].method, seen[0].url.path) == ("DELETE", "/subscriptions/7")
+
+
+def test_feed_routes():
+    client, seen = make_client()
+    assert client.get("/notifications/feed?unread=true").json()["items"] == [
+        FEED_ITEM
+    ]
+    assert seen[0].url.params["unread"] == "true"
+    assert client.post("/notifications/feed/read", json={"up_to": 3}).json() == {
+        "marked": 2
+    }
+    assert body_of(seen[1]) == {"up_to": 3}
+    assert client.get("/notifications/feed/unread_count").json() == {
+        "count": 1,
+        "capped": False,
+    }
+
+
+def test_settings_and_me():
+    client, seen = make_client()
+    assert client.get("/notifications/settings").json()["timezone"] == "Europe/Vienna"
+    client.patch("/notifications/settings", json={"timezone": "UTC"})
+    assert body_of(seen[1]) == {"timezone": "UTC"}
+    assert client.delete("/notifications/me").status_code == 204
+    assert (seen[2].method, seen[2].url.path) == ("DELETE", "/me")
+
+
+def test_invalid_timezone_is_rejected_here():
+    client, seen = make_client()
+    response = client.patch("/notifications/settings", json={"timezone": "Mars/Base"})
+    assert response.status_code == 422
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    "status, detail",
+    [
+        (401, "missing X-Username header"),
+        (403, "network not enabled for this account"),
+        (404, "subscription not found"),
+        (409, "already subscribed to this address"),
+        (422, "unknown network 'xyz'"),
+    ],
+)
+def test_service_errors_reach_the_client_unchanged(status, detail):
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(status, json={"detail": detail})
+    )
+    response = client.post(
+        "/notifications/subscriptions", json={"network": "btc", "address": GENESIS}
+    )
+    assert response.status_code == status
+    assert response.json() == {"detail": detail}
+
+
+def test_busy_service_passes_retry_after():
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(
+            503,
+            json={"detail": "graphsense is busy, try again shortly"},
+            headers={"Retry-After": "12", "X-Internal": "no"},
+        )
+    )
+    response = client.post(
+        "/notifications/subscriptions", json={"network": "btc", "address": GENESIS}
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "12"
+    assert "x-internal" not in response.headers
+
+
+def test_non_json_error_body_becomes_detail():
+    client, _ = make_client(answer=lambda r: httpx.Response(500, text="boom"))
+    response = client.get("/notifications/settings")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "boom"}
+
+
+def test_unreachable_service_is_502():
+    def down(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client, _ = make_client(answer=down)
+    response = client.get("/notifications/feed/unread_count")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "notifications service unavailable"}
+
+
+def test_response_that_breaks_the_contract_is_an_error():
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(200, json={"count": "many"})
+    )
+    assert client.get("/notifications/feed/unread_count").status_code == 500
+
+
+def test_unknown_response_fields_are_dropped():
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(
+            200, json={"count": 1, "capped": False, "internal": 1}
+        )
+    )
+    assert client.get("/notifications/feed/unread_count").json() == {
+        "count": 1,
+        "capped": False,
+    }
+
+
+def test_network_routes_are_not_shadowed():
+    client, seen = make_client()
+    assert client.get("/btc/feed").json() == {"served": "network"}
+    assert seen == []
+
+
+def test_routes_stay_out_of_the_spec_by_default():
+    client, _ = make_client()
+    paths = client.get("/openapi.json").json()["paths"]
+    assert not any(p.startswith("/notifications") for p in paths)
+
+
+def test_routes_in_the_spec_when_configured():
+    client, _ = make_client(include_in_schema=True)
+    spec = client.get("/openapi.json").json()
+    assert set(spec["paths"]) >= {
+        "/notifications/subscriptions",
+        "/notifications/subscriptions/{subscription_id}",
+        "/notifications/feed",
+        "/notifications/feed/read",
+        "/notifications/feed/unread_count",
+        "/notifications/settings",
+        "/notifications/me",
+    }
+    op = spec["paths"]["/notifications/subscriptions"]["post"]
+    assert op["operationId"] == "create_notification_subscription"
+    assert op["tags"] == ["notifications"]
+
+
+def test_enabled_needs_a_url():
+    with pytest.raises(ValidationError, match="notifications.url"):
+        NotificationsConfig(enabled=True)
+
+
+def test_config_section_is_optional():
+    assert GSRestConfig.model_fields["notifications"].default is None
+    config = NotificationsConfig(enabled=True, url=SERVICE_URL)
+    assert config.forward_headers == ["X-Username", "X-User-Roles"]
+    assert config.include_in_schema is False
