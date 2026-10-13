@@ -75,6 +75,11 @@ class AddressNotFoundException(NotFoundException):
     def __init__(self, network, address, no_external_txs=False):
         address = address_to_user_format(network, address)
         reason = " because it has no external transactions" if no_external_txs else ""
+        # Kept for the REST handler, which answers 400 instead of 404 when the
+        # address that was not found has a wrong checksum (a typo).
+        self.network = network
+        self.address = address
+        self.no_external_txs = no_external_txs
 
         super().__init__(f"Address {address} not found in network {network}{reason}")
 
