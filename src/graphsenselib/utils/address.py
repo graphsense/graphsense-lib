@@ -624,6 +624,55 @@ def bech32_validate(s: str, expected_hrp: Optional[str] = None) -> bool:
     return spec == "bech32m"
 
 
+# bech32 human-readable parts per network (mainnet, testnet, regtest).
+_BECH32_HRPS = {
+    "btc": ("bc", "tb", "bcrt"),
+    "ltc": ("ltc", "tltc", "rltc"),
+}
+# Networks whose non-bech32 addresses are base58check (ZEC transparent only).
+_BASE58CHECK_NETWORKS = frozenset({"btc", "ltc", "bch", "zec"})
+_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def _bech32_checksum_ok(s: str) -> bool:
+    """Only the checksum: either constant counts, whatever the witness
+    version or program, so an odd but real output is never called a typo."""
+    if s != s.lower() and s != s.upper():
+        return False
+    s = s.lower()
+    pos = s.rfind("1")
+    if pos < 1 or pos + 7 > len(s):
+        return False
+    data_part = s[pos + 1 :]
+    if any(c not in _BECH32_CHARSET for c in data_part):
+        return False
+    data = [_BECH32_CHARSET.find(c) for c in data_part]
+    return bech32_checksum_spec(s[:pos], data) is not None
+
+
+def address_checksum_invalid(network: str, address) -> bool:
+    """True when ``address`` is in a checksummed UTXO format (bech32 with a
+    known prefix, or base58check) and its checksum fails: a typo.
+
+    Conservative on purpose, for turning a "not found" into "invalid": an
+    unrecognised format, a ``nonstandard`` placeholder or another network
+    gives False. Callers ask only after a lookup found nothing, so an
+    indexed address is never rejected, whatever its checksum.
+    """
+    if not isinstance(address, str) or not address:
+        return False
+    if address.startswith("nonstandard"):
+        return False
+    network = network.lower()
+    lowered = address.lower()
+    for hrp in _BECH32_HRPS.get(network, ()):
+        if lowered.startswith(hrp + "1"):
+            return not _bech32_checksum_ok(address)
+    if network in _BASE58CHECK_NETWORKS and all(c in _BASE58_ALPHABET for c in address):
+        return not base58_check_validate(address)
+    return False
+
+
 def validate_btc_address(address: str) -> bool:
     """Validate Bitcoin address"""
     if not address:

@@ -27,6 +27,7 @@ from graphsenselib.config.tagstore_config import set_active_tagstore_config
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
 from graphsenselib.errors import (
+    AddressNotFoundException,
     BadUserInputException,
     FeatureNotAvailableException,
     GsTimeoutException,
@@ -38,6 +39,7 @@ from graphsenselib.tagstore.db.database import (
     get_db_engine_async,
 )
 from graphsenselib.utils import resolve_env_vars
+from graphsenselib.utils.address import address_checksum_invalid
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -861,6 +863,22 @@ def _register_exception_handlers(app: FastAPI):
 
     @app.exception_handler(NotFoundException)
     async def not_found_handler(request: Request, exc: NotFoundException):
+        # An address that is not indexed AND has a wrong checksum is a typo:
+        # say so (400) instead of "not found". Only after the lookup, so an
+        # indexed address is never rejected, whatever its checksum.
+        if (
+            isinstance(exc, AddressNotFoundException)
+            and not exc.no_external_txs
+            and address_checksum_invalid(exc.network, exc.address)
+        ):
+            msg = (
+                f"The address provided does not look like a {exc.network.upper()}"
+                f" address: {exc.address} (checksum mismatch, probably a typo)"
+            )
+            logger.warning(
+                f"BadUserInputException: {msg} | {_get_request_context(request)}"
+            )
+            return JSONResponse(status_code=400, content={"detail": msg})
         logger.warning(
             f"NotFoundException: {exc.get_user_msg()} | {_get_request_context(request)}"
         )
