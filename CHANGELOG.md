@@ -68,6 +68,7 @@ Without any setting changed:
 
 #### Added
 - **Address notifications: `/notifications/*` routes, off by default.** With `notifications.enabled` and `notifications.url` set, the API serves typed routes for subscriptions to addresses (`/notifications/subscriptions`), the feed of notified transactions (`/notifications/feed`, `/feed/read`, `/feed/unread_count`), and per-user settings (`/notifications/settings`). They forward to the gs-notifications service, which keeps the data; only the gateway's identity and roles headers are passed on (`notifications.forward_headers`). The service's errors reach the client unchanged, and an unreachable service is a 502. The routes stay out of the OpenAPI spec and the Python client unless `notifications.include_in_schema` is set; then they are the last section (tag `notifications`), labelled beta. Without the `notifications` section nothing changes.
+- **`/capabilities` lists the optional services of the deployment** in a new `services` field (Python client: `Capabilities.services`, model `ServiceInfo`): `name`, `available`, `version`, `api` (contract version) and `beta`. Address notifications appear there when enabled, read from the service's `GET /meta` (cached for a minute; `available: false` when it does not answer). A service absent from the list is not offered, and unknown names must be ignored. Without optional services the field is an empty list.
 
 ## [2.17.0] - 2026-09-30
 

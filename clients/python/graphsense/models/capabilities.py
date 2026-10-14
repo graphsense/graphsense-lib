@@ -16,17 +16,19 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.network_capabilities import NetworkCapabilities
+from graphsense.models.service_info import ServiceInfo
 from typing import Optional, Set
 from typing_extensions import Self
 
 class Capabilities(BaseModel):
     """
-    Per-network feature availability of this deployment.
+    Per-network feature availability and the optional services of this deployment.
     """ # noqa: E501
     networks: List[NetworkCapabilities] = Field(description="One entry per served network. A network ABSENT from the list is fully enabled; so is every network of a deployment old enough to 404 this endpoint.")
-    __properties: ClassVar[List[str]] = ["networks"]
+    services: Optional[List[ServiceInfo]] = Field(default=None, description="Optional services enabled in this deployment, e.g. address notifications. A service ABSENT from the list is not offered. Unknown names must be ignored (forward-extensible).")
+    __properties: ClassVar[List[str]] = ["networks", "services"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -74,6 +76,13 @@ class Capabilities(BaseModel):
                 if _item_networks:
                     _items.append(_item_networks.to_dict())
             _dict['networks'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in services (list)
+        _items = []
+        if self.services:
+            for _item_services in self.services:
+                if _item_services:
+                    _items.append(_item_services.to_dict())
+            _dict['services'] = _items
         return _dict
 
     @classmethod
@@ -86,7 +95,8 @@ class Capabilities(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "networks": [NetworkCapabilities.from_dict(_item) for _item in obj["networks"]] if obj.get("networks") is not None else None
+            "networks": [NetworkCapabilities.from_dict(_item) for _item in obj["networks"]] if obj.get("networks") is not None else None,
+            "services": [ServiceInfo.from_dict(_item) for _item in obj["services"]] if obj.get("services") is not None else None
         })
         return _obj
 

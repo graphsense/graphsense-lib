@@ -265,6 +265,7 @@ Class | Method | HTTP request | Description
  - [SearchResultLevel4](docs/SearchResultLevel4.md)
  - [SearchResultLevel5](docs/SearchResultLevel5.md)
  - [SearchResultLevel6](docs/SearchResultLevel6.md)
+ - [ServiceInfo](docs/ServiceInfo.md)
  - [Stats](docs/Stats.md)
  - [Tag](docs/Tag.md)
  - [TagCloudEntry](docs/TagCloudEntry.md)

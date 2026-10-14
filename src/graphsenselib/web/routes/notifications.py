@@ -20,6 +20,7 @@ Registered only when ``notifications.enabled`` is set (see
 """
 
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -28,6 +29,7 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from graphsenselib.web.config import NotificationsConfig
+from graphsenselib.web.models.general import ServiceInfo
 from graphsenselib.web.models.notifications import (
     FeedPage,
     FeedReadRequest,
@@ -49,6 +51,11 @@ TAG_DESCRIPTION = (
     "**Beta.** Address notifications: subscribe to addresses and get new "
     "transactions in a feed and by email. These routes may still change."
 )
+
+# GET /meta of the service, for the services section of /capabilities: cached,
+# a failure too, so a down service costs one short request a minute.
+META_TTL_S = 60.0
+META_TIMEOUT_S = 3.0
 
 # Carried back to the client on an error: a paced or busy service says when
 # to come back.
@@ -73,6 +80,8 @@ class NotificationsClient:
             base_url=config.url.rstrip("/"),  # ty: ignore[possibly-missing-attribute]
             timeout=httpx.Timeout(config.timeout_s),
         )
+        # (monotonic time, answer) of the last GET /meta
+        self._meta: Optional[tuple[float, Optional[dict[str, Any]]]] = None
 
     async def call(
         self,
@@ -125,6 +134,43 @@ class NotificationsClient:
                 },
             )
         )
+
+    async def meta(self) -> Optional[dict[str, Any]]:
+        """The service's GET /meta (no identity needed), or None when it does
+        not answer; cached for META_TTL_S either way."""
+        now = time.monotonic()
+        if self._meta is not None and now - self._meta[0] < META_TTL_S:
+            return self._meta[1]
+        doc: Optional[dict[str, Any]] = None
+        try:
+            response = await self.client.get("/meta", timeout=META_TIMEOUT_S)
+            response.raise_for_status()
+            answer = response.json()
+            if isinstance(answer, dict):
+                doc = answer
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning("notifications service /meta: %r", e)
+        self._meta = (now, doc)
+        return doc
+
+
+async def notifications_service_info(app: FastAPI) -> Optional[ServiceInfo]:
+    """The notifications entry of /capabilities; None when the routes are off."""
+    client: Optional[NotificationsClient] = getattr(
+        app.state, "notifications_client", None
+    )
+    if client is None:
+        return None
+    meta = await client.meta()
+    version = meta.get("version") if meta else None
+    api = meta.get("api") if meta else None
+    return ServiceInfo(
+        name=TAG,
+        available=meta is not None,
+        version=version if isinstance(version, str) else None,
+        api=api if isinstance(api, int) and not isinstance(api, bool) else None,
+        beta=True,
+    )
 
 
 def _client(request: Request) -> NotificationsClient:

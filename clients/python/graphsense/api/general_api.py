@@ -146,7 +146,7 @@ class GeneralApi:
     ) -> Capabilities:
         """Get per-network feature availability
 
-        Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404).
+        Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404). Also lists the optional services of the deployment (e.g. address notifications) with their versions.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -209,7 +209,7 @@ class GeneralApi:
     ) -> ApiResponse[Capabilities]:
         """Get per-network feature availability
 
-        Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404).
+        Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404). Also lists the optional services of the deployment (e.g. address notifications) with their versions.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -272,7 +272,7 @@ class GeneralApi:
     ) -> RESTResponseType:
         """Get per-network feature availability
 
-        Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404).
+        Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404). Also lists the optional services of the deployment (e.g. address notifications) with their versions.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request

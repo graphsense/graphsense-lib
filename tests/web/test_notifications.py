@@ -13,6 +13,7 @@ from graphsenselib.web.app import _register_exception_handlers
 from graphsenselib.web.config import GSRestConfig, NotificationsConfig
 from graphsenselib.web.routes.notifications import (
     TAG_DESCRIPTION,
+    notifications_service_info,
     order_notifications_tag,
     register_notifications_routes,
 )
@@ -83,6 +84,17 @@ def make_client(answer=None, include_in_schema=False, enabled=True):
             return httpx.Response(200, json={"items": [FEED_ITEM], "next_cursor": None})
         if path == "/feed/read":
             return httpx.Response(200, json={"marked": 2})
+        if path == "/meta":
+            return httpx.Response(
+                200,
+                json={
+                    "service": "gs-notifications",
+                    "version": "26.10.0rc1",
+                    "git_sha": "572e526",
+                    "built_at": None,
+                    "api": 1,
+                },
+            )
         if path == "/feed/unread_count":
             return httpx.Response(200, json={"count": 1, "capped": False})
         if path == "/settings":
@@ -366,6 +378,48 @@ def test_spec_without_the_routes_is_unchanged():
     before = json.dumps(spec)
     assert json.dumps(order_notifications_tag(spec)) == before
     assert "tags" not in spec
+
+
+async def test_service_info_from_meta():
+    client, seen = make_client()
+    info = await notifications_service_info(client.app)
+    assert info.model_dump() == {
+        "name": "notifications",
+        "available": True,
+        "version": "26.10.0rc1",
+        "api": 1,
+        "beta": True,
+    }
+    assert (seen[0].method, seen[0].url.path) == ("GET", "/meta")
+    # No identity goes to /meta.
+    assert "x-username" not in seen[0].headers
+    await notifications_service_info(client.app)
+    assert len(seen) == 1  # cached
+
+
+async def test_service_info_when_the_service_is_down():
+    def down(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    client, _ = make_client(answer=down)
+    info = await notifications_service_info(client.app)
+    assert info.available is False
+    assert info.version is None and info.api is None
+    assert info.beta is True
+
+
+async def test_service_info_ignores_a_malformed_meta():
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(200, json={"version": 7, "api": True})
+    )
+    info = await notifications_service_info(client.app)
+    assert info.available is True
+    assert info.version is None and info.api is None
+
+
+async def test_no_service_info_when_disabled():
+    client, _ = make_client(enabled=False)
+    assert await notifications_service_info(client.app) is None
 
 
 def test_enabled_needs_a_url():
