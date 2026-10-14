@@ -30,6 +30,9 @@ SUBSCRIPTION = {
     "label": "Genesis",
     "paused_reason": None,
     "created_at": "2026-10-12T10:00:00Z",
+    "last_checked_at": "2026-10-12T10:05:00Z",
+    "next_check_at": "2026-10-12T10:15:00Z",
+    "check_errors": 0,
 }
 
 FEED_ITEM = {
@@ -321,6 +324,25 @@ def test_response_that_breaks_the_contract_is_an_error():
         answer=lambda r: httpx.Response(200, json={"count": "many"})
     )
     assert client.get("/notifications/feed/unread_count").status_code == 500
+
+
+def test_polling_state_passes_through_and_is_optional():
+    polled = {
+        **SUBSCRIPTION,
+        "last_checked_at": "2026-10-14T12:00:00Z",
+        "next_check_at": "2026-10-14T12:10:00Z",
+        "check_errors": 2,
+    }
+    client, _ = make_client(answer=lambda r: httpx.Response(200, json=polled))
+    got = client.get("/notifications/subscriptions/7").json()
+    assert got["check_errors"] == 2
+    assert got["last_checked_at"].startswith("2026-10-14T12:00:00")
+    # an older service without the fields still meets the contract
+    polling = ("last_checked_at", "next_check_at", "check_errors")
+    legacy = {k: v for k, v in SUBSCRIPTION.items() if k not in polling}
+    client, _ = make_client(answer=lambda r: httpx.Response(200, json=legacy))
+    got = client.get("/notifications/subscriptions/7").json()
+    assert (got["last_checked_at"], got["check_errors"]) == (None, 0)
 
 
 def test_unknown_response_fields_are_dropped():

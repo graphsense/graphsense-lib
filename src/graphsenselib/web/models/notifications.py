@@ -122,6 +122,12 @@ class Subscription(BaseModel):
     # None = running.
     paused_reason: PausedReason | None
     created_at: datetime
+    # Polling of the address (shared by everyone watching it). None until the
+    # first check; check_errors counts failed checks in a row, retried with
+    # backoff until next_check_at. Defaults keep older services valid.
+    last_checked_at: datetime | None = None
+    next_check_at: datetime | None = None
+    check_errors: int = 0
 
 
 class SubscriptionPage(BaseModel):
