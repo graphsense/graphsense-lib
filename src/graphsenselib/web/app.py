@@ -56,7 +56,12 @@ from graphsenselib.web.middleware.body_size import RequestBodySizeLimitMiddlewar
 from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
 from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
-from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
+from graphsenselib.web.middleware.external_backends import (
+    DECLINED_HEADER,
+    RETRY_AFTER_HEADER,
+    SERVED_BY_HEADER,
+    ExternalBackendMiddleware,
+)
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
 from graphsenselib.web.routes import (
@@ -1123,6 +1128,13 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     )
 
 
+# Response headers the dashboard reads, named because the "*" wildcard does not
+# cover a request with credentials: which external backends are missing from
+# a merged answer, and when to retry a proxied request (a 429, or a 503 for a
+# backend that is down).
+EXPOSED_HEADERS = ["*", DECLINED_HEADER, RETRY_AFTER_HEADER, SERVED_BY_HEADER]
+
+
 def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
     """Setup CORS middleware on the app.
 
@@ -1130,6 +1142,10 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
     allow_origins=["*"]. This makes the middleware echo back the requesting
     Origin header instead of sending literal "*", which allows credentials
     to work (browsers reject Access-Control-Allow-Origin: * with credentials).
+
+    The same holds for ``expose_headers``: on a request with credentials a
+    browser reads ``*`` as a header literally named "*", so every header the
+    dashboard must read is named as well (EXPOSED_HEADERS).
     """
     origins = config.ALLOWED_ORIGINS
     if isinstance(origins, str):
@@ -1145,7 +1161,7 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["*"],
+            expose_headers=EXPOSED_HEADERS,
         )
     else:
         app.add_middleware(
@@ -1154,7 +1170,7 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["*"],
+            expose_headers=EXPOSED_HEADERS,
         )
 
 

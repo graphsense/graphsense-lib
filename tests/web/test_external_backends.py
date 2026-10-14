@@ -9,6 +9,7 @@ routers and an httpx MockTransport stands in for the backend.
 import json
 import logging
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI, Request
@@ -1118,3 +1119,28 @@ def test_no_entitlement_to_either_skips_the_backend_entirely():
     response = client.get("/search?q=0x", headers={"X-User-Roles": "currency-eth"})
     assert seen == []
     assert [c["currency"] for c in response.json()["currencies"]] == ["btc"]
+
+
+def test_the_dashboard_can_read_the_outage_headers_with_credentials():
+    """A request with credentials reads the "*" wildcard of
+    Access-Control-Expose-Headers as a header literally named "*", so the
+    headers the dashboard reads must be named."""
+    from graphsenselib.web.app import _setup_cors_middleware
+
+    app = FastAPI()
+    # the CORS setup reads nothing else of the config
+    _setup_cors_middleware(app, SimpleNamespace(ALLOWED_ORIGINS=["*"]))
+
+    @app.get("/stats")
+    async def stats():
+        return {}
+
+    response = TestClient(app).get(
+        "/stats", headers={"Origin": "http://localhost:3000"}
+    )
+    exposed = {
+        name.strip().lower()
+        for name in response.headers["access-control-expose-headers"].split(",")
+    }
+    assert {DECLINED_HEADER.lower(), "retry-after", SERVED_BY_HEADER} <= exposed
+    assert response.headers["access-control-allow-credentials"] == "true"
