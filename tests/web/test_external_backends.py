@@ -9,9 +9,11 @@ routers and an httpx MockTransport stands in for the backend.
 import json
 import logging
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI, Request
+from starlette.middleware.cors import CORSMiddleware
 from starlette.testclient import TestClient
 
 from graphsenselib.web.config import (
@@ -126,8 +128,14 @@ def make_client(
     with_role_gate=False,
     refuse_status=None,
     refuse_headers=None,
+    fail_with=None,
+    with_cors=False,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
+
+    ``fail_with`` makes every backend call raise that transport error (a
+    backend that is down or hangs); ``with_cors`` wraps the stack in the CORS
+    middleware exactly as create_app does.
 
     ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
     adapter without /capabilities)."""
@@ -184,6 +192,8 @@ def make_client(
 
     def backend(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if fail_with is not None:
+            raise fail_with
         if refuse_status is not None:
             return httpx.Response(
                 refuse_status, json={"detail": "refused"}, headers=refuse_headers or {}
@@ -212,7 +222,10 @@ def make_client(
     app.add_middleware(
         ExternalBackendMiddleware,
         config=config,
-        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+        client=httpx.AsyncClient(
+            transport=httpx.MockTransport(backend),
+            timeout=httpx.Timeout(config.timeout_s),
+        ),
         roles_config=roles_config,
         gated=gated,
     )
@@ -222,6 +235,8 @@ def make_client(
         app.add_middleware(
             CurrencyRoleMiddleware, config=roles_config, gated=set(gated or ())
         )
+    if with_cors:
+        app.add_middleware(CORSMiddleware, allow_origins=["*"])
     return TestClient(app), seen
 
 
@@ -534,23 +549,26 @@ def test_related_addresses_other_relation_types_skip_the_backends():
     assert seen == []
 
 
-def test_backend_error_is_loud():
-    """A broken backend must surface, not be shaped into an empty answer."""
-    app = FastAPI()
-    config = ExternalBackendsConfig(
-        enabled=True, networks={"bnb": {"url": BACKEND_URL}}
-    )
-    app.add_middleware(
-        ExternalBackendMiddleware,
-        config=config,
-        client=httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda request: (_ for _ in ()).throw(httpx.ConnectError("down"))
-            )
-        ),
-    )
-    client = TestClient(app, raise_server_exceptions=False)
-    assert client.get("/bnb/blocks/1").status_code == 500
+def test_an_unreachable_backend_answers_a_proxied_request_with_503():
+    """A request on an externally served network whose backend is down is a
+    503 that says when to come back, not a 500 the browser cannot read."""
+    client, _ = make_client(fail_with=httpx.ConnectError("down"))
+    with caplog_at_warning() as records:
+        response = client.get("/bnb/blocks/1")
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
+    assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
+    assert response.json() == {"detail": "The service for this network is unavailable."}
+    assert [r.levelno for r in records] == [logging.ERROR]
+    assert BACKEND_URL in records[0].getMessage()
+
+
+def test_a_proxied_backend_error_reaches_the_client_as_it_is():
+    """Only a missing answer is replaced; the backend's own answer is kept."""
+    client, _ = make_client(refuse_status=500)
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "refused"}
 
 
 def test_config_parses_from_dict():
@@ -871,16 +889,80 @@ def test_a_paced_backend_does_not_fail_stats_or_capabilities_or_twins():
         assert response.json()[field] == local, url
 
 
-def test_a_broken_backend_is_still_loud_on_a_merge():
-    """Only 429 is tolerated. A 500 is a fault and must not be shaped into a
-    silently short answer."""
-    client, _ = make_client(refuse_status=500)
-    for url, _ in MERGE_REQUESTS:
-        try:
+# --- a failing backend never takes out the core answer ------------------
+#
+# The dashboard loads /stats and /capabilities at startup and searches via
+# /search: a 500 there made the app unusable on every network while the
+# backend was down. A failed backend is a partial answer like a 429, but it is
+# a fault, so it is logged at ERROR.
+
+MERGE_LOCAL_ANSWERS = [
+    ("/stats", "currencies", [{"name": "btc", "no_blocks": 1}]),
+    ("/capabilities", "networks", [{"network": "btc", "disabled": []}]),
+    (
+        "/search?q=0x",
+        "currencies",
+        [{"currency": "btc", "addresses": ["1local"], "txs": []}],
+    ),
+    (
+        "/eth/addresses/0xsame/related_addresses",
+        "related_addresses",
+        LOCAL_RELATED_ADDRESSES["related_addresses"],
+    ),
+]
+
+
+def _assert_partial_answers(client):
+    levels = []
+    for url, field, local in MERGE_LOCAL_ANSWERS:
+        with caplog_at_warning() as records:
             response = client.get(url)
-        except httpx.HTTPStatusError:
-            continue
-        assert response.status_code >= 500, url
+        assert response.status_code == 200, url
+        assert response.json()[field] == local, url
+        assert response.headers.get(DECLINED_HEADER) == BACKEND_URL, url
+        levels += [r.levelno for r in records]
+    # one alert for the outage, then one warning per failed call
+    assert levels == [logging.ERROR] + [logging.WARNING] * (len(levels) - 1)
+    assert len(levels) == len(MERGE_LOCAL_ANSWERS)
+
+
+def test_an_unreachable_backend_does_not_fail_a_merge():
+    client, _ = make_client(fail_with=httpx.ConnectError("down"))
+    _assert_partial_answers(client)
+
+
+def test_a_backend_that_does_not_answer_in_time_does_not_fail_a_merge():
+    client, _ = make_client(fail_with=httpx.ReadTimeout("hung"))
+    _assert_partial_answers(client)
+
+
+def test_a_backend_error_answer_does_not_fail_a_merge():
+    for status in (500, 502, 503, 403):
+        client, _ = make_client(refuse_status=status)
+        _assert_partial_answers(client)
+
+
+def test_a_merge_waits_merge_timeout_s_and_a_proxy_timeout_s():
+    """A hung backend held /stats for the full 60 s proxy timeout; a merge
+    call now gives up after merge_timeout_s (default 5 s, the adapter answers
+    these in under 1 s cold)."""
+    client, seen = make_client()
+    client.get("/stats")
+    client.get("/bnb/blocks/1")
+    merge, proxy = seen
+    assert merge.extensions["timeout"]["read"] == 5.0
+    assert proxy.extensions["timeout"]["read"] == 60.0
+
+
+def test_a_failed_backend_answer_is_readable_by_the_browser():
+    """Both answers pass the CORS middleware, which wraps this one in
+    create_app: a 500 from the generic handler did not, and the dashboard
+    only saw a network error."""
+    client, _ = make_client(fail_with=httpx.ConnectError("down"), with_cors=True)
+    origin = {"Origin": "http://localhost:3000"}
+    for url in ("/stats", "/bnb/blocks/1"):
+        response = client.get(url, headers=origin)
+        assert response.headers["access-control-allow-origin"] == "*", url
 
 
 def test_a_proxied_429_reaches_the_client_untouched():
@@ -1041,3 +1123,141 @@ def test_no_entitlement_to_either_skips_the_backend_entirely():
     response = client.get("/search?q=0x", headers={"X-User-Roles": "currency-eth"})
     assert seen == []
     assert [c["currency"] for c in response.json()["currencies"]] == ["btc"]
+
+
+def test_the_dashboard_can_read_the_outage_headers_with_credentials():
+    """A request with credentials reads the "*" wildcard of
+    Access-Control-Expose-Headers as a header literally named "*", so the
+    headers the dashboard reads must be named."""
+    from graphsenselib.web.app import _setup_cors_middleware
+
+    app = FastAPI()
+    # the CORS setup reads nothing else of the config
+    _setup_cors_middleware(app, SimpleNamespace(ALLOWED_ORIGINS=["*"]))
+
+    @app.get("/stats")
+    async def stats():
+        return {}
+
+    response = TestClient(app).get(
+        "/stats", headers={"Origin": "http://localhost:3000"}
+    )
+    exposed = {
+        name.strip().lower()
+        for name in response.headers["access-control-expose-headers"].split(",")
+    }
+    assert {DECLINED_HEADER.lower(), "retry-after", SERVED_BY_HEADER} <= exposed
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+# --- one alert per outage, not one per request ---------------------------
+#
+# During an outage every dashboard page and every MCP call fails over to the
+# partial answer. ERROR is the level the Slack handler forwards, so only the
+# first failure of a backend that answered before may log at it.
+
+
+def _flaky_client(state):
+    """A backend that is down while state["down"] is true."""
+    app = FastAPI()
+
+    @app.get("/stats")
+    async def stats():
+        return {"currencies": [{"name": "btc", "no_blocks": 1}]}
+
+    def backend(request: httpx.Request) -> httpx.Response:
+        if state["down"]:
+            raise httpx.ConnectError("down")
+        if request.url.path == "/stats":
+            return httpx.Response(200, json=BACKEND_STATS)
+        return httpx.Response(200, json={"backend_path": request.url.path})
+
+    config = ExternalBackendsConfig(
+        enabled=True, networks={"bnb": {"url": BACKEND_URL}}
+    )
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=config,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+    )
+    return TestClient(app)
+
+
+def _levels(client, *urls):
+    with caplog_at_warning() as records:
+        for url in urls:
+            client.get(url)
+    return [(r.levelno, r.getMessage()) for r in records]
+
+
+def test_an_outage_alerts_once_and_its_end_is_logged_once():
+    state = {"down": True}
+    client = _flaky_client(state)
+
+    first = _levels(client, "/stats", "/stats", "/bnb/blocks/1")
+    assert [level for level, _ in first] == [
+        logging.ERROR,
+        logging.WARNING,
+        logging.WARNING,
+    ]
+    assert "stopped answering" in first[0][1] and "bnb" in first[0][1]
+
+    state["down"] = False
+    recovered = _levels(client, "/stats", "/stats")
+    assert [level for level, _ in recovered] == [logging.WARNING]
+    assert "answers again" in recovered[0][1]
+
+    # a new outage is a new alert
+    state["down"] = True
+    assert [level for level, _ in _levels(client, "/stats")] == [logging.ERROR]
+
+
+def test_a_backend_error_answer_alerts_once_too():
+    """A 403 (say, a wrong API key) leaves the lite networks out of every
+    merged answer: an outage as well, alerted once."""
+    client, _ = make_client(refuse_status=403)
+    assert [level for level, _ in _levels(client, "/stats", "/search?q=0x")] == [
+        logging.ERROR,
+        logging.WARNING,
+    ]
+
+
+def test_an_overloaded_backends_503_is_no_outage():
+    """The proxy hands the backend's own 503 through: it answered, so nothing
+    alerts, and a pending outage ends."""
+    client, _ = make_client(refuse_status=503)
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 503
+    assert _levels(client, "/bnb/blocks/1") == []
+
+
+def test_the_outage_alert_reaches_slack(monkeypatch):
+    """setup_logging gives the middleware's logger the same Slack handler as
+    the app's: it is a sibling logger tree, so without it the alert would
+    only reach the log."""
+    from graphsenselib.utils.slack import SlackLogHandler
+    from graphsenselib.web.app import setup_logging
+    from graphsenselib.web.config import LoggingConfig
+
+    names = (
+        "graphsenselib.web.app",
+        "graphsenselib.mcp",
+        "graphsenselib.web.middleware.external_backends",
+    )
+    for name in (*names, "asyncio", "uvicorn"):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "handlers", [])
+        monkeypatch.setattr(logger, "level", logger.level)
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: None)
+    monkeypatch.setattr(logging.root, "handlers", [])
+
+    setup_logging(
+        logging.getLogger("graphsenselib.web.app"),
+        SimpleNamespace(hooks=["https://hooks.slack.test/x"]),
+        "test",
+        LoggingConfig(),
+    )
+
+    handlers = logging.getLogger(names[2]).handlers
+    assert [type(h) for h in handlers] == [SlackLogHandler]
+    assert handlers[0].level == logging.ERROR

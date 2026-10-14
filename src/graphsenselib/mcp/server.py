@@ -15,6 +15,11 @@ from starlette.routing import Route
 from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
+from graphsenselib.mcp.declined import (
+    DeclinedBackendsNoteMiddleware,
+    networks_by_backend,
+    record_declined,
+)
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
 from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE, PagesizeDefaultMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
@@ -73,6 +78,9 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         mcp_component_fn=component_fn,
         website_url=config.website_url or None,
         icons=icons,
+        # collects the backends a REST answer names as missing, for the
+        # DeclinedBackendsNoteMiddleware below
+        httpx_client_kwargs={"event_hooks": {"response": [record_declined]}},
     )
 
     # Publish the default in each generated tool's input schema and apply it
@@ -98,6 +106,10 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     # present. Default that case too, and reject JSON containers before HTTPX
     # can serialize an empty one as an omitted query parameter.
     mcp.add_middleware(PagesizeDefaultMiddleware(paged_tools))
+
+    # A merged REST answer whose external backend did not answer is a 200
+    # without that backend's networks; the model is told so in the result.
+    mcp.add_middleware(DeclinedBackendsNoteMiddleware(networks_by_backend(app)))
 
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;
     # tools that build Pathfinder deep links (build_pathfinder_file's

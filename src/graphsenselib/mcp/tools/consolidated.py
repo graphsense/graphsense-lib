@@ -3,15 +3,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Callable, Literal, Optional
 
 import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import Field
 
+from graphsenselib.mcp.declined import record_declined
 from graphsenselib.mcp.error_logging import request_user
 from graphsenselib.mcp.pagesize import resolve_pagesize
+from graphsenselib.web.middleware.external_backends import (
+    SERVED_BY_HEADER,
+    SERVED_BY_VALUE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +76,19 @@ def _make_client(app) -> httpx.AsyncClient:
     tests via in-process Client) — safe no-op.
     """
     headers = get_http_headers()
+    # a merged answer missing an external backend's networks is noted in the
+    # tool result (mcp/declined.py)
+    event_hooks: dict[str, list[Callable[..., Any]]] = {"response": [record_declined]}
     base_url = getattr(app.state, "_graphsense_mcp_internal_base_url", None)
     if base_url:
-        return httpx.AsyncClient(base_url=base_url, headers=headers)
+        return httpx.AsyncClient(
+            base_url=base_url, headers=headers, event_hooks=event_hooks
+        )
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://graphsense-mcp",
         headers=headers,
+        event_hooks=event_hooks,
     )
 
 
@@ -95,13 +106,24 @@ def _raise_backend_http_error(response: httpx.Response, path: str) -> None:
     mistakes (`tx not found`, `bad address`, ...) and would just be
     noise. 501 stays quiet too: the external backend of a lite network
     answers it by contract for features it does not offer (clusters,
-    neighbors; see `/capabilities`), so it is no incident either.
+    neighbors; see `/capabilities`), so it is no incident either. So does a
+    503 the external backend answered or that stands for it being down: the
+    external backends middleware alerts once per outage, and one alert per
+    tool call during it would be the spam that avoids.
     """
     try:
         detail = response.json().get("detail")
     except Exception:
         detail = response.text
-    if response.status_code >= 500 and response.status_code != 501:
+    external_unavailable = (
+        response.status_code == 503
+        and response.headers.get(SERVED_BY_HEADER) == SERVED_BY_VALUE
+    )
+    if (
+        response.status_code >= 500
+        and response.status_code != 501
+        and not external_unavailable
+    ):
         logger.error(
             "graphsense backend returned HTTP %d for %s: %s | User: %s",
             response.status_code,
