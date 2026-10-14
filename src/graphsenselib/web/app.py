@@ -491,6 +491,11 @@ def setup_logging(
         # for MCP incidents the way the unhandled-exception handler does for
         # REST routes.
         mcp_logger = logging.getLogger("graphsenselib.mcp")
+        # The external backends middleware logs at ERROR exactly once per
+        # outage of a backend (its module docstring), a sibling tree as well.
+        backends_logger = logging.getLogger(
+            "graphsenselib.web.middleware.external_backends"
+        )
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
@@ -498,6 +503,9 @@ def setup_logging(
             mcp_handler = SlackLogHandler(h, environment=default_environment)
             mcp_handler.setLevel("ERROR")
             mcp_logger.addHandler(mcp_handler)
+            backends_handler = SlackLogHandler(h, environment=default_environment)
+            backends_handler.setLevel("ERROR")
+            backends_logger.addHandler(backends_handler)
 
     smtp = logging_config.smtp
     if not smtp:

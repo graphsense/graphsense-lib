@@ -913,13 +913,17 @@ MERGE_LOCAL_ANSWERS = [
 
 
 def _assert_partial_answers(client):
+    levels = []
     for url, field, local in MERGE_LOCAL_ANSWERS:
         with caplog_at_warning() as records:
             response = client.get(url)
         assert response.status_code == 200, url
         assert response.json()[field] == local, url
         assert response.headers.get(DECLINED_HEADER) == BACKEND_URL, url
-        assert [r.levelno for r in records] == [logging.ERROR], url
+        levels += [r.levelno for r in records]
+    # one alert for the outage, then one warning per failed call
+    assert levels == [logging.ERROR] + [logging.WARNING] * (len(levels) - 1)
+    assert len(levels) == len(MERGE_LOCAL_ANSWERS)
 
 
 def test_an_unreachable_backend_does_not_fail_a_merge():
@@ -1144,3 +1148,116 @@ def test_the_dashboard_can_read_the_outage_headers_with_credentials():
     }
     assert {DECLINED_HEADER.lower(), "retry-after", SERVED_BY_HEADER} <= exposed
     assert response.headers["access-control-allow-credentials"] == "true"
+
+
+# --- one alert per outage, not one per request ---------------------------
+#
+# During an outage every dashboard page and every MCP call fails over to the
+# partial answer. ERROR is the level the Slack handler forwards, so only the
+# first failure of a backend that answered before may log at it.
+
+
+def _flaky_client(state):
+    """A backend that is down while state["down"] is true."""
+    app = FastAPI()
+
+    @app.get("/stats")
+    async def stats():
+        return {"currencies": [{"name": "btc", "no_blocks": 1}]}
+
+    def backend(request: httpx.Request) -> httpx.Response:
+        if state["down"]:
+            raise httpx.ConnectError("down")
+        if request.url.path == "/stats":
+            return httpx.Response(200, json=BACKEND_STATS)
+        return httpx.Response(200, json={"backend_path": request.url.path})
+
+    config = ExternalBackendsConfig(
+        enabled=True, networks={"bnb": {"url": BACKEND_URL}}
+    )
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=config,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+    )
+    return TestClient(app)
+
+
+def _levels(client, *urls):
+    with caplog_at_warning() as records:
+        for url in urls:
+            client.get(url)
+    return [(r.levelno, r.getMessage()) for r in records]
+
+
+def test_an_outage_alerts_once_and_its_end_is_logged_once():
+    state = {"down": True}
+    client = _flaky_client(state)
+
+    first = _levels(client, "/stats", "/stats", "/bnb/blocks/1")
+    assert [level for level, _ in first] == [
+        logging.ERROR,
+        logging.WARNING,
+        logging.WARNING,
+    ]
+    assert "stopped answering" in first[0][1] and "bnb" in first[0][1]
+
+    state["down"] = False
+    recovered = _levels(client, "/stats", "/stats")
+    assert [level for level, _ in recovered] == [logging.WARNING]
+    assert "answers again" in recovered[0][1]
+
+    # a new outage is a new alert
+    state["down"] = True
+    assert [level for level, _ in _levels(client, "/stats")] == [logging.ERROR]
+
+
+def test_a_backend_error_answer_alerts_once_too():
+    """A 403 (say, a wrong API key) leaves the lite networks out of every
+    merged answer: an outage as well, alerted once."""
+    client, _ = make_client(refuse_status=403)
+    assert [level for level, _ in _levels(client, "/stats", "/search?q=0x")] == [
+        logging.ERROR,
+        logging.WARNING,
+    ]
+
+
+def test_an_overloaded_backends_503_is_no_outage():
+    """The proxy hands the backend's own 503 through: it answered, so nothing
+    alerts, and a pending outage ends."""
+    client, _ = make_client(refuse_status=503)
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 503
+    assert _levels(client, "/bnb/blocks/1") == []
+
+
+def test_the_outage_alert_reaches_slack(monkeypatch):
+    """setup_logging gives the middleware's logger the same Slack handler as
+    the app's: it is a sibling logger tree, so without it the alert would
+    only reach the log."""
+    from graphsenselib.utils.slack import SlackLogHandler
+    from graphsenselib.web.app import setup_logging
+    from graphsenselib.web.config import LoggingConfig
+
+    names = (
+        "graphsenselib.web.app",
+        "graphsenselib.mcp",
+        "graphsenselib.web.middleware.external_backends",
+    )
+    for name in (*names, "asyncio", "uvicorn"):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "handlers", [])
+        monkeypatch.setattr(logger, "level", logger.level)
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: None)
+    monkeypatch.setattr(logging.root, "handlers", [])
+
+    setup_logging(
+        logging.getLogger("graphsenselib.web.app"),
+        SimpleNamespace(hooks=["https://hooks.slack.test/x"]),
+        "test",
+        LoggingConfig(),
+    )
+
+    handlers = logging.getLogger(names[2]).handlers
+    assert [type(h) for h in handlers] == [SlackLogHandler]
+    assert handlers[0].level == logging.ERROR
