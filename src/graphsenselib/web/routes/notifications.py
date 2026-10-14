@@ -313,18 +313,6 @@ async def update_settings(
     )
 
 
-@router.delete(
-    "/me",
-    status_code=204,
-    summary="Delete all your notification data",
-    description="Settings, subscriptions and the feed. Idempotent.",
-    operation_id="delete_notification_data",
-)
-async def delete_me(request: Request, client: NotificationsClient = Depends(_client)):
-    await client.call(request, "DELETE", "/me")
-    return Response(status_code=204)
-
-
 async def _service_answer(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, _ServiceAnswer)
     return exc.response

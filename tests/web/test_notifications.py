@@ -223,13 +223,19 @@ def test_feed_routes():
     }
 
 
-def test_settings_and_me():
+def test_settings():
     client, seen = make_client()
     assert client.get("/notifications/settings").json()["timezone"] == "Europe/Vienna"
     client.patch("/notifications/settings", json={"timezone": "UTC"})
     assert body_of(seen[1]) == {"timezone": "UTC"}
-    assert client.delete("/notifications/me").status_code == 204
-    assert (seen[2].method, seen[2].url.path) == ("DELETE", "/me")
+
+
+def test_deleting_all_data_is_not_exposed():
+    # The service's DELETE /me wipes a user's notification data; it is for
+    # account deletion on the internal network, not a user-facing route.
+    client, seen = make_client()
+    assert client.delete("/notifications/me").status_code in (404, 405)
+    assert seen == []
 
 
 def test_invalid_timezone_is_rejected_here():
@@ -334,7 +340,6 @@ def test_routes_in_the_spec_when_configured():
         "/notifications/feed/read",
         "/notifications/feed/unread_count",
         "/notifications/settings",
-        "/notifications/me",
     }
     op = spec["paths"]["/notifications/subscriptions"]["post"]
     assert op["operationId"] == "create_notification_subscription"
