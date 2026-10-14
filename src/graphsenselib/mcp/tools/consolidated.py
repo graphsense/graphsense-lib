@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Callable, Literal, Optional
 
 import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import Field
 
+from graphsenselib.mcp.declined import record_declined
 from graphsenselib.mcp.error_logging import request_user
 from graphsenselib.mcp.pagesize import resolve_pagesize
 
@@ -71,13 +72,19 @@ def _make_client(app) -> httpx.AsyncClient:
     tests via in-process Client) — safe no-op.
     """
     headers = get_http_headers()
+    # a merged answer missing an external backend's networks is noted in the
+    # tool result (mcp/declined.py)
+    event_hooks: dict[str, list[Callable[..., Any]]] = {"response": [record_declined]}
     base_url = getattr(app.state, "_graphsense_mcp_internal_base_url", None)
     if base_url:
-        return httpx.AsyncClient(base_url=base_url, headers=headers)
+        return httpx.AsyncClient(
+            base_url=base_url, headers=headers, event_hooks=event_hooks
+        )
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://graphsense-mcp",
         headers=headers,
+        event_hooks=event_hooks,
     )
 
 
