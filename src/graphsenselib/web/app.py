@@ -59,7 +59,10 @@ from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
-from graphsenselib.web.routes.notifications import register_notifications_routes
+from graphsenselib.web.routes.notifications import (
+    order_notifications_tag,
+    register_notifications_routes,
+)
 from graphsenselib.web.routes import (
     addresses,
     blocks,
@@ -1341,6 +1344,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Add servers for client generator compatibility
         openapi_schema["servers"] = [{"url": ""}]
+
+        # Notifications last and marked beta (registered first for routing)
+        openapi_schema = order_notifications_tag(openapi_schema)
 
         info = openapi_schema["info"]
         config = app.state.config

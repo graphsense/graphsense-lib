@@ -11,7 +11,11 @@ from pydantic import ValidationError
 
 from graphsenselib.web.app import _register_exception_handlers
 from graphsenselib.web.config import GSRestConfig, NotificationsConfig
-from graphsenselib.web.routes.notifications import register_notifications_routes
+from graphsenselib.web.routes.notifications import (
+    TAG_DESCRIPTION,
+    order_notifications_tag,
+    register_notifications_routes,
+)
 
 SERVICE_URL = "http://gs-notifications:8000"
 GENESIS = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
@@ -335,6 +339,28 @@ def test_routes_in_the_spec_when_configured():
     op = spec["paths"]["/notifications/subscriptions"]["post"]
     assert op["operationId"] == "create_notification_subscription"
     assert op["tags"] == ["notifications"]
+
+
+def test_tag_is_last_and_beta_in_the_spec():
+    client, _ = make_client(include_in_schema=True)
+    spec = client.app.openapi()
+    spec["paths"]["/{currency}/feed"]["get"]["tags"] = ["txs"]
+    spec["tags"] = [{"name": "txs", "description": "Transactions"}]
+    spec = order_notifications_tag(spec)
+    assert [t["name"] for t in spec["tags"]] == ["txs", "notifications"]
+    assert spec["tags"][0] == {"name": "txs", "description": "Transactions"}
+    assert spec["tags"][-1]["description"] == TAG_DESCRIPTION
+    assert "Beta" in TAG_DESCRIPTION
+    assert list(spec["paths"])[0] == "/{currency}/feed"
+    assert all(p.startswith("/notifications") for p in list(spec["paths"])[1:])
+
+
+def test_spec_without_the_routes_is_unchanged():
+    client, _ = make_client()
+    spec = client.app.openapi()
+    before = json.dumps(spec)
+    assert json.dumps(order_notifications_tag(spec)) == before
+    assert "tags" not in spec
 
 
 def test_enabled_needs_a_url():

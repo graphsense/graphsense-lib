@@ -44,6 +44,11 @@ from graphsenselib.web.models.notifications import (
 logger = logging.getLogger(__name__)
 
 PREFIX = "/notifications"
+TAG = "notifications"
+TAG_DESCRIPTION = (
+    "**Beta.** Address notifications: subscribe to addresses and get new "
+    "transactions in a feed and by email. These routes may still change."
+)
 
 # Carried back to the client on an error: a paced or busy service says when
 # to come back.
@@ -325,6 +330,41 @@ async def _service_answer(request: Request, exc: Exception) -> Response:
     return exc.response
 
 
+def order_notifications_tag(schema: dict[str, Any]) -> dict[str, Any]:
+    """Put the notifications tag last in the spec and label it beta.
+
+    The routes are registered before the network routers (so no
+    ``/{currency}`` path shadows them), which would otherwise make them the
+    first section in Swagger UI and ReDoc. Both order sections by the
+    top-level ``tags`` list, so it is filled in path order with this tag
+    moved to the end. A spec without the tag is returned unchanged.
+    """
+    paths = schema.get("paths", {})
+
+    def is_ours(item: dict[str, Any]) -> bool:
+        return any(
+            TAG in op.get("tags", []) for op in item.values() if isinstance(op, dict)
+        )
+
+    if not any(is_ours(item) for item in paths.values()):
+        return schema
+    schema["paths"] = {
+        **{p: i for p, i in paths.items() if not is_ours(i)},
+        **{p: i for p, i in paths.items() if is_ours(i)},
+    }
+    known = {t["name"]: t for t in schema.get("tags", [])}
+    names: list[str] = []
+    for item in schema["paths"].values():
+        for op in item.values():
+            if isinstance(op, dict):
+                names += [n for n in op.get("tags", []) if n not in names]
+    names += [n for n in known if n not in names]
+    schema["tags"] = [known.get(n, {"name": n}) for n in names if n != TAG] + [
+        {**known.get(TAG, {}), "name": TAG, "description": TAG_DESCRIPTION}
+    ]
+    return schema
+
+
 def register_notifications_routes(
     app: FastAPI,
     config: Optional[NotificationsConfig],
@@ -338,7 +378,7 @@ def register_notifications_routes(
     app.add_exception_handler(_ServiceAnswer, _service_answer)
     app.include_router(
         router,
-        tags=["notifications"],
+        tags=[TAG],
         include_in_schema=config.include_in_schema,
     )
     logger.info(
