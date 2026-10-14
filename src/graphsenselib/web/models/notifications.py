@@ -41,6 +41,15 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _known_timezone(v: str | None) -> str | None:
+    if v is not None:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"unknown timezone {v!r}") from e
+    return v
+
+
 # --- filters ---------------------------------------------------------------
 
 
@@ -83,6 +92,12 @@ class SubscriptionCreate(_Strict):
     frequency: Frequency | None = None
     filters: Filters = Filters()
     label: str | None = Field(default=None, max_length=200)
+    # The browser's IANA zone (Intl.DateTimeFormat().resolvedOptions().timeZone).
+    # When given it becomes the user's timezone: times in mails, the hour
+    # daily digests go out. Unset keeps the current one (initially UTC).
+    timezone: str | None = Field(default=None, max_length=64)
+
+    _check_timezone = field_validator("timezone")(_known_timezone)
 
 
 class SubscriptionUpdate(_Strict):
@@ -191,12 +206,4 @@ class UserSettingsUpdate(_Strict):
     default_frequency: Frequency | None = None
     timezone: str | None = None
 
-    @field_validator("timezone")
-    @classmethod
-    def _known_timezone(cls, v: str | None) -> str | None:
-        if v is not None:
-            try:
-                ZoneInfo(v)
-            except (ZoneInfoNotFoundError, ValueError) as e:
-                raise ValueError(f"unknown timezone {v!r}") from e
-        return v
+    _check_timezone = field_validator("timezone")(_known_timezone)

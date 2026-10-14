@@ -39,8 +39,6 @@ from graphsenselib.web.models.notifications import (
     SubscriptionPage,
     SubscriptionUpdate,
     UnreadCount,
-    UserSettings,
-    UserSettingsUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -326,37 +324,6 @@ async def unread_count(
     request: Request, client: NotificationsClient = Depends(_client)
 ):
     return await client.call(request, "GET", "/feed/unread_count")
-
-
-@router.get(
-    "/settings",
-    summary="Get your notification settings",
-    operation_id="get_notification_settings",
-    response_model=UserSettings,
-)
-async def read_settings(
-    request: Request, client: NotificationsClient = Depends(_client)
-):
-    return await client.call(request, "GET", "/settings")
-
-
-@router.patch(
-    "/settings",
-    summary="Change your notification settings",
-    operation_id="update_notification_settings",
-    response_model=UserSettings,
-)
-async def update_settings(
-    request: Request,
-    body: UserSettingsUpdate,
-    client: NotificationsClient = Depends(_client),
-):
-    return await client.call(
-        request,
-        "PATCH",
-        "/settings",
-        body=body.model_dump(mode="json", exclude_unset=True),
-    )
 
 
 async def _service_answer(request: Request, exc: Exception) -> Response:

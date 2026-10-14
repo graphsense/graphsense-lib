@@ -97,15 +97,6 @@ def make_client(answer=None, include_in_schema=False, enabled=True):
             )
         if path == "/feed/unread_count":
             return httpx.Response(200, json={"count": 1, "capped": False})
-        if path == "/settings":
-            return httpx.Response(
-                200,
-                json={
-                    "email_enabled": True,
-                    "default_frequency": "daily",
-                    "timezone": "Europe/Vienna",
-                },
-            )
         return httpx.Response(404, json={"detail": "Not Found"})
 
     app = FastAPI()
@@ -152,7 +143,7 @@ def test_only_identity_and_roles_headers_are_forwarded():
 
 def test_missing_identity_is_not_invented():
     client, seen = make_client()
-    client.get("/notifications/settings")
+    client.get("/notifications/feed/unread_count")
     assert "x-username" not in seen[0].headers
 
 
@@ -235,11 +226,13 @@ def test_feed_routes():
     }
 
 
-def test_settings():
+def test_settings_are_not_exposed():
+    # The service keeps per-user settings internally: no global email switch
+    # for users; the timezone comes from the browser with each subscription.
     client, seen = make_client()
-    assert client.get("/notifications/settings").json()["timezone"] == "Europe/Vienna"
-    client.patch("/notifications/settings", json={"timezone": "UTC"})
-    assert body_of(seen[1]) == {"timezone": "UTC"}
+    assert client.get("/notifications/settings").status_code == 404
+    assert client.patch("/notifications/settings", json={}).status_code in (404, 405)
+    assert seen == []
 
 
 def test_deleting_all_data_is_not_exposed():
@@ -250,9 +243,21 @@ def test_deleting_all_data_is_not_exposed():
     assert seen == []
 
 
+def test_create_passes_the_browser_timezone():
+    client, seen = make_client()
+    client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "timezone": "Europe/Vienna"},
+    )
+    assert body_of(seen[0])["timezone"] == "Europe/Vienna"
+
+
 def test_invalid_timezone_is_rejected_here():
     client, seen = make_client()
-    response = client.patch("/notifications/settings", json={"timezone": "Mars/Base"})
+    response = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "timezone": "Mars/Base"},
+    )
     assert response.status_code == 422
     assert seen == []
 
@@ -296,7 +301,7 @@ def test_busy_service_passes_retry_after():
 
 def test_non_json_error_body_becomes_detail():
     client, _ = make_client(answer=lambda r: httpx.Response(500, text="boom"))
-    response = client.get("/notifications/settings")
+    response = client.get("/notifications/feed/unread_count")
     assert response.status_code == 500
     assert response.json() == {"detail": "boom"}
 
@@ -351,7 +356,6 @@ def test_routes_in_the_spec_when_configured():
         "/notifications/feed",
         "/notifications/feed/read",
         "/notifications/feed/unread_count",
-        "/notifications/settings",
     }
     op = spec["paths"]["/notifications/subscriptions"]["post"]
     assert op["operationId"] == "create_notification_subscription"
