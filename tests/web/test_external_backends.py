@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 import httpx
 from fastapi import FastAPI, Request
+from starlette.middleware.cors import CORSMiddleware
 from starlette.testclient import TestClient
 
 from graphsenselib.web.config import (
@@ -126,8 +127,14 @@ def make_client(
     with_role_gate=False,
     refuse_status=None,
     refuse_headers=None,
+    fail_with=None,
+    with_cors=False,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
+
+    ``fail_with`` makes every backend call raise that transport error (a
+    backend that is down or hangs); ``with_cors`` wraps the stack in the CORS
+    middleware exactly as create_app does.
 
     ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
     adapter without /capabilities)."""
@@ -184,6 +191,8 @@ def make_client(
 
     def backend(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if fail_with is not None:
+            raise fail_with
         if refuse_status is not None:
             return httpx.Response(
                 refuse_status, json={"detail": "refused"}, headers=refuse_headers or {}
@@ -212,7 +221,10 @@ def make_client(
     app.add_middleware(
         ExternalBackendMiddleware,
         config=config,
-        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+        client=httpx.AsyncClient(
+            transport=httpx.MockTransport(backend),
+            timeout=httpx.Timeout(config.timeout_s),
+        ),
         roles_config=roles_config,
         gated=gated,
     )
@@ -222,6 +234,8 @@ def make_client(
         app.add_middleware(
             CurrencyRoleMiddleware, config=roles_config, gated=set(gated or ())
         )
+    if with_cors:
+        app.add_middleware(CORSMiddleware, allow_origins=["*"])
     return TestClient(app), seen
 
 
@@ -534,23 +548,26 @@ def test_related_addresses_other_relation_types_skip_the_backends():
     assert seen == []
 
 
-def test_backend_error_is_loud():
-    """A broken backend must surface, not be shaped into an empty answer."""
-    app = FastAPI()
-    config = ExternalBackendsConfig(
-        enabled=True, networks={"bnb": {"url": BACKEND_URL}}
-    )
-    app.add_middleware(
-        ExternalBackendMiddleware,
-        config=config,
-        client=httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda request: (_ for _ in ()).throw(httpx.ConnectError("down"))
-            )
-        ),
-    )
-    client = TestClient(app, raise_server_exceptions=False)
-    assert client.get("/bnb/blocks/1").status_code == 500
+def test_an_unreachable_backend_answers_a_proxied_request_with_503():
+    """A request on an externally served network whose backend is down is a
+    503 that says when to come back, not a 500 the browser cannot read."""
+    client, _ = make_client(fail_with=httpx.ConnectError("down"))
+    with caplog_at_warning() as records:
+        response = client.get("/bnb/blocks/1")
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
+    assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
+    assert response.json() == {"detail": "The service for this network is unavailable."}
+    assert [r.levelno for r in records] == [logging.ERROR]
+    assert BACKEND_URL in records[0].getMessage()
+
+
+def test_a_proxied_backend_error_reaches_the_client_as_it_is():
+    """Only a missing answer is replaced; the backend's own answer is kept."""
+    client, _ = make_client(refuse_status=500)
+    response = client.get("/bnb/blocks/1")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "refused"}
 
 
 def test_config_parses_from_dict():
@@ -871,16 +888,76 @@ def test_a_paced_backend_does_not_fail_stats_or_capabilities_or_twins():
         assert response.json()[field] == local, url
 
 
-def test_a_broken_backend_is_still_loud_on_a_merge():
-    """Only 429 is tolerated. A 500 is a fault and must not be shaped into a
-    silently short answer."""
-    client, _ = make_client(refuse_status=500)
-    for url, _ in MERGE_REQUESTS:
-        try:
+# --- a failing backend never takes out the core answer ------------------
+#
+# The dashboard loads /stats and /capabilities at startup and searches via
+# /search: a 500 there made the app unusable on every network while the
+# backend was down. A failed backend is a partial answer like a 429, but it is
+# a fault, so it is logged at ERROR.
+
+MERGE_LOCAL_ANSWERS = [
+    ("/stats", "currencies", [{"name": "btc", "no_blocks": 1}]),
+    ("/capabilities", "networks", [{"network": "btc", "disabled": []}]),
+    (
+        "/search?q=0x",
+        "currencies",
+        [{"currency": "btc", "addresses": ["1local"], "txs": []}],
+    ),
+    (
+        "/eth/addresses/0xsame/related_addresses",
+        "related_addresses",
+        LOCAL_RELATED_ADDRESSES["related_addresses"],
+    ),
+]
+
+
+def _assert_partial_answers(client):
+    for url, field, local in MERGE_LOCAL_ANSWERS:
+        with caplog_at_warning() as records:
             response = client.get(url)
-        except httpx.HTTPStatusError:
-            continue
-        assert response.status_code >= 500, url
+        assert response.status_code == 200, url
+        assert response.json()[field] == local, url
+        assert response.headers.get(DECLINED_HEADER) == BACKEND_URL, url
+        assert [r.levelno for r in records] == [logging.ERROR], url
+
+
+def test_an_unreachable_backend_does_not_fail_a_merge():
+    client, _ = make_client(fail_with=httpx.ConnectError("down"))
+    _assert_partial_answers(client)
+
+
+def test_a_backend_that_does_not_answer_in_time_does_not_fail_a_merge():
+    client, _ = make_client(fail_with=httpx.ReadTimeout("hung"))
+    _assert_partial_answers(client)
+
+
+def test_a_backend_error_answer_does_not_fail_a_merge():
+    for status in (500, 502, 503, 403):
+        client, _ = make_client(refuse_status=status)
+        _assert_partial_answers(client)
+
+
+def test_a_merge_waits_merge_timeout_s_and_a_proxy_timeout_s():
+    """A hung backend held /stats for the full 60 s proxy timeout; a merge
+    call now gives up after merge_timeout_s (default 5 s, the adapter answers
+    these in under 1 s cold)."""
+    client, seen = make_client()
+    client.get("/stats")
+    client.get("/bnb/blocks/1")
+    merge, proxy = seen
+    assert merge.extensions["timeout"]["read"] == 5.0
+    assert proxy.extensions["timeout"]["read"] == 60.0
+
+
+def test_a_failed_backend_answer_is_readable_by_the_browser():
+    """Both answers pass the CORS middleware, which wraps this one in
+    create_app: a 500 from the generic handler did not, and the dashboard
+    only saw a network error."""
+    client, _ = make_client(fail_with=httpx.ConnectError("down"), with_cors=True)
+    origin = {"Origin": "http://localhost:3000"}
+    for url in ("/stats", "/bnb/blocks/1"):
+        response = client.get(url, headers=origin)
+        assert response.headers["access-control-allow-origin"] == "*", url
 
 
 def test_a_proxied_429_reaches_the_client_untouched():

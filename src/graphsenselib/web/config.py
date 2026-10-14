@@ -123,6 +123,14 @@ class ExternalBackendsConfig(BaseSettings):
     timeout_s: float = Field(
         default=60.0, description="HTTP timeout towards the backends"
     )
+    merge_timeout_s: float = Field(
+        default=5.0,
+        description="HTTP timeout of a merge fan-out call (/stats, "
+        "/capabilities, /search, related_addresses). A backend that does not "
+        "answer within it is left out of the merged answer, so a hung backend "
+        "cannot hold up the core networks for the full timeout_s. The "
+        "adapter answers these in under 1 s cold.",
+    )
     merge_related_addresses: bool = Field(
         default=True,
         description="Rule 5: a locally served network's related_addresses "

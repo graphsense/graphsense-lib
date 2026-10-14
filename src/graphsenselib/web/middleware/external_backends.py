@@ -61,11 +61,18 @@ served networks then simply do not appear in ``/stats``, ``/search``,
 ``/capabilities`` or a twin list, and a direct ``/{network}/…`` request on one
 of them gets the core's own answer (404, unknown network).
 
-Backend transport errors propagate — a broken backend must be loud (500 via
-the generic exception handler), not silently shaped as an empty answer. A 429
-is the exception: it is pacing declining the call, not a fault, and failing the
-whole request over it would let the lite networks take out the btc/eth results
-the core served itself.
+A backend that fails must never take out the btc/eth answer the core served
+itself: the dashboard loads ``/stats`` and ``/capabilities`` at startup and
+searches through ``/search``, so a 500 there made the whole app unusable on
+every network while the backend was down (checked 2026-10-14: dead adapter,
+startup dead; hung adapter, 60 s per call, then dead). So on a merge a backend
+that cannot be reached, does not answer within ``merge_timeout_s`` or answers
+an error is left out of the answer, logged at ERROR and named in
+``X-Ikn-Backends-Declined``, like the 429 below. On a proxy (rule 1) an
+unreachable backend is a 503 with ``Retry-After``, returned from here so it
+still passes the CORS middleware and the browser can read it; any HTTP answer
+of the backend, error or not, reaches the client as it is. A 429 is pacing
+declining the call, not a fault, and is logged at WARNING only.
 
 Be precise about whose pacing, because the answer is NOT always "this
 caller's". The backend charges every provider call to two buckets: the
@@ -129,9 +136,13 @@ SERVED_BY_HEADER = "x-served-by"
 SERVED_BY_VALUE = "external-backend"
 
 # Names the backends whose rows are MISSING from an otherwise-200 merge because
-# they declined (429). A partial answer that looks complete is the failure mode
-# this exists to prevent.
+# they declined (429) or failed (unreachable, timed out, error answer). A
+# partial answer that looks complete is the failure mode this exists to prevent.
 DECLINED_HEADER = "X-Ikn-Backends-Declined"
+
+# how long a client should wait after a proxied request found its backend
+# unreachable: the adapter's own overload answers say 30 s as well
+UNREACHABLE_RETRY_AFTER_S = 30
 
 # the one backend response header worth carrying to the client on a proxied
 # 429: without it a paced caller is told to come back but not when
@@ -425,12 +436,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         tolerate_404: bool = False,
         tolerate_501: bool = False,
     ) -> Optional[dict]:
-        """One merge fan-out call. Returns None when the backend declines.
+        """One merge fan-out call. Returns None when the backend declines or
+        fails: a 429, no answer within merge_timeout_s, no connection, or any
+        other status than 200 (apart from a tolerated 404/501).
 
-        429 is always tolerated, which is why this takes the request at all:
-        relaying the caller's identity means the backend paces per caller
-        rather than lumping everyone into one bucket, and a paced request must
-        still get its local btc/eth answer instead of a 500.
+        A 429 is why this takes the request at all: relaying the caller's
+        identity means the backend paces per caller rather than lumping
+        everyone into one bucket, and a paced request must still get its
+        local btc/eth answer instead of a 500. A failed backend must not take
+        that answer out either (module docstring).
 
         It appends to `declined` and logs, because the result is a PARTIAL
         answer that is otherwise shaped exactly like a complete one — see the
@@ -442,9 +456,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         consumer = self._consumer_of(request)
         if consumer:
             headers["X-Consumer-Username"] = consumer
-        response = await self.client.get(
-            base_url.rstrip("/") + path_and_query, headers=headers
-        )
+        # The one exception this module handles: a backend that cannot be
+        # reached or does not answer in time is a partial answer, exactly
+        # like a declined one (module docstring), not a 500 for every network.
+        try:
+            response = await self.client.get(
+                base_url.rstrip("/") + path_and_query,
+                headers=headers,
+                timeout=self.config.merge_timeout_s,
+            )
+        except httpx.TransportError as exc:
+            _note_failed(declined, base_url, path_and_query, repr(exc))
+            return None
         if response.status_code == 429:
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
@@ -461,7 +484,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         if tolerate_501 and response.status_code == 501:
             return None
-        response.raise_for_status()
+        if response.status_code != 200:
+            _note_failed(
+                declined, base_url, path_and_query, f"HTTP {response.status_code}"
+            )
+            return None
         return response.json()
 
     async def _proxy(
@@ -481,9 +508,26 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             headers["Content-Type"] = request.headers.get(
                 "content-type", "application/json"
             )
-        backend_response = await self.client.request(
-            request.method, url, headers=headers, content=body
-        )
+        try:
+            backend_response = await self.client.request(
+                request.method, url, headers=headers, content=body
+            )
+        except httpx.TransportError as exc:
+            logger.error(
+                "external backend %s unreachable for %s %s: %r",
+                backend.url,
+                request.method,
+                request.url.path,
+                exc,
+            )
+            return JSONResponse(
+                {"detail": "The service for this network is unavailable."},
+                status_code=503,
+                headers={
+                    SERVED_BY_HEADER: SERVED_BY_VALUE,
+                    RETRY_AFTER_HEADER: str(UNREACHABLE_RETRY_AFTER_S),
+                },
+            )
         headers = {SERVED_BY_HEADER: SERVED_BY_VALUE}
         # a 429 that does not say when to come back is barely better than a
         # 500; this is the only backend header the proxy carries through
@@ -496,6 +540,22 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             media_type=backend_response.headers.get("content-type"),
             headers=headers,
         )
+
+
+def _note_failed(
+    declined: Optional[List[str]], base_url: str, path_and_query: str, reason: str
+) -> None:
+    """A merge call that failed: named in the response and logged at ERROR,
+    because unlike a 429 it is a fault of the backend."""
+    if declined is not None and base_url not in declined:
+        declined.append(base_url)
+    logger.error(
+        "external backend %s failed %s (%s) — those networks are MISSING from"
+        " an otherwise-200 answer",
+        base_url,
+        path_and_query,
+        reason,
+    )
 
 
 def _declined_header(declined: List[str]) -> dict:
