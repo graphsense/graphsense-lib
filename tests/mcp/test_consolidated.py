@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextlib import AsyncExitStack
 from typing import TypedDict
 
+import logging
+
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Query
@@ -1431,3 +1433,42 @@ def test_params_from_defaults_but_does_not_cap_pagesize():
     assert _params_from(None, None, None)["pagesize"] == DEFAULT_PAGESIZE
     assert _params_from(None, 40, None)["pagesize"] == 40
     assert _params_from(None, 5000, None)["pagesize"] == 5000
+
+
+def _status_response(status: int, headers: dict) -> httpx.Response:
+    return httpx.Response(
+        status,
+        json={"detail": "unavailable"},
+        headers=headers,
+        request=httpx.Request("GET", "http://graphsense-mcp/bnb/addresses/0xabc"),
+    )
+
+
+def test_an_external_backend_503_is_a_tool_error_without_an_alert(caplog):
+    """The external backends middleware alerts once per outage; an alert per
+    tool call during it would be spam. The model still gets the error."""
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import _raise_backend_http_error
+    from graphsenselib.web.middleware.external_backends import (
+        SERVED_BY_HEADER,
+        SERVED_BY_VALUE,
+    )
+
+    response = _status_response(503, {SERVED_BY_HEADER: SERVED_BY_VALUE})
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp"):
+        with pytest.raises(ToolError, match="HTTP 503"):
+            _raise_backend_http_error(response, "/bnb/addresses/0xabc")
+    assert caplog.records == []
+
+
+def test_a_core_503_still_alerts(caplog):
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import _raise_backend_http_error
+
+    response = _status_response(503, {})
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp"):
+        with pytest.raises(ToolError, match="HTTP 503"):
+            _raise_backend_http_error(response, "/btc/addresses/1abc")
+    assert [r.levelno for r in caplog.records] == [logging.ERROR]
