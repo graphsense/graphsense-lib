@@ -131,6 +131,15 @@ class ExternalBackendsConfig(BaseSettings):
         "cannot hold up the core networks for the full timeout_s. The "
         "adapter answers these in under 1 s cold.",
     )
+    failure_skip_s: float = Field(
+        default=30.0,
+        ge=0.0,
+        description="After a backend could not be reached or did not answer "
+        "in time, merges leave it out for this long without asking it, so a "
+        "hung backend costs the core networks merge_timeout_s once per window "
+        "instead of on every request. Any answer of the backend ends the "
+        "window early. 0 asks it on every merge.",
+    )
     merge_related_addresses: bool = Field(
         default=True,
         description="Rule 5: a locally served network's related_addresses "

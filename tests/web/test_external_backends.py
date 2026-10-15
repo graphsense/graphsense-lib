@@ -22,6 +22,7 @@ from graphsenselib.web.config import (
     GSRestConfig,
 )
 from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
+from graphsenselib.web.middleware import external_backends
 from graphsenselib.web.middleware.external_backends import (
     DECLINED_HEADER,
     SERVED_BY_HEADER,
@@ -130,12 +131,14 @@ def make_client(
     refuse_headers=None,
     fail_with=None,
     with_cors=False,
+    failure_skip_s=30.0,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
     ``fail_with`` makes every backend call raise that transport error (a
     backend that is down or hangs); ``with_cors`` wraps the stack in the CORS
-    middleware exactly as create_app does.
+    middleware exactly as create_app does. ``failure_skip_s=0`` asks the
+    backend on every merge, also after it failed.
 
     ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
     adapter without /capabilities)."""
@@ -218,6 +221,7 @@ def make_client(
         enabled=enabled,
         networks={"bnb": {"url": BACKEND_URL, "api_key": api_key}},
         merge_related_addresses=merge_related_addresses,
+        failure_skip_s=failure_skip_s,
     )
     app.add_middleware(
         ExternalBackendMiddleware,
@@ -927,12 +931,12 @@ def _assert_partial_answers(client):
 
 
 def test_an_unreachable_backend_does_not_fail_a_merge():
-    client, _ = make_client(fail_with=httpx.ConnectError("down"))
+    client, _ = make_client(fail_with=httpx.ConnectError("down"), failure_skip_s=0)
     _assert_partial_answers(client)
 
 
 def test_a_backend_that_does_not_answer_in_time_does_not_fail_a_merge():
-    client, _ = make_client(fail_with=httpx.ReadTimeout("hung"))
+    client, _ = make_client(fail_with=httpx.ReadTimeout("hung"), failure_skip_s=0)
     _assert_partial_answers(client)
 
 
@@ -1157,7 +1161,7 @@ def test_the_dashboard_can_read_the_outage_headers_with_credentials():
 # first failure of a backend that answered before may log at it.
 
 
-def _flaky_client(state):
+def _flaky_client(state, failure_skip_s=0.0):
     """A backend that is down while state["down"] is true."""
     app = FastAPI()
 
@@ -1173,7 +1177,9 @@ def _flaky_client(state):
         return httpx.Response(200, json={"backend_path": request.url.path})
 
     config = ExternalBackendsConfig(
-        enabled=True, networks={"bnb": {"url": BACKEND_URL}}
+        enabled=True,
+        networks={"bnb": {"url": BACKEND_URL}},
+        failure_skip_s=failure_skip_s,
     )
     app.add_middleware(
         ExternalBackendMiddleware,
@@ -1261,3 +1267,81 @@ def test_the_outage_alert_reaches_slack(monkeypatch):
     handlers = logging.getLogger(names[2]).handlers
     assert [type(h) for h in handlers] == [SlackLogHandler]
     assert handlers[0].level == logging.ERROR
+
+
+# A hung backend cost every merge merge_timeout_s, and the dashboard asks for a
+# twin list per address it adds: after a failure that is no answer at all,
+# merges leave the backend out for failure_skip_s without asking it.
+
+
+def _clock(monkeypatch, start=1000.0):
+    """Replace the skip windows' clock; moving clock["now"] moves time."""
+    clock = {"now": start}
+    monkeypatch.setattr(external_backends, "_now", lambda: clock["now"])
+    return clock
+
+
+def test_a_hung_backend_is_asked_once_per_window(monkeypatch):
+    _clock(monkeypatch)
+    client, seen = make_client(fail_with=httpx.ReadTimeout("hung"))
+    with caplog_at_warning() as records:
+        for url, field, local in MERGE_LOCAL_ANSWERS:
+            response = client.get(url)
+            assert response.status_code == 200, url
+            assert response.json()[field] == local, url
+            assert response.headers.get(DECLINED_HEADER) == BACKEND_URL, url
+    assert len(seen) == 1
+    # the outage is alerted once; a skipped call logs nothing
+    assert [r.levelno for r in records] == [logging.ERROR]
+
+
+def test_the_window_ends_after_failure_skip_s(monkeypatch):
+    clock = _clock(monkeypatch)
+    client, seen = make_client(fail_with=httpx.ConnectError("down"))
+    client.get("/stats")
+    client.get("/stats")
+    assert len(seen) == 1
+    clock["now"] += 29.9
+    client.get("/stats")
+    assert len(seen) == 1
+    clock["now"] += 0.2
+    client.get("/stats")
+    assert len(seen) == 2
+
+
+def test_any_answer_ends_the_window_early(monkeypatch):
+    _clock(monkeypatch)
+    state = {"down": True}
+    client = _flaky_client(state, failure_skip_s=30.0)
+    client.get("/stats")
+    state["down"] = False
+    # still in the window: the backend is not asked
+    assert client.get("/stats").headers.get(DECLINED_HEADER) == BACKEND_URL
+    # proxies still ask, and their answer ends the window
+    assert client.get("/bnb/blocks/1").status_code == 200
+    response = client.get("/stats")
+    assert DECLINED_HEADER not in response.headers
+    assert [c["name"] for c in response.json()["currencies"]] == ["btc", "bnb"]
+
+
+def test_an_error_answer_or_a_429_starts_no_window(monkeypatch):
+    """The backend answered, so it is up: the next merge asks it again."""
+    _clock(monkeypatch)
+    for status in (500, 429):
+        client, seen = make_client(refuse_status=status)
+        client.get("/stats")
+        client.get("/stats")
+        assert len(seen) == 2, status
+
+
+def test_a_proxy_that_cannot_reach_the_backend_starts_the_window(monkeypatch):
+    _clock(monkeypatch)
+    client, seen = make_client(fail_with=httpx.ConnectError("down"))
+    assert client.get("/bnb/blocks/1").status_code == 503
+    response = client.get("/stats")
+    assert response.status_code == 200
+    assert response.headers.get(DECLINED_HEADER) == BACKEND_URL
+    assert len(seen) == 1
+    # the network's own requests still ask, so they find out when it is back
+    assert client.get("/bnb/blocks/1").status_code == 503
+    assert len(seen) == 2

@@ -74,6 +74,16 @@ still passes the CORS middleware and the browser can read it; any HTTP answer
 of the backend, error or not, reaches the client as it is. A 429 is pacing
 declining the call, not a fault, and is logged at WARNING only.
 
+A hung backend still cost every merge the full ``merge_timeout_s``: the
+dashboard asks for a twin list for every address it adds to the graph, and
+the API answers over HTTP/1.1, so a few such calls held the browser's six
+connections and delayed the core networks' own requests. So after a backend
+could not be reached or did not answer in time (on a merge or a proxy), merges
+leave it out without asking it for ``failure_skip_s`` (default 30 s), named in
+``X-Ikn-Backends-Declined`` as before. An error answer or a 429 starts no such
+window (the backend is up), proxies still always ask it, and any answer ends
+the window early.
+
 One alert per outage, not one per request: the first failure of a backend
 that answered before is logged at ERROR (the level the Slack handler
 forwards, web/app.py:setup_logging), every failure after it at WARNING, and
@@ -202,6 +212,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # backend URL -> when it stopped answering (time.monotonic), for
         # one alert per outage (module docstring)
         self.down_since: Dict[str, float] = {}
+        # backend URL -> until when merges leave it out without asking it
+        # (_now(), failure_skip_s in the module docstring)
+        self.skip_until: Dict[str, float] = {}
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(config.timeout_s)
         )
@@ -459,7 +472,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
 
         It appends to `declined` and logs, because the result is a PARTIAL
         answer that is otherwise shaped exactly like a complete one — see the
-        module docstring on whose pacing a 429 actually represents."""
+        module docstring on whose pacing a 429 actually represents.
+
+        A backend that failed within the last failure_skip_s is not asked at
+        all: it is left out and named at once, without a log line (its outage
+        is already alerted)."""
+        if _now() < self.skip_until.get(base_url, 0.0):
+            if declined is not None and base_url not in declined:
+                declined.append(base_url)
+            return None
         headers = {"Accept": "application/json"}
         api_key = self._api_key_for_url(base_url)
         if api_key:
@@ -478,6 +499,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
         except httpx.TransportError as exc:
             self._merge_failed(declined, base_url, path_and_query, repr(exc))
+            self._skip(base_url)
             return None
         if response.status_code == 429:
             if declined is not None and base_url not in declined:
@@ -540,8 +562,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             ", ".join(sorted(networks)),
         )
 
+    def _skip(self, base_url: str) -> None:
+        """Leave a backend that could not be reached or did not answer in
+        time out of merges for failure_skip_s (module docstring)."""
+        self.skip_until[base_url] = _now() + self.config.failure_skip_s
+
     def _backend_answered(self, base_url: str) -> None:
-        """The first answer after an outage ends it, logged once."""
+        """The first answer after an outage ends it, logged once. Any answer
+        ends a skip window too."""
+        self.skip_until.pop(base_url, None)
         since = self.down_since.pop(base_url, None)
         if since is None:
             return
@@ -576,6 +605,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             self._backend_failed(
                 backend.url, f"{request.method} {request.url.path}", repr(exc)
             )
+            self._skip(backend.url)
             return JSONResponse(
                 {"detail": "The service for this network is unavailable."},
                 status_code=503,
@@ -598,6 +628,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             media_type=backend_response.headers.get("content-type"),
             headers=headers,
         )
+
+
+def _now() -> float:
+    """The clock of the skip windows; tests replace it to move time."""
+    return time.monotonic()
 
 
 def _declined_header(declined: List[str]) -> dict:
