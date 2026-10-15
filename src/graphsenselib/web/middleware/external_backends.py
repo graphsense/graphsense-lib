@@ -42,15 +42,30 @@ Decision rules:
    contributes no entries — consumers already treat an absent network as
    fully enabled, the same rule they apply to an old server without the
    endpoint, so deployment skew degrades uniformly.
-5. ``/{network}/addresses/{addr}/related_addresses`` of a LOCALLY served
-   network is answered locally, then — for the pubkey relation type, the
-   only one the backends know — each backend is asked the same question
-   about the same address and its rows for the backend's configured networks
-   are appended (an eth address gains its bnb/arb twins; the trx twin from
-   the local pubkey table stays first). A backend that does not know the
-   source network (404) or declines the question (501) contributes nothing.
-   ``merge_related_addresses: false`` switches this rule off, so the local
-   answer stays exactly as without this feature.
+5. ``/{network}/addresses/{addr}/related_addresses`` (pubkey, the only
+   relation type the backends know) lists the twins of BOTH sides, whichever
+   network it is asked on. The local pubkey table knows btc/trx/ltc/bch/zec
+   and eth, a backend knows only the EVM networks it serves, and a key has
+   one EVM-format address on all of them:
+
+   - On a LOCALLY served network the answer is local, then each backend is
+     asked about the key's EVM-format address — the address itself on eth,
+     otherwise the ``eth`` row of the local answer — and its rows for the
+     backend's configured networks are appended (an eth address gains its
+     bnb/arb twins, a btc or trx address the same ones through its eth
+     twin; the local rows stay first). A key with no ``eth`` row, i.e. not
+     used on Ethereum, asks no backend: most btc keys never are, and the
+     twin probe costs the backend provider calls on every network it
+     serves. A backend that does not know the address (404) or declines the
+     question (501) contributes nothing.
+   - On an EXTERNALLY served network the backend answers (rule 1), and the
+     local pubkey rows of the same address, asked as eth, are appended to
+     its last page (a bnb address gains its btc/trx twins). That local
+     lookup is an addition to an answer the backend already gave, so its
+     failure only leaves those rows out and is logged.
+
+   ``merge_related_addresses: false`` switches this rule off, so each side
+   answers exactly as without this feature.
 
 Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
@@ -121,6 +136,7 @@ of ``/search``'s provider spend landed on one bucket named after this app's
 own address, charged to nobody and subtracted from everybody.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -185,9 +201,13 @@ _MERGE_FIELDS = {
     "/capabilities": ("networks", "network"),
 }
 
-# rule 5: a locally served network's cross-chain twins, merged from the backends
+# rule 5: an address's cross-chain twins, merged from the backends and the
+# local pubkey table
 _RELATED_ADDRESSES_PATH = re.compile(r"^/[^/]+/addresses/[^/]+/related_addresses$")
 _PUBKEY_RELATION = "pubkey"
+# the locally served network that has a key's EVM-format address: the backends
+# are asked about it, and the local pubkey table is asked as it
+_EVM_NETWORK = "eth"
 
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
@@ -248,6 +268,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         }
         if opt_out & OPT_OUT_VALUES:
             return await call_next(request)
+        backend = self._related_addresses_backend(request)
+        if backend is not None:
+            return await self._related_addresses_of_external_network(request, backend)
         short_circuit = await self._route(request)
         if short_circuit is not None:
             return short_circuit
@@ -347,8 +370,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             merged[list_field] = _merge_keyed_lists(merged[list_field], entries, key)
         return JSONResponse(merged, status_code=200, headers=_declined_header(declined))
 
-    async def _merge_related_addresses(self, request: Request, body: bytes) -> Response:
+    async def _merge_related_addresses(
+        self, request: Request, body: bytes
+    ) -> Optional[Response]:
         """Rule 5: append the backends' twins of a locally served address.
+
+        The backends are asked about the key's EVM-format address: the address
+        itself on eth, otherwise the ``eth`` row of the local answer. Without
+        one (the key was not used on Ethereum) the local answer passes through
+        and no backend is asked.
 
         Local rows keep their order and come first; a backend row is kept when
         its currency is one of that backend's configured networks and no local
@@ -357,6 +387,21 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         network at most) and the dashboard asks for a page of 100."""
         local_doc = json.loads(body)
         rows = list(local_doc.get("related_addresses", []))
+        _, network, _, address, _ = request.url.path.split("/")
+        if network == _EVM_NETWORK:
+            path = request.url.path
+        else:
+            evm = next(
+                (
+                    row.get("address")
+                    for row in rows
+                    if row.get("currency") == _EVM_NETWORK
+                ),
+                None,
+            )
+            if evm is None:
+                return None
+            path = f"/{_EVM_NETWORK}/addresses/{evm}/related_addresses"
         present = {(row.get("currency"), row.get("address")) for row in rows}
         query = ("?" + str(request.url.query)) if request.url.query else ""
         declined: List[str] = []
@@ -364,7 +409,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             backend_doc = await self._fetch_json(
                 request,
                 base_url,
-                request.url.path + query,
+                path + query,
                 declined=declined,
                 tolerate_404=True,
                 tolerate_501=True,
@@ -381,6 +426,108 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             status_code=200,
             headers=_declined_header(declined),
         )
+
+    def _related_addresses_backend(
+        self, request: Request
+    ) -> Optional[ExternalBackendConfig]:
+        """The backend of a pubkey related_addresses request on an externally
+        served network (rule 5, second case), or None."""
+        if not self._wants_related_addresses_merge(request):
+            return None
+        return self.config.networks.get(request.url.path.split("/")[1])
+
+    async def _related_addresses_of_external_network(
+        self, request: Request, backend: ExternalBackendConfig
+    ) -> Response:
+        """Rule 5 on an externally served network: the backend's answer, and
+        the local pubkey rows of the same address on its last page.
+
+        Both are asked at once. Anything but a 200 of the backend reaches the
+        client as it is; the local rows go on the last page only, so paging
+        through the backend's answer never repeats them."""
+        address = request.url.path.split("/")[3]
+        proxied, local_rows = await asyncio.gather(
+            self._proxy(request, backend),
+            self._local_pubkey_twins(request, address),
+        )
+        if proxied.status_code != 200 or not local_rows:
+            return proxied
+        doc = json.loads(proxied.body)
+        if doc.get("next_page"):
+            return proxied
+        rows = list(doc.get("related_addresses", []))
+        present = {(row.get("currency"), row.get("address")) for row in rows}
+        rows += [
+            row
+            for row in local_rows
+            if (row.get("currency"), row.get("address")) not in present
+        ]
+        return JSONResponse(
+            {**doc, "related_addresses": rows},
+            status_code=200,
+            headers={SERVED_BY_HEADER: SERVED_BY_VALUE},
+        )
+
+    async def _local_pubkey_twins(self, request: Request, address: str) -> list:
+        """The local pubkey rows of an EVM-format address, asked as eth, on
+        the locally served networks only; [] if the local lookup fails.
+
+        Asked of the app behind this middleware with the request's own scope
+        (the app, its state, the caller's headers), only path and query
+        changed: ``call_next`` always runs the request's own path, and this
+        one is on a backend's network."""
+        path = f"/{_EVM_NETWORK}/addresses/{address}/related_addresses"
+        scope = {
+            **request.scope,
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": f"address_relation_type={_PUBKEY_RELATION}".encode(),
+        }
+        received = asyncio.Event()
+
+        async def receive() -> dict:
+            # an empty GET body, then nothing until the response is complete
+            if received.is_set():
+                await asyncio.Event().wait()
+            received.set()
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        status: List[int] = []
+        chunks: List[bytes] = []
+
+        async def send(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                status.append(message["status"])
+            elif message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+
+        # The second exception this module handles: the backend answers this
+        # request, and these rows are an addition to its answer, so a local
+        # failure (the pubkey table, Cassandra) leaves them out instead of
+        # turning the backend's answer into a 500 (module docstring, rule 5).
+        try:
+            await self.app(scope, receive, send)
+        except Exception as exc:
+            logger.warning(
+                "local pubkey twins of %s left out of %s: %r",
+                address,
+                request.url.path,
+                exc,
+            )
+            return []
+        if status != [200]:
+            logger.warning(
+                "local pubkey twins of %s left out of %s: HTTP %s",
+                address,
+                request.url.path,
+                status,
+            )
+            return []
+        return [
+            row
+            for row in json.loads(b"".join(chunks)).get("related_addresses", [])
+            if row.get("currency") not in self.config.networks
+        ]
 
     async def _overlay_tag_counts(self, request: Request, entries: list) -> list:
         """Overwrite a backend stats entry's tag counts with the local

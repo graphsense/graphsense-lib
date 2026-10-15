@@ -123,6 +123,7 @@ def make_client(
     backend_stats=BACKEND_STATS,
     backend_capabilities=BACKEND_CAPABILITIES,
     backend_related_addresses=BACKEND_RELATED_ADDRESSES,
+    local_related_addresses=LOCAL_RELATED_ADDRESSES,
     merge_related_addresses=True,
     roles_config=None,
     gated=None,
@@ -141,7 +142,8 @@ def make_client(
     backend on every merge, also after it failed.
 
     ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
-    adapter without /capabilities)."""
+    adapter without /capabilities). ``local_related_addresses`` is the local
+    pubkey answer, or a function of (currency, address) returning it."""
     app = FastAPI()
 
     @app.get("/stats")
@@ -168,8 +170,12 @@ def make_client(
         return {"served": "local", "currency": currency}
 
     @app.get("/{currency}/addresses/{address}/related_addresses")
-    async def related_addresses(currency: str, address: str):
-        return LOCAL_RELATED_ADDRESSES
+    async def related_addresses(request: Request, currency: str, address: str):
+        # the real route's dependencies read the app's state (the database)
+        assert request.app.state is not None
+        if callable(local_related_addresses):
+            return local_related_addresses(currency, address)
+        return local_related_addresses
 
     @app.get("/{currency}/addresses/{address}/tags")
     async def address_tags(currency: str, address: str):
@@ -530,11 +536,102 @@ def test_related_addresses_merge_can_be_switched_off():
     assert seen == []
 
 
-def test_related_addresses_of_external_network_still_proxy_outright():
-    client, seen = make_client()
+def test_related_addresses_of_external_network_proxy_outright_when_switched_off():
+    client, seen = make_client(merge_related_addresses=False)
     response = client.get("/bnb/addresses/0xsame/related_addresses")
     assert response.headers["x-served-by"] == "external-backend"
     assert response.json() == BACKEND_RELATED_ADDRESSES
+
+
+# Rule 5 the other way round: a backend cannot know a key's btc/trx twins, the
+# local pubkey table cannot know its lite ones.
+
+ETH_KEY_LOCAL_ANSWER = {
+    "related_addresses": [
+        {"address": "0xkey", "currency": "eth", "relation_type": "pubkey"},
+        {"address": "TKEY", "currency": "trx", "relation_type": "pubkey"},
+    ],
+    "next_page": None,
+}
+
+
+def test_a_btc_address_gets_the_backend_twins_of_its_eth_twin():
+    client, seen = make_client(local_related_addresses=ETH_KEY_LOCAL_ANSWER)
+    response = client.get(
+        "/btc/addresses/1key/related_addresses?address_relation_type=pubkey"
+    )
+    assert response.status_code == 200
+    assert [r.url.path for r in seen] == ["/eth/addresses/0xkey/related_addresses"]
+    assert response.json()["related_addresses"] == [
+        *ETH_KEY_LOCAL_ANSWER["related_addresses"],
+        {"address": "0xsame", "currency": "bnb", "relation_type": "pubkey"},
+    ]
+
+
+def test_a_key_not_used_on_ethereum_asks_no_backend():
+    """Most btc keys never were, and the twin probe costs the backend
+    provider calls on every network it serves."""
+    client, seen = make_client()
+    for path in (
+        "/btc/addresses/1same/related_addresses",
+        "/trx/addresses/TSAME/related_addresses",
+    ):
+        response = client.get(path)
+        assert response.json() == LOCAL_RELATED_ADDRESSES, path
+        assert DECLINED_HEADER not in response.headers, path
+    assert seen == []
+
+
+def test_related_addresses_of_external_network_gain_the_local_twins():
+    asked = []
+
+    def local(currency, address):
+        asked.append((currency, address))
+        return LOCAL_RELATED_ADDRESSES
+
+    client, seen = make_client(local_related_addresses=local)
+    response = client.get(
+        "/bnb/addresses/0xsame/related_addresses?address_relation_type=pubkey"
+    )
+    assert response.status_code == 200
+    assert response.headers["x-served-by"] == "external-backend"
+    # the local bnb row is the backend's to know: only the trx twin is added
+    assert response.json()["related_addresses"] == [
+        *BACKEND_RELATED_ADDRESSES["related_addresses"],
+        {"address": "TSAME", "currency": "trx", "relation_type": "pubkey"},
+    ]
+    assert [r.url.path for r in seen] == ["/bnb/addresses/0xsame/related_addresses"]
+    assert asked == [("eth", "0xsame")]
+
+
+def test_a_failing_local_lookup_keeps_the_backends_twins():
+    def local(currency, address):
+        raise RuntimeError("pubkey table unavailable")
+
+    client, _ = make_client(local_related_addresses=local)
+    with caplog_at_warning() as records:
+        response = client.get("/bnb/addresses/0xsame/related_addresses")
+    assert response.status_code == 200
+    assert response.json() == BACKEND_RELATED_ADDRESSES
+    assert ["left out" in r.getMessage() for r in records] == [True]
+
+
+def test_local_twins_go_on_the_backends_last_page_only():
+    paged = {
+        "related_addresses": [
+            {"address": "0xsame", "currency": "arb", "relation_type": "pubkey"}
+        ],
+        "next_page": "2",
+    }
+    client, _ = make_client(backend_related_addresses=paged)
+    assert client.get("/bnb/addresses/0xsame/related_addresses").json() == paged
+
+
+def test_a_backend_error_on_external_related_addresses_reaches_the_client():
+    client, _ = make_client(refuse_status=503)
+    response = client.get("/bnb/addresses/0xsame/related_addresses")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "refused"}
 
 
 def test_related_addresses_backend_404_or_501_contributes_nothing():
