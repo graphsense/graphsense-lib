@@ -18,6 +18,21 @@ Use one changelog file, but separate entries by track in each release window.
 - **Address notifications: `/notifications/*` routes, off by default.** With `notifications.enabled` and `notifications.url` set, the API serves typed routes for subscriptions to addresses (`/notifications/subscriptions`) and the feed of notified transactions (`/notifications/feed`, `/feed/read`, `/feed/unread_count`). Each subscription carries the address's polling state (`last_checked_at`, `next_check_at`, `check_errors`). A new subscription may carry the browser's `timezone`, which sets the user's (times in mails, when daily digests go out); per-user settings are not exposed. They forward to the gs-notifications service, which keeps the data; only the gateway's identity and roles headers are passed on (`notifications.forward_headers`). The service's errors reach the client unchanged, and an unreachable service is a 502. The routes stay out of the OpenAPI spec and the Python client unless `notifications.include_in_schema` is set; then they are the last section (tag `notifications`), labelled beta. Without the `notifications` section nothing changes.
 - **`/capabilities` lists the optional services of the deployment** in a new `services` field (Python client: `Capabilities.services`, model `ServiceInfo`): `name`, `available`, `version`, `api` (contract version) and `beta`. Address notifications appear there when enabled, read from the service's `GET /meta` (cached for a minute; `available: false` when it does not answer). A service absent from the list is not offered, and unknown names must be ignored. Without optional services the field is an empty list.
 
+### Library
+
+#### Fixed
+- **LTC ingest no longer warns `ScriptParseError: not handling script type` for MWEB outputs** (HogAddr `OP_8 <32 bytes>`, peg-in `OP_9 <32 bytes>`), which showed up in every block, for the output and again for the input spending it. They are recognised and keep their synthetic `nonstandard…` id as before; stored data is unchanged.
+- **The gRPC retry policy (TRX ingest) asks for the 5 attempts gRPC allows, not 9.** gRPC caps `maxAttempts` at 5 and logged `clamped retryPolicy.maxAttempts at 5` on every channel; the 9 attempts and the `grpc.max_retry_attempts` option never had an effect, so the documented ~5-minute window for a node restart was really 3+6+12+24 s at most. The backoff now starts at 20 s and is capped at 120 s, so the four waits can add up to 260 s again (gRPC draws each one between 0 and its cap, so about half on average); the exporters' own per-block retries still come on top.
+- **`delta-update --forward-fill-rates` no longer warns every hour about today's missing exchange rate.** Ingest fetches rates only up to yesterday, so blocks of the current UTC day are always forward-filled; that is now logged at INFO. It still warns when a block of an earlier day had to be filled (or its timestamp is unknown), which means a day's rate is really missing. What gets filled is unchanged.
+
+## [2.18.1] - 2026-10-15
+
+### Web API + Python client
+
+#### Fixed
+- **A failed external backend no longer slows down every merged answer.** A backend that could not be reached or did not answer in time cost every merge (`/stats`, `/capabilities`, `/search`, the twin lookup the dashboard makes per added address) the full `external_backends.merge_timeout_s`. Merges now leave it out for `external_backends.failure_skip_s` (default 30 s) and name it in `X-Ikn-Backends-Declined`; any answer from it ends the window early, and proxied requests still go to it.
+- **Cross-chain twins by public key are listed whichever network an address is asked on.** They were only complete on eth: a btc, trx, ltc, bch or zec address missed its key's addresses on the externally served networks, and an address on one of those missed its btc, trx, ltc, bch and zec twins. The backends are now asked about the key's eth address when the key was used on Ethereum, and an address on an externally served network gets the local pubkey rows of the same address; a failing local lookup leaves those rows out instead of failing the answer.
+
 ## [2.18.0] - 2026-10-15
 
 New read-only `quality` commands find where the tag summary hides an address's exchange attribution, actor clashes and garbled text in the tagstore; tied cluster tags are now picked deterministically.
