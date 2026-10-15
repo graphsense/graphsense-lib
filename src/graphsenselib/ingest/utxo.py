@@ -459,6 +459,11 @@ def _match_multisig(script: bytes) -> Optional[List[bytes]]:
     return [d for _, d in keys if _looks_like_pubkey(d)]
 
 
+def _is_mweb_script(script: bytes) -> bool:
+    """LTC MWEB HogAddr (witness v8) or peg-in (witness v9) output script."""
+    return len(script) == 34 and script[0] in (0x58, 0x59) and script[1] == 0x20
+
+
 def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str]:
     """Parse output addresses + script type from a bitcoin-like locking script.
 
@@ -468,7 +473,8 @@ def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str
     version bytes (BTC mainnet by default, matching btcpy's hardcoded
     ``mainnet=True``; ``zec`` yields t-addresses, etc.). Chains without segwit
     (``bech32_hrp`` None, e.g. ZEC) treat segwit-shaped scripts as unknown.
-    Anything else raises ``UnknownScriptType`` — including scripts btcpy
+    LTC MWEB outputs return ``(None, "nonstandard")``: callers keep the
+    synthetic nonstandard id. Anything else raises ``UnknownScriptType`` — including scripts btcpy
     classified as if/else, timelock, or hashlock.
 
     Args:
@@ -535,6 +541,12 @@ def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str
         data = _match_single_push(script, b"\x00", b"", (32,))
         if data is not None:
             return [bech32_segwit_encode(bech32_hrp, 0, data)], "p2wshv0"
+
+    # LTC MWEB: HogAddr (OP_8 <32>) and peg-in (OP_9 <32>) outputs. The node
+    # gives them no address, so they keep the synthetic nonstandard id; known
+    # here only so they don't warn on every block.
+    if network == "ltc" and _is_mweb_script(script):
+        return None, "nonstandard"
 
     raise UnknownScriptType(
         f"ScriptParseError: not handling script type for {s} at the moment."
