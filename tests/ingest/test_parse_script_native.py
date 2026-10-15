@@ -174,10 +174,11 @@ def test_replicates_btcpy_indexerror(script_hex):
         parse_script(script_hex)
 
 
-# LTC MWEB HogAddr (OP_8 <32>) and peg-in (OP_9 <32>) outputs, from LTC block
-# 3,195,417. The node gives them no address; they keep the nonstandard id.
-_MWEB_HOGADDR = "5820c75d5f7a166acb951a3e18c3f9e80256b0a349bbe72eebf52c8fd8a12e9d0fe2"
-_MWEB_PEGIN = "59205afecec0ac147789566c68fb92b86e02621084c2ffbdd9c95016f6810f5ffbbb"
+# LTC MWEB HogAddr (OP_8 <32>) and peg-in (OP_9 <32>) output shapes, with
+# synthetic payloads. The node gives them no address; they keep the
+# nonstandard id.
+_MWEB_HOGADDR = "5820" + "ab" * 32
+_MWEB_PEGIN = "5920" + "cd" * 32
 
 
 @pytest.mark.parametrize("script_hex", [_MWEB_HOGADDR, _MWEB_PEGIN])
@@ -206,10 +207,10 @@ def test_enrich_keeps_mweb_output_and_does_not_warn(caplog):
         "index": 0,
         "script_hex": _MWEB_HOGADDR,
         "type": "nonstandard",
-        "addresses": ["nonstandard8423d70226147cfe0c4191b95452511284df05af"],
-        "value": 45072957201893,
+        "addresses": ["nonstandard" + "0" * 40],
+        "value": 1000,
     }
-    tx = {"hash": "bf00", "outputs": [dict(output)], "inputs": []}
+    tx = {"hash": "aa", "outputs": [dict(output)], "inputs": []}
     enrich_txs([tx], None, False, input_reference_only=True, network="ltc")
 
     assert tx["outputs"] == [output]

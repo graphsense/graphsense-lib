@@ -15,7 +15,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Fixed
-- **LTC ingest no longer warns `ScriptParseError: not handling script type` for MWEB outputs** (HogAddr `OP_8 <32 bytes>`, peg-in `OP_9 <32 bytes>`), about 1,300 lines a day, as both the output and the input that spends it. They are recognised and keep their synthetic `nonstandard…` id as before; stored data is unchanged.
+- **LTC ingest no longer warns `ScriptParseError: not handling script type` for MWEB outputs** (HogAddr `OP_8 <32 bytes>`, peg-in `OP_9 <32 bytes>`), which showed up in every block, for the output and again for the input spending it. They are recognised and keep their synthetic `nonstandard…` id as before; stored data is unchanged.
 - **`delta-update --forward-fill-rates` no longer warns every hour about today's missing exchange rate.** Ingest fetches rates only up to yesterday, so blocks of the current UTC day are always forward-filled; that is now logged at INFO. It still warns when a block of an earlier day had to be filled (or its timestamp is unknown), which means a day's rate is really missing. What gets filled is unchanged.
 
 ## [2.18.0] - 2026-10-15
