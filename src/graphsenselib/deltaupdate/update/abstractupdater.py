@@ -5,7 +5,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from ...db.analytics import AnalyticsDb
@@ -93,13 +93,33 @@ def fill_and_store_rates(db, batch, forward_fill_rates: bool):
     rates = db.raw.get_exchange_rates_for_block_batch(batch)
     if forward_fill_rates:
         hbe, fill_values = get_forward_fill_rate(db, forward_fill_rates)
+        filled_blocks = [
+            x["block_id"]
+            for x in rates
+            if x["fiat_values"] is None and x["block_id"] > hbe
+        ]
         rates, had_to_fill = forward_fill_rates_with_fill_value(rates, hbe, fill_values)
         if had_to_fill:
-            logger.warning(
+            # Ingest fetches rates up to yesterday, so today's blocks are
+            # always filled; only a missing earlier day is worth a warning.
+            level = (
+                logging.INFO
+                if only_todays_blocks(db, filled_blocks)
+                else logging.WARNING
+            )
+            logger.log(
+                level,
                 "Missing exchange rates forward filled with "
-                f"last good data from block {hbe} {fill_values}"
+                f"last good data from block {hbe} {fill_values}",
             )
     db.transformed.ingest("exchange_rates", rates)
+
+
+def only_todays_blocks(db, blocks: List[int]) -> bool:
+    """True if every block has a timestamp on the current UTC day."""
+    today = datetime.now(timezone.utc).date()
+    timestamps = db.raw.get_block_timestamps_batch(blocks).values()
+    return all(ts is not None and ts.date() == today for ts in timestamps)
 
 
 def get_forward_fill_rate(db, forward_fill_rates: bool):
