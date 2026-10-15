@@ -162,12 +162,22 @@ async def notifications_service_info(app: FastAPI) -> Optional[ServiceInfo]:
     meta = await client.meta()
     version = meta.get("version") if meta else None
     api = meta.get("api") if meta else None
+    limits = meta.get("limits") if meta else None
+    if isinstance(limits, dict):
+        limits = {
+            k: v
+            for k, v in limits.items()
+            if isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+        }
+    else:
+        limits = None
     return ServiceInfo(
         name=TAG,
         available=meta is not None,
         version=version if isinstance(version, str) else None,
         api=api if isinstance(api, int) and not isinstance(api, bool) else None,
         beta=True,
+        limits=limits or None,
     )
 
 

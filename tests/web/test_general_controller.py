@@ -133,7 +133,14 @@ def test_get_capabilities_lists_enabled_services(client):
 
     def service(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/meta"
-        return httpx.Response(200, json={"version": "26.10.0rc1", "api": 1})
+        return httpx.Response(
+            200,
+            json={
+                "version": "26.10.0rc1",
+                "api": 1,
+                "limits": {"instant_mail_interval_minutes": 5},
+            },
+        )
 
     url = "http://gs-notifications:8000"
     client.app.state.notifications_client = NotificationsClient(
@@ -151,5 +158,6 @@ def test_get_capabilities_lists_enabled_services(client):
             "version": "26.10.0rc1",
             "api": 1,
             "beta": True,
+            "limits": {"instant_mail_interval_minutes": 5},
         }
     ]

@@ -96,6 +96,7 @@ def make_client(answer=None, include_in_schema=False, enabled=True):
                     "git_sha": "572e526",
                     "built_at": None,
                     "api": 1,
+                    "limits": {"instant_mail_interval_minutes": 5, "future": "x"},
                 },
             )
         if path == "/feed/unread_count":
@@ -415,6 +416,8 @@ async def test_service_info_from_meta():
         "version": "26.10.0rc1",
         "api": 1,
         "beta": True,
+        # Non-integer values are dropped.
+        "limits": {"instant_mail_interval_minutes": 5},
     }
     assert (seen[0].method, seen[0].url.path) == ("GET", "/meta")
     # No identity goes to /meta.
@@ -430,17 +433,19 @@ async def test_service_info_when_the_service_is_down():
     client, _ = make_client(answer=down)
     info = await notifications_service_info(client.app)
     assert info.available is False
-    assert info.version is None and info.api is None
+    assert info.version is None and info.api is None and info.limits is None
     assert info.beta is True
 
 
 async def test_service_info_ignores_a_malformed_meta():
     client, _ = make_client(
-        answer=lambda r: httpx.Response(200, json={"version": 7, "api": True})
+        answer=lambda r: httpx.Response(
+            200, json={"version": 7, "api": True, "limits": [5]}
+        )
     )
     info = await notifications_service_info(client.app)
     assert info.available is True
-    assert info.version is None and info.api is None
+    assert info.version is None and info.api is None and info.limits is None
 
 
 async def test_no_service_info_when_disabled():

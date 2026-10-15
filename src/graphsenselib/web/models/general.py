@@ -76,6 +76,7 @@ SERVICE_INFO_EXAMPLE = {
     "version": "26.10.0rc1",
     "api": 1,
     "beta": True,
+    "limits": {"instant_mail_interval_minutes": 5, "subscriptions_per_user": 100},
 }
 
 
@@ -100,6 +101,13 @@ class ServiceInfo(APIModel):
         description="Contract version of its routes; rises only on a breaking change.",
     )
     beta: bool = Field(default=False, description="Its routes may still change.")
+    limits: Optional[dict[str, int]] = Field(
+        default=None,
+        description="Configured limits a client can show, by name, as the "
+        "service reports them, e.g. instant_mail_interval_minutes (at most one "
+        "instant email per user in that time) or subscriptions_per_user. "
+        "Unknown names must be ignored.",
+    )
 
 
 class Capabilities(APIModel):
