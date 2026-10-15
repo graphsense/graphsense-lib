@@ -12,7 +12,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [2.18.1] - 2026-10-15
 
-### Library
+### Web API + Python client
 
 #### Fixed
 - **A failed external backend no longer slows down every merged answer.** A backend that could not be reached or did not answer in time cost every merge (`/stats`, `/capabilities`, `/search`, the twin lookup the dashboard makes per added address) the full `external_backends.merge_timeout_s`. Merges now leave it out for `external_backends.failure_skip_s` (default 30 s) and name it in `X-Ikn-Backends-Declined`; any answer from it ends the window early, and proxied requests still go to it.
