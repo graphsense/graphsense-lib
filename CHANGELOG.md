@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.18.1] - 2026-10-15
+
+### Library
+
+#### Fixed
+- **A failed external backend no longer slows down every merged answer.** A backend that could not be reached or did not answer in time cost every merge (`/stats`, `/capabilities`, `/search`, the twin lookup the dashboard makes per added address) the full `external_backends.merge_timeout_s`. Merges now leave it out for `external_backends.failure_skip_s` (default 30 s) and name it in `X-Ikn-Backends-Declined`; any answer from it ends the window early, and proxied requests still go to it.
+- **Cross-chain twins by public key are listed whichever network an address is asked on.** They were only complete on eth: a btc, trx, ltc, bch or zec address missed its key's addresses on the externally served networks, and an address on one of those missed its btc, trx, ltc, bch and zec twins. The backends are now asked about the key's eth address when the key was used on Ethereum, and an address on an externally served network gets the local pubkey rows of the same address; a failing local lookup leaves those rows out instead of failing the answer.
+
 ## [2.18.0] - 2026-10-15
 
 New read-only `quality` commands find where the tag summary hides an address's exchange attribution, actor clashes and garbled text in the tagstore; tied cluster tags are now picked deterministically.
