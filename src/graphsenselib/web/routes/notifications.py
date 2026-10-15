@@ -292,6 +292,9 @@ async def delete_subscription(
 async def read_feed(
     request: Request,
     unread: bool = Query(False, description="Only unread items"),
+    subscription_id: Optional[int] = Query(
+        None, ge=1, description="Only this subscription's items"
+    ),
     cursor: Optional[str] = CursorQuery,
     limit: int = LimitQuery,
     client: NotificationsClient = Depends(_client),
@@ -301,7 +304,12 @@ async def read_feed(
         request,
         "GET",
         "/feed",
-        params={"unread": str(unread).lower(), "cursor": cursor, "limit": limit},
+        params={
+            "unread": str(unread).lower(),
+            "subscription_id": subscription_id,
+            "cursor": cursor,
+            "limit": limit,
+        },
     )
 
 

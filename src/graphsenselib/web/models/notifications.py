@@ -128,6 +128,8 @@ class Subscription(BaseModel):
     last_checked_at: datetime | None = None
     next_check_at: datetime | None = None
     check_errors: int = 0
+    # Unread feed items of this subscription (on networks the caller may see).
+    unread: int = 0
 
 
 class SubscriptionPage(BaseModel):
@@ -174,10 +176,13 @@ class FeedPage(BaseModel):
 
 class FeedReadRequest(_Strict):
     """Mark feed items read: the listed ``ids``, or everything up to and
-    including ``up_to`` (an item id). Exactly one of the two."""
+    including ``up_to`` (an item id). Exactly one of the two; either can be
+    narrowed to one ``subscription_id``."""
 
     ids: list[int] | None = Field(default=None, min_length=1, max_length=500)
     up_to: int | None = None
+    # Only this subscription's items.
+    subscription_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _exactly_one(self) -> "FeedReadRequest":

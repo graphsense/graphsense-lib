@@ -33,6 +33,7 @@ SUBSCRIPTION = {
     "last_checked_at": "2026-10-12T10:05:00Z",
     "next_check_at": "2026-10-12T10:15:00Z",
     "check_errors": 0,
+    "unread": 0,
 }
 
 FEED_ITEM = {
@@ -224,6 +225,11 @@ def test_feed_routes():
         "marked": 2
     }
     assert body_of(seen[1]) == {"up_to": 3}
+    client.get("/notifications/feed?subscription_id=7")
+    assert seen[2].url.params["subscription_id"] == "7"
+    assert "subscription_id" not in seen[0].url.params
+    client.post("/notifications/feed/read", json={"up_to": 3, "subscription_id": 7})
+    assert body_of(seen[3]) == {"up_to": 3, "subscription_id": 7}
     assert client.get("/notifications/feed/unread_count").json() == {
         "count": 1,
         "capped": False,
@@ -333,17 +339,18 @@ def test_polling_state_passes_through_and_is_optional():
         "last_checked_at": "2026-10-14T12:00:00Z",
         "next_check_at": "2026-10-14T12:10:00Z",
         "check_errors": 2,
+        "unread": 5,
     }
     client, _ = make_client(answer=lambda r: httpx.Response(200, json=polled))
     got = client.get("/notifications/subscriptions/7").json()
-    assert got["check_errors"] == 2
+    assert (got["check_errors"], got["unread"]) == (2, 5)
     assert got["last_checked_at"].startswith("2026-10-14T12:00:00")
     # an older service without the fields still meets the contract
-    polling = ("last_checked_at", "next_check_at", "check_errors")
+    polling = ("last_checked_at", "next_check_at", "check_errors", "unread")
     legacy = {k: v for k, v in SUBSCRIPTION.items() if k not in polling}
     client, _ = make_client(answer=lambda r: httpx.Response(200, json=legacy))
     got = client.get("/notifications/subscriptions/7").json()
-    assert (got["last_checked_at"], got["check_errors"]) == (None, 0)
+    assert (got["last_checked_at"], got["check_errors"], got["unread"]) == (None, 0, 0)
 
 
 def test_unknown_response_fields_are_dropped():
