@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Fixed
+- **`delta-update --forward-fill-rates` no longer warns every hour about today's missing exchange rate.** Ingest fetches rates only up to yesterday, so blocks of the current UTC day are always forward-filled; that is now logged at INFO. It still warns when a block of an earlier day had to be filled (or its timestamp is unknown), which means a day's rate is really missing. What gets filled is unchanged.
+
 ## [2.18.0] - 2026-10-15
 
 New read-only `quality` commands find where the tag summary hides an address's exchange attribution, actor clashes and garbled text in the tagstore; tied cluster tags are now picked deterministically.
