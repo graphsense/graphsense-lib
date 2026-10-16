@@ -101,7 +101,9 @@ def make_client(answer=None, include_in_schema=False, enabled=True):
                 },
             )
         if path == "/feed/unread_count":
-            return httpx.Response(200, json={"count": 1, "capped": False})
+            return httpx.Response(
+                200, json={"count": 1, "capped": False, "subscriptions": 1}
+            )
         return httpx.Response(404, json={"detail": "Not Found"})
 
     app = FastAPI()
@@ -233,6 +235,7 @@ def test_feed_routes():
     assert client.get("/notifications/feed/unread_count").json() == {
         "count": 1,
         "capped": False,
+        "subscriptions": 1,
     }
 
 
@@ -359,9 +362,11 @@ def test_unknown_response_fields_are_dropped():
             200, json={"count": 1, "capped": False, "internal": 1}
         )
     )
+    # ... and a field an older service doesn't send gets its default
     assert client.get("/notifications/feed/unread_count").json() == {
         "count": 1,
         "capped": False,
+        "subscriptions": 0,
     }
 
 

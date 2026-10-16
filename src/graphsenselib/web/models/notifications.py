@@ -200,9 +200,14 @@ class FeedReadResult(BaseModel):
 
 
 class UnreadCount(BaseModel):
-    # Counting stops at 1000; capped=true means "at least that many".
+    # Unread items; counting stops at 1000, capped=true means "at least that
+    # many".
     count: int
     capped: bool
+    # Subscriptions with at least one unread item: the badge number, since a
+    # burst of transactions on one address is one thing to look at. Defaults
+    # keep older services valid.
+    subscriptions: int = 0
 
 
 # --- settings --------------------------------------------------------------
