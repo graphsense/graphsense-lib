@@ -26,7 +26,7 @@ SUBSCRIPTION = {
     "network": "btc",
     "address": GENESIS,
     "frequency": "daily",
-    "filters": {"v": 1, "direction": "both", "min_value": None, "tokens": None},
+    "filters": {"v": 1, "direction": "both", "min_value": None, "tokens": None, "include_zero_value": False},
     "label": "Genesis",
     "paused_reason": None,
     "created_at": "2026-10-12T10:00:00Z",

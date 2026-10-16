@@ -73,6 +73,9 @@ class Filters(_Strict):
     min_value: MinValue | None = None
     # Token tickers on account networks; None = everything.
     tokens: list[str] | None = Field(default=None, max_length=50)
+    # Transfers of value 0: on account networks mostly the contract call
+    # behind a token transfer, also address-poisoning spam. Off unless asked.
+    include_zero_value: bool = False
 
     @field_validator("tokens")
     @classmethod
