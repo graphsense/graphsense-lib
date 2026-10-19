@@ -1,12 +1,13 @@
 # Capabilities
 
-Per-network feature availability of this deployment.
+Per-network feature availability and the optional services of this deployment.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **networks** | [**List[NetworkCapabilities]**](NetworkCapabilities.md) | One entry per served network. A network ABSENT from the list is fully enabled; so is every network of a deployment old enough to 404 this endpoint. | 
+**services** | [**List[ServiceInfo]**](ServiceInfo.md) | Optional services enabled in this deployment, e.g. address notifications. A service ABSENT from the list is not offered. Unknown names must be ignored (forward-extensible). | [optional] 
 
 ## Example
 

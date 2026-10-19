@@ -70,15 +70,57 @@ class NetworkCapabilities(APIModel):
     )
 
 
+SERVICE_INFO_EXAMPLE = {
+    "name": "notifications",
+    "available": True,
+    "version": "26.10.0rc1",
+    "api": 1,
+    "beta": True,
+    "limits": {"instant_mail_interval_minutes": 5, "subscriptions_per_user": 100},
+}
+
+
+class ServiceInfo(APIModel):
+    """An optional service of this deployment behind this API."""
+
+    model_config = api_model_config(SERVICE_INFO_EXAMPLE)
+
+    name: str = Field(
+        description='The feature it serves, e.g. "notifications" for the '
+        "/notifications/* routes."
+    )
+    available: bool = Field(
+        description="Whether the service answered just now. False: it is "
+        "enabled but unreachable; its routes answer 502 until it is back."
+    )
+    version: Optional[str] = Field(
+        default=None, description="The service's release, when it answered."
+    )
+    api: Optional[int] = Field(
+        default=None,
+        description="Contract version of its routes; rises only on a breaking change.",
+    )
+    beta: bool = Field(default=False, description="Its routes may still change.")
+    limits: Optional[dict[str, int]] = Field(
+        default=None,
+        description="Configured limits a client can show, by name, as the "
+        "service reports them, e.g. instant_mail_interval_minutes (at most one "
+        "instant email per user in that time) or subscriptions_per_user. "
+        "Unknown names must be ignored.",
+    )
+
+
 class Capabilities(APIModel):
-    """Per-network feature availability of this deployment."""
+    """Per-network feature availability and the optional services of this
+    deployment."""
 
     model_config = api_model_config(
         {
             "networks": [
                 NETWORK_CAPABILITIES_EXAMPLE,
                 {"network": "arb", "disabled": ["relations", "clusters"]},
-            ]
+            ],
+            "services": [SERVICE_INFO_EXAMPLE],
         }
     )
 
@@ -86,6 +128,12 @@ class Capabilities(APIModel):
         description="One entry per served network. A network ABSENT from the "
         "list is fully enabled; so is every network of a deployment old "
         "enough to 404 this endpoint."
+    )
+    services: list[ServiceInfo] = Field(
+        default_factory=list,
+        description="Optional services enabled in this deployment, e.g. "
+        "address notifications. A service ABSENT from the list is not "
+        "offered. Unknown names must be ignored (forward-extensible).",
     )
 
 

@@ -26,6 +26,8 @@ def test_get_capabilities(client):
         {"network": currency.name, "disabled": []}
         for currency in sorted(stats.currencies, key=lambda c: c.name)
     ]
+    # no optional service is enabled in the test deployment
+    assert result["services"] == []
 
 
 def test_search(client):
@@ -121,3 +123,41 @@ def test_search(client):
 
     result = get_json(client, path, q="0xabcde")
     assert expected.to_dict() == result
+
+
+def test_get_capabilities_lists_enabled_services(client):
+    import httpx
+
+    from graphsenselib.web.config import NotificationsConfig
+    from graphsenselib.web.routes.notifications import NotificationsClient
+
+    def service(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/meta"
+        return httpx.Response(
+            200,
+            json={
+                "version": "26.10.0rc1",
+                "api": 1,
+                "limits": {"instant_mail_interval_minutes": 5},
+            },
+        )
+
+    url = "http://gs-notifications:8000"
+    client.app.state.notifications_client = NotificationsClient(
+        NotificationsConfig(enabled=True, url=url),
+        httpx.AsyncClient(base_url=url, transport=httpx.MockTransport(service)),
+    )
+    try:
+        result = get_json(client, "/capabilities")
+    finally:
+        del client.app.state.notifications_client
+    assert result["services"] == [
+        {
+            "name": "notifications",
+            "available": True,
+            "version": "26.10.0rc1",
+            "api": 1,
+            "beta": True,
+            "limits": {"instant_mail_interval_minutes": 5},
+        }
+    ]

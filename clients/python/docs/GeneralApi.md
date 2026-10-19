@@ -14,7 +14,7 @@ Method | HTTP request | Description
 
 Get per-network feature availability
 
-Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404).
+Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404). Also lists the optional services of the deployment (e.g. address notifications) with their versions.
 
 ### Example
 

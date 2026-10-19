@@ -10,6 +10,7 @@ from graphsenselib.web.routes.base import (
     PluginRoute,
     get_ctx,
 )
+from graphsenselib.web.routes.notifications import notifications_service_info
 import graphsenselib.web.service.general_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -41,7 +42,9 @@ async def get_statistics(
     description=(
         "Returns which optional feature families are disabled per served network. "
         "A network absent from the list is fully enabled, as is every network of "
-        "a deployment that does not serve this endpoint (404)."
+        "a deployment that does not serve this endpoint (404). Also lists the "
+        "optional services of the deployment (e.g. address notifications) with "
+        "their versions."
     ),
     operation_id="get_capabilities",
     response_model=Capabilities,
@@ -51,10 +54,14 @@ async def get_statistics(
     },
 )
 async def get_capabilities(
+    request: Request,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Returns per-network feature availability."""
+    """Returns per-network feature availability and the optional services."""
     result = await service.get_capabilities(ctx)
+    notifications = await notifications_service_info(request.app)
+    if notifications is not None:
+        result.services.append(notifications)
     return result
 
 

@@ -86,6 +86,7 @@ from graphsense.models.search_result_level3 import SearchResultLevel3
 from graphsense.models.search_result_level4 import SearchResultLevel4
 from graphsense.models.search_result_level5 import SearchResultLevel5
 from graphsense.models.search_result_level6 import SearchResultLevel6
+from graphsense.models.service_info import ServiceInfo
 from graphsense.models.stats import Stats
 from graphsense.models.tag import Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry
