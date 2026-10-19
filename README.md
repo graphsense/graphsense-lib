@@ -572,6 +572,78 @@ graphsense-cli delta-update patch-exchange-rates \
     --end-block 200000
 ```
 
+### Continuous Sync
+
+`sync run` replaces the per-currency cron jobs (`ingest from-node`, then
+`delta-update update`). It is one long-running daemon that polls each node
+and runs ingest and the delta update as soon as there is something new, as
+child processes. It needs Redis (`use_redis_locks: true`, `redis_url`) for
+claims, pauses and status.
+
+```yaml
+environments:
+  prod:
+    sync:
+      poll_seconds: 30
+      max_parallel_currencies: 4
+      max_parallel_delta_updates: 2
+      rates_every_minutes: 30       # exchange rates with every Nth ingest only
+      currencies:
+        btc:
+          ingest_args: [--sinks, cassandra, --sinks, delta, --mode, utxo_with_tx_graph]
+          delta_update_args: [--updater-version, 2, --forward-fill-rates]
+          lag_alert_minutes: 90
+        zec:
+          channel: canary           # run by the canary daemon only
+          enabled: true
+          ingest_args: [--sinks, cassandra, --sinks, delta, --mode, utxo_with_tx_graph]
+          delta_update_args: [--updater-version, 2, --forward-fill-rates]
+    keyspaces:
+      zec:
+        ingest_config:
+          reorg_backoff_blocks: 24  # default 150; see CHANGELOG
+```
+
+The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates` and
+`--no-staleness-check` itself. Put everything else a cron line had into
+`ingest_args` / `delta_update_args`.
+
+Run one daemon per channel. To try a release on a few currencies, run the
+canary daemon from the new image:
+
+```yaml
+# docker compose
+services:
+  sync-stable:
+    image: graphsense-lib:26.10.2
+    command: graphsense-cli -vv sync run -e prod --channel stable
+    restart: unless-stopped
+    stop_grace_period: 3m           # lets running jobs stop cleanly
+  sync-canary:
+    image: graphsense-lib:26.11.0-rc.1
+    command: graphsense-cli -vv sync run -e prod --channel canary
+    restart: unless-stopped
+    stop_grace_period: 3m
+```
+
+Moving a currency between channels is a config edit: the daemon re-reads the
+file, and the other one picks the currency up after the current job. Move a
+currency back from canary only if the canary's schema migrations are
+backward compatible. Also avoid moving it while its delta update has a pending
+WAL record (written by another version, the record blocks the next run until
+replayed with `--force-wal-replay`).
+
+```bash
+graphsense-cli sync status -e prod
+graphsense-cli sync pause -e prod -c zec --reason "node resync" --for 6h
+graphsense-cli sync resume -e prod -c zec
+graphsense-cli sync run -e prod --channel canary --once -c zec   # one cycle, then exit
+```
+
+Before every ingest, the newest raw block hashes are compared with the
+node's. A mismatch means a reorg went deeper than the reorg backoff, and the
+currency is paused until someone has repaired raw and runs `sync resume`.
+
 ### Exchange Rates
 
 Fetch and ingest exchange rates from various sources.

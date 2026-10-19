@@ -1,4 +1,5 @@
 import logging
+import os
 
 import click
 from rich.traceback import install
@@ -12,6 +13,8 @@ from ..ingest.cli import ingest_cli
 from ..monitoring.cli import monitoring_cli
 from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
+from ..sync.cli import sync_cli
+from ..sync.jobs import SYNC_JOB_ENV_VAR
 from ..utils.console import console
 from ..utils.logging import configure_logging
 from ..utils.slack import ClickSlackErrorNotificationContext
@@ -111,6 +114,7 @@ def version_cmd():
             config_cli,
             convert_cli,
             monitoring_cli,
+            sync_cli,
             watch_cli,
             version,
         ]
@@ -151,8 +155,10 @@ def cli(ctx, verbosity: int, config_file: str):
 
     configure_logging(verbosity)
     config, h = try_load_config(config_file)
-    # if we have a config, we can set up the slack notification context
-    if config is not None:
+    # if we have a config, we can set up the slack notification context. Not
+    # for jobs of the sync daemon: it retries them and reports failures itself,
+    # rate-limited (see sync/jobs.py).
+    if config is not None and not os.environ.get(SYNC_JOB_ENV_VAR):
         ctx.with_resource(
             ClickSlackErrorNotificationContext(
                 config.get_slack_exception_notification_hook_urls()

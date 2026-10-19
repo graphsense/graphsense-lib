@@ -171,15 +171,20 @@ def is_account_based_currency(currency: str) -> bool:
     return currency_to_public_schema_type.get(currency.lower()) == "account"
 
 
-def get_reorg_backoff_blocks(network: str) -> int:
+def get_reorg_backoff_blocks(network: str, override: Optional[int] = None) -> int:
     """For imports we do not want to always catch up with the latest block
     since we want to avoid reorgs lead to spurious data in the database.
 
-    Default conservative estimate is 2h worth of blocks lag.
+    Ingest has no reorg handling: blocks orphaned by a reorg deeper than this
+    stay in the raw keyspace. ``override`` is the per-network
+    ``ingest_config.reorg_backoff_blocks`` and wins over the built-in default.
 
     Args:
         network (str): currency/network label
+        override (Optional[int]): configured backoff, if any
     """
+    if override is not None:
+        return override
     return reorg_backoff_blocks[network.lower()]
 
 
@@ -215,6 +220,16 @@ class IngestConfig(_WarnExtraModel):
             "the highest ingested raw block is not older than this many hours "
             "and sends a notification otherwise (same check as `monitoring "
             "monitor-raw-ingest`). Unset disables the automatic check."
+        ),
+    )
+    reorg_backoff_blocks: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How many blocks `ingest from-node` stays behind the node tip to "
+            "avoid ingesting blocks a reorg later orphans (ingest has no reorg "
+            "handling). Unset uses the built-in default for the network. At "
+            "least 1."
         ),
     )
     exchange_rates_provider: Optional[str] = Field(
@@ -351,6 +366,121 @@ class PubkeyConfig(_WarnExtraModel):
         return v
 
 
+# Flags the sync scheduler sets itself on the commands it runs. A copy in the
+# per-currency extra args would either be ignored or fight the scheduler.
+_SYNC_RESERVED_ARGS = frozenset(
+    {
+        "-e",
+        "--env",
+        "-c",
+        "--currency",
+        "--start-block",
+        "--end-block",
+        "--config-file",
+        "--no-exchange-rates",
+        "--no-staleness-check",
+    }
+)
+
+
+def _check_sync_args(args: List[str]) -> List[str]:
+    for arg in args:
+        if arg.split("=", 1)[0] in _SYNC_RESERVED_ARGS:
+            raise ValueError(
+                f"{arg} is set by the sync scheduler and cannot be passed here"
+            )
+    return args
+
+
+class SyncCurrencyConfig(_WarnExtraModel):
+    """How `graphsense-cli sync run` keeps one currency up to date."""
+
+    enabled: bool = True
+    channel: str = Field(
+        default="stable",
+        description=(
+            "Only the sync daemon started with this --channel runs the "
+            "currency. Run a second daemon from a newer image with "
+            "--channel canary to try a release on a few currencies first."
+        ),
+    )
+    poll_seconds: Optional[int] = Field(default=None, ge=5)
+    max_blocks_per_job: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Upper bound for one ingest job. Default: ~2h of blocks.",
+    )
+    ingest_args: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra arguments for `ingest from-node`, e.g. "
+            "[--sinks, cassandra, --sinks, delta, --mode, utxo_with_tx_graph]."
+        ),
+    )
+    delta_update: bool = True
+    delta_update_args: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra arguments for `delta-update update`, e.g. "
+            "[--updater-version, 2, --forward-fill-rates]."
+        ),
+    )
+    lag_alert_minutes: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Alert when the newest raw block is older than this.",
+    )
+    reorg_check_depth: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Compare this many of the newest ingested block hashes with the "
+            "node's before every ingest; a mismatch means a reorg deeper than "
+            "the reorg backoff, and pauses the currency. 0 disables the check."
+        ),
+    )
+
+    @field_validator("ingest_args", "delta_update_args")
+    @classmethod
+    def _no_reserved_args(cls, v):
+        return _check_sync_args(v)
+
+
+class SyncConfig(_WarnExtraModel):
+    """Settings for the continuous sync daemon (`graphsense-cli sync run`)."""
+
+    poll_seconds: int = Field(default=30, ge=5)
+    max_parallel_currencies: int = Field(default=4, ge=1)
+    max_parallel_delta_updates: int = Field(default=2, ge=1)
+    ingest_timeout_minutes: int = Field(default=60, ge=1)
+    delta_update_timeout_minutes: int = Field(default=180, ge=1)
+    rates_every_minutes: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "Ingest jobs skip the exchange-rates pre-step, except once per "
+            "this interval."
+        ),
+    )
+    consistency_check_every_minutes: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Run `monitoring check-consistency` this often. Unset: never.",
+    )
+    consistency_check_args: List[str] = Field(default_factory=list)
+    alert_topic: str = "exceptions"
+    failure_alert_after: int = Field(
+        default=3, ge=1, description="Alert after this many failures in a row."
+    )
+    max_backoff_minutes: int = Field(default=15, ge=1)
+    currencies: Dict[str, SyncCurrencyConfig] = Field(default_factory=dict)
+
+    @field_validator("consistency_check_args")
+    @classmethod
+    def _no_reserved_args(cls, v):
+        return _check_sync_args(v)
+
+
 class Environment(_WarnExtraModel):
     cassandra_nodes: List[str]
     username: Optional[str] = Field(default_factory=lambda: None)
@@ -373,6 +503,7 @@ class Environment(_WarnExtraModel):
     )
     keyspaces: Dict[str, KeyspaceConfig]
     pubkey: Optional[PubkeyConfig] = None
+    sync: Optional[SyncConfig] = None
 
     @field_validator("consistency_level")
     @classmethod

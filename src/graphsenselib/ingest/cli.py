@@ -462,6 +462,7 @@ def _run_new_ingest(
         s3_credentials = config.get_s3_credentials(pdc.s3_config)
 
     source_max_workers = ic.source_max_workers if ic is not None else None
+    reorg_backoff_blocks = ic.reorg_backoff_blocks if ic is not None else None
 
     export_delta(
         currency=currency,
@@ -478,6 +479,7 @@ def _run_new_ingest(
         previous_day=previous_day,
         info=info,
         source_max_workers=source_max_workers,
+        reorg_backoff_blocks=reorg_backoff_blocks,
     )
 
 
