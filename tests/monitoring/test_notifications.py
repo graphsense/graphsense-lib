@@ -8,13 +8,15 @@ def _config(redis):
     return cfg
 
 
-def test_without_redis_every_message_is_sent():
+def test_without_redis_repeats_are_limited_in_process():
+    notifications._sent_until.clear()
     with (
         patch.object(notifications, "get_config", return_value=_config(False)),
         patch.object(notifications, "send_msg_to_topic") as send,
     ):
         assert notifications.send_msg_to_topic_rate_limited("t", "m", "k", 60)
-        assert notifications.send_msg_to_topic_rate_limited("t", "m", "k", 60)
+        assert not notifications.send_msg_to_topic_rate_limited("t", "m", "k", 60)
+        assert notifications.send_msg_to_topic_rate_limited("t", "m", "other", 60)
     assert send.call_count == 2
 
 

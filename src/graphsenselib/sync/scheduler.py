@@ -39,6 +39,7 @@ from ..config import (
     SyncConfig,
     SyncCurrencyConfig,
     avg_blocktimes_by_currencies,
+    get_config,
     get_reorg_backoff_blocks,
 )
 from .jobs import EXIT_INCONSISTENT, JobRunner, Outcome, StepResult
@@ -125,11 +126,49 @@ class SyncScheduler:
         self._delta_slots = threading.BoundedSemaphore(1)
         self._config_error_reported = False
         self._once = False
+        self._signals = 0
 
     # -- lifecycle ---------------------------------------------------------
 
     def stop(self):
         self._stop.set()
+
+    def _on_signal(self, signum, frame):
+        """SIGINT/SIGTERM. First: stop starting jobs and let running ones stop
+        after their current chunk. Second: say what we are waiting for. Third:
+        SIGKILL the jobs.
+
+        Killing is crash-safe for the data (ingest writes `block` last and
+        cleans up after itself, delta-update replays its WAL), but a killed
+        job leaves its Redis lock behind, and the next run of that currency
+        stays blocked until someone deletes it (`redis-cli DEL`, see
+        utils/locking.py). File locks are released by the OS.
+        """
+        self._signals += 1
+        name = signal.Signals(signum).name
+        if self._signals == 1:
+            logger.warning(
+                f"{name}: stopping. Running jobs stop after their current "
+                "chunk; send it twice more to kill them."
+            )
+            self.stop()
+        elif self._signals == 2:
+            running = ", ".join(
+                f"{label} ({secs / 60:.0f} min)"
+                for label, secs in self.runner.running().items()
+            )
+            logger.warning(
+                f"{name}: still waiting for: {running or 'nothing'}. One more "
+                "kills them"
+                + (
+                    "; their Redis locks then stay behind."
+                    if get_config().use_redis_locks
+                    else "."
+                )
+            )
+        else:
+            logger.error(f"{name}: killing running jobs")
+            self.runner.kill_now.set()
 
     def request_reload(self):
         self._reload_requested.set()
@@ -138,8 +177,8 @@ class SyncScheduler:
         """Run until stopped (SIGTERM/SIGINT), or one cycle per currency with
         ``once``. Returns a process exit code."""
         if threading.current_thread() is threading.main_thread():
-            signal.signal(signal.SIGTERM, lambda *_: self.stop())
-            signal.signal(signal.SIGINT, lambda *_: self.stop())
+            signal.signal(signal.SIGTERM, self._on_signal)
+            signal.signal(signal.SIGINT, self._on_signal)
             if hasattr(signal, "SIGHUP"):
                 signal.signal(signal.SIGHUP, lambda *_: self.request_reload())
         logger.info(

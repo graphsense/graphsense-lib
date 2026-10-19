@@ -26,23 +26,23 @@ def sync():
     pass
 
 
-def _store(env: str, allow_memory: bool = False):
-    from .state import MemoryStateStore, RedisStateStore
+# Fixed rather than tempfile.gettempdir(), like utils/locking.LOCK_DIR: every
+# daemon and every `sync pause/status` must resolve the same directory.
+FILE_STATE_DIR = "/tmp/graphsense-sync"
+
+
+def _store(env: str):
+    from .state import FileStateStore, RedisStateStore
 
     config = get_config()
     if config.use_redis_locks and config.redis_url:
         return RedisStateStore(config.redis_url, env)
-    if allow_memory:
-        logger.warning(
-            "No Redis configured (use_redis_locks/redis_url): claims, pauses "
-            "and status stay in this process only."
-        )
-        return MemoryStateStore()
-    console.print(
-        "[red]sync needs Redis for its shared state: set use_redis_locks and "
-        "redis_url in the config.[/red]"
+    directory = os.path.join(FILE_STATE_DIR, env)
+    logger.info(
+        f"No Redis configured (use_redis_locks/redis_url): sync state in "
+        f"{directory}. Daemons in separate containers need it on a shared volume."
     )
-    sys.exit(11)
+    return FileStateStore(directory)
 
 
 class _EnvironmentReloader:
@@ -116,7 +116,7 @@ def run(ctx, env: str, channel: str, once: bool, only):
     scheduler = SyncScheduler(
         env=env,
         channel=channel,
-        store=_store(env, allow_memory=once),
+        store=_store(env),
         load_environment=_EnvironmentReloader(env, config_path),
         runner=JobRunner(global_args=global_args),
         only=list(only) or None,

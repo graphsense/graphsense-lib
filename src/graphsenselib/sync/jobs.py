@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,17 @@ class JobRunner:
         # e.g. ["-vv", "--config-file", "..."]: go before the subcommand.
         self.global_args = global_args or []
         self.terminate_grace_seconds = terminate_grace_seconds
+        # Set to cut the grace period short: SIGKILL instead of waiting for a
+        # clean stop (the daemon's third Ctrl-C).
+        self.kill_now = threading.Event()
+        self._running: Dict[str, float] = {}
+        self._running_lock = threading.Lock()
+
+    def running(self) -> Dict[str, float]:
+        """Label -> seconds running, for every job still alive."""
+        now = time.monotonic()
+        with self._running_lock:
+            return {k: now - v for k, v in self._running.items()}
 
     def run(
         self,
@@ -136,6 +147,8 @@ class JobRunner:
             daemon=True,
         )
         reader.start()
+        with self._running_lock:
+            self._running[label] = started
 
         timed_out = stopped = False
         while proc.poll() is None:
@@ -155,6 +168,8 @@ class JobRunner:
             logger.warning(f"[{label}] {why}, sending SIGTERM")
             self._terminate(proc, label)
 
+        with self._running_lock:
+            self._running.pop(label, None)
         reader.join(timeout=5)
         if proc.stdout is not None:
             proc.stdout.close()
@@ -173,15 +188,21 @@ class JobRunner:
 
     def _terminate(self, proc: subprocess.Popen, label: str):
         _signal_group(proc, signal.SIGTERM)
-        try:
-            proc.wait(timeout=self.terminate_grace_seconds)
-        except subprocess.TimeoutExpired:
-            logger.error(
-                f"[{label}] still running {self.terminate_grace_seconds}s after "
-                "SIGTERM, sending SIGKILL"
-            )
-            _signal_group(proc, signal.SIGKILL)
-            proc.wait()
+        deadline = time.monotonic() + self.terminate_grace_seconds
+        while time.monotonic() < deadline and not self.kill_now.is_set():
+            try:
+                proc.wait(timeout=1.0)
+                return
+            except subprocess.TimeoutExpired:
+                pass
+        why = (
+            "kill requested"
+            if self.kill_now.is_set()
+            else f"still running {self.terminate_grace_seconds}s after SIGTERM"
+        )
+        logger.error(f"[{label}] {why}, sending SIGKILL")
+        _signal_group(proc, signal.SIGKILL)
+        proc.wait()
 
 
 def _signal_group(proc: subprocess.Popen, sig):

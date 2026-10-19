@@ -48,3 +48,23 @@ def test_run_passes_config_file_to_jobs_and_reloads(tmp_path):
     future = time.time() + 5
     os.utime(cfg, (future, future))
     assert load().sync.currencies["zec"].channel == "stable"
+
+
+def test_pause_status_resume_without_redis(tmp_path):
+    cfg = tmp_path / "gs.yaml"
+    cfg.write_text(CONFIG.replace("CHANNEL", "stable"))
+    base = ["--config-file", str(cfg), "sync"]
+    with patch("graphsenselib.sync.cli.FILE_STATE_DIR", str(tmp_path / "state")):
+        r = CliRunner().invoke(
+            cli, base + ["pause", "-e", "dev", "-c", "zec", "--reason", "resync"]
+        )
+        assert r.exit_code == 0, r.output
+        from graphsenselib.sync.state import FileStateStore
+
+        store = FileStateStore(str(tmp_path / "state" / "dev"))
+        assert store.get_pause("zec")["reason"] == "resync"
+        r = CliRunner().invoke(cli, base + ["status", "-e", "dev"])
+        assert r.exit_code == 0, r.output
+        r = CliRunner().invoke(cli, base + ["resume", "-e", "dev", "-c", "zec"])
+        assert "Resumed" in r.output
+    assert (tmp_path / "state" / "dev").is_dir()

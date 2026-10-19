@@ -59,3 +59,22 @@ def test_stop_event_stops_job():
     stop.set()
     r = run("import time; time.sleep(60)", stop=stop)
     assert r.outcome is Outcome.STOPPED
+
+
+def test_kill_now_cuts_grace_short():
+    runner = JobRunner(cli_command=PY, terminate_grace_seconds=60)
+    stop = threading.Event()
+    code = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "print('started', flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    t = threading.Timer(0.5, stop.set)
+    k = threading.Timer(2.0, runner.kill_now.set)
+    t.start()
+    k.start()
+    r = runner.run("step", [code], 30, stop, "test")
+    assert r.outcome is Outcome.STOPPED
+    assert r.exit_code == -9
+    assert r.seconds < 10

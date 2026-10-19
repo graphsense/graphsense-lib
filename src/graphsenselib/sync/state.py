@@ -9,6 +9,8 @@ expires under a live daemon at worst makes both daemons start a job, and one of
 them gets lock contention (exit 911).
 """
 
+import contextlib
+import glob
 import json
 import os
 import socket
@@ -17,6 +19,8 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
+
+from filelock import FileLock
 
 # Long enough to survive a slow scheduler tick, short enough that a currency
 # moved to another channel (or orphaned by a dead daemon) is picked up quickly.
@@ -152,6 +156,109 @@ class MemoryStateStore(StateStore):
         with self._lock:
             keys = [k for k in self._data if k[0] == "daemon"]
             return [(k[1], v) for k in keys if (v := self._get(k)) is not None]
+
+
+class FileStateStore(StateStore):
+    """State in a directory, for setups without Redis (`use_redis_locks` off).
+
+    Every daemon and every `sync pause/status` must see the same directory:
+    on one host that is automatic; daemons in separate containers need it on a
+    shared volume -- the same caveat as the file locks of the jobs
+    themselves (`utils/locking.py`, fixed under /tmp).
+    """
+
+    def __init__(self, directory: str, clock=time.time):
+        self.directory = directory
+        self._clock = clock
+        os.makedirs(directory, exist_ok=True)
+
+    def _path(self, kind: str, name: str) -> str:
+        return os.path.join(self.directory, f"{kind}.{name}.json")
+
+    @contextlib.contextmanager
+    def _locked(self, path: str):
+        with FileLock(path + ".lock", timeout=10):
+            yield
+
+    def _read(self, path: str):
+        try:
+            with open(path) as f:
+                record = json.load(f)
+        except (FileNotFoundError, ValueError):
+            return None
+        expires = record.get("expires")
+        if expires is not None and expires <= self._clock():
+            return None
+        return record.get("value")
+
+    def _write(self, path: str, value, ttl: Optional[float] = None):
+        record = {
+            "value": value,
+            "expires": None if ttl is None else self._clock() + ttl,
+        }
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(record, f)
+        os.replace(tmp, path)  # readers never see a half-written file
+
+    def _delete(self, path: str) -> bool:
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def claim(self, currency, owner):
+        path = self._path("claim", currency)
+        with self._locked(path):
+            if self._read(path) not in (None, owner):
+                return False
+            self._write(path, owner, CLAIM_TTL_SECONDS)
+            return True
+
+    def release(self, currency, owner):
+        path = self._path("claim", currency)
+        with self._locked(path):
+            if self._read(path) == owner:
+                self._delete(path)
+
+    def claim_owner(self, currency):
+        return self._read(self._path("claim", currency))
+
+    def pause(self, currency, reason, by, seconds=None):
+        self._write(
+            self._path("pause", currency), _pause_record(reason, by, seconds), seconds
+        )
+
+    def resume(self, currency):
+        path = self._path("pause", currency)
+        found = self._read(path) is not None
+        self._delete(path)
+        return found
+
+    def get_pause(self, currency):
+        return self._read(self._path("pause", currency))
+
+    def write_status(self, currency, status):
+        self._write(self._path("status", currency), dict(status))
+
+    def read_status(self, currency):
+        return self._read(self._path("status", currency))
+
+    def announce_daemon(self, daemon_id, info):
+        self._write(self._path("daemon", daemon_id), dict(info), DAEMON_TTL_SECONDS)
+
+    def forget_daemon(self, daemon_id):
+        self._delete(self._path("daemon", daemon_id))
+
+    def list_daemons(self):
+        out = []
+        for path in sorted(glob.glob(self._path("daemon", "*"))):
+            info = self._read(path)
+            if info is not None:
+                name = os.path.basename(path)[len("daemon.") : -len(".json")]
+                out.append((name, info))
+        return out
 
 
 # Compare-and-set on the claim value, so a daemon never extends or drops a

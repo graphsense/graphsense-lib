@@ -300,3 +300,17 @@ def test_stop_during_delta_slot_wait(setup):
     sched._delta_slots.acquire()
     sched._stop.set()
     assert sched._acquire_delta_slot() is False
+
+
+def test_signals_escalate(setup):
+    import signal
+
+    sched, *_ = setup()
+    sched.runner.running = lambda: {"zec ingest": 120.0}
+    sched.runner.kill_now = threading.Event()
+    sched._on_signal(signal.SIGINT, None)
+    assert sched._stop.is_set() and not sched.runner.kill_now.is_set()
+    sched._on_signal(signal.SIGINT, None)
+    assert not sched.runner.kill_now.is_set()
+    sched._on_signal(signal.SIGTERM, None)
+    assert sched.runner.kill_now.is_set()

@@ -577,8 +577,15 @@ graphsense-cli delta-update patch-exchange-rates \
 `sync run` replaces the per-currency cron jobs (`ingest from-node`, then
 `delta-update update`). It is one long-running daemon that polls each node
 and runs ingest and the delta update as soon as there is something new, as
-child processes. It needs Redis (`use_redis_locks: true`, `redis_url`) for
-claims, pauses and status.
+child processes. Claims, pauses and status live in Redis when
+`use_redis_locks`/`redis_url` are set, otherwise in files under
+`/tmp/graphsense-sync/<env>`. Without Redis, daemons in separate containers
+need that directory, and `/tmp` for the jobs' file locks, on a shared volume.
+
+Ctrl-C (or SIGTERM, e.g. `docker stop`) stops starting jobs, and running jobs
+stop cleanly after their current chunk. A second signal lists what is still
+running. A third kills the jobs: safe for the data, but a killed job's Redis
+lock stays behind until deleted (`redis-cli DEL`).
 
 ```yaml
 environments:
