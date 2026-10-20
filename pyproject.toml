@@ -195,6 +195,12 @@ graphsense-cli = "graphsenselib.cli:main.main"
 [tool.uv.sources]
 graphsense-clustering = { path = "rust/gs_clustering", editable = true }
 
+# Floor for the uv that resolves and writes uv.lock. The uv-lock pre-commit hook
+# runs whatever uv is installed, so an older one fails here instead of quietly
+# rewriting the lockfile. Keep it in step with the uv image in the Dockerfile.
+[tool.uv]
+required-version = ">=0.13"
+
 [tool.setuptools]
 zip-safe = true
 include-package-data = true
