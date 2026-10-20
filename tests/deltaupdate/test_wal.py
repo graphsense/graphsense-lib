@@ -225,6 +225,34 @@ def test_codec_roundtrip_plainrow():
     assert back[0].data["token_balances"]["USDT"].value == 5
 
 
+def test_codec_roundtrip_driver_map():
+    # With parallel_workers=1 the account updater reads current DB values
+    # straight from the driver, so a map column (token_values) arrives as
+    # OrderedMapSerializedKey holding UDT namedtuples. It is staged in the
+    # parallel reader's shape: a dict with PlainRow values.
+    from collections import namedtuple
+
+    from cassandra.cqltypes import UTF8Type
+    from cassandra.util import OrderedMapSerializedKey
+
+    currency = namedtuple("currency", ["value", "fiat_values"])
+    token_values = OrderedMapSerializedKey(UTF8Type, 4)
+    token_values._insert_unchecked(
+        "USDT", b"USDT", currency(value=15926120, fiat_values=[13.5, 15.9])
+    )
+    change = DbChange.update(
+        table="address_incoming_relations",
+        data={"token_values": token_values, "no_transactions": 3},
+    )
+    back = decode_changes(encode_changes([change]))
+    assert back[0].data == {
+        "token_values": {
+            "USDT": PlainRow({"value": 15926120, "fiat_values": [13.5, 15.9]})
+        },
+        "no_transactions": 3,
+    }
+
+
 def test_codec_handles_numpy_scalars():
     changes = [DbChange.new(table="t", data={"a": np.int64(7), "b": np.float64(1.5)})]
     back = decode_changes(encode_changes(changes))
