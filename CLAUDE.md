@@ -39,6 +39,17 @@ Traps, each of which has already bitten once:
 - **`spark_tests.yml` runs unconditionally, not on a path filter.** The delta
   updater and `spark/` must agree (see the next section), and a path list is
   exactly what goes stale when a new file starts feeding that contract.
+- **Hook tool versions come from the dev environment, not from hook `rev`s.**
+  The ruff and uv-lock hooks are `repo: local` and run `uv run ruff` / `uv lock`,
+  so `uv.lock` is the only ruff version and Dependabot keeps it current. A pinned
+  hook repo (`astral-sh/ruff-pre-commit`, `uv-pre-commit`) is a second version
+  nothing bumps — it had the hook on ruff 0.15 while CI linted with 0.17. Do not
+  switch them back.
+- **uv has a floor: `[tool.uv] required-version = ">=0.13"`** in `pyproject.toml`.
+  The uv-lock hook runs whatever uv is installed, so an older one errors out
+  instead of quietly rewriting `uv.lock`. Raise the floor together with the
+  `ghcr.io/astral-sh/uv` image in the Dockerfile (Dependabot bumps the image,
+  never the floor). Locally: `uv self update`.
 - **A test that reaches a hostname which does not resolve** costs whatever the
   local resolver charges for a dead name — 120s on a dev box behind a
   blackholing DNS server, instant in CI. Use a refused port (`127.0.0.1:1`).

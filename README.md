@@ -823,7 +823,8 @@ if parsed:
 
 ## Development
 
-**Important:** Requires Python >=3.10, <3.13.
+**Important:** Requires Python >=3.10, <3.14 and [uv](https://docs.astral.sh/uv/) >=0.13
+(`required-version` in `pyproject.toml`; run `uv self update` if uv refuses to start).
 
 ### Setup Development Environment
 
