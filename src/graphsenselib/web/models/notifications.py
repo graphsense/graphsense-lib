@@ -10,7 +10,7 @@ compatible, hence ``(str, Enum)`` rather than ``StrEnum``.
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,6 +39,18 @@ class PausedReason(str, Enum):
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# Ids are Postgres bigints.
+MAX_ID = 2**63 - 1
+Id = Annotated[int, Field(ge=1, le=MAX_ID)]
+
+
+def _no_control_chars(v: str | None) -> str | None:
+    # Labels end up in mail subjects: no line breaks or other control chars.
+    if v is not None and any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+        raise ValueError("must not contain control characters")
+    return v
 
 
 def _known_timezone(v: str | None) -> str | None:
@@ -95,12 +107,15 @@ class SubscriptionCreate(_Strict):
     frequency: Frequency | None = None
     filters: Filters = Filters()
     label: str | None = Field(default=None, max_length=200)
+    # False: dashboard feed only, no mail for this subscription.
+    email: bool = True
     # The browser's IANA zone (Intl.DateTimeFormat().resolvedOptions().timeZone).
     # When given it becomes the user's timezone: times in mails, the hour
     # daily digests go out. Unset keeps the current one (initially UTC).
     timezone: str | None = Field(default=None, max_length=64)
 
     _check_timezone = field_validator("timezone")(_known_timezone)
+    _check_label = field_validator("label")(_no_control_chars)
 
 
 class SubscriptionUpdate(_Strict):
@@ -109,9 +124,13 @@ class SubscriptionUpdate(_Strict):
     frequency: Frequency | None = None
     filters: Filters | None = None
     label: str | None = Field(default=None, max_length=200)
+    # Mail for this subscription on (true) or off (false, feed only).
+    email: bool | None = None
     # true pauses; false resumes (stays paused with no_access while the
     # network is not allowed).
     paused: bool | None = None
+
+    _check_label = field_validator("label")(_no_control_chars)
 
 
 class Subscription(BaseModel):
@@ -122,11 +141,13 @@ class Subscription(BaseModel):
     frequency: Frequency
     filters: Filters
     label: str | None
+    # False: feed only, no mail. The default keeps older services valid.
+    email: bool = True
     # None = running.
     paused_reason: PausedReason | None
     created_at: datetime
-    # Polling of the address (shared by everyone watching it). None until the
-    # first check; check_errors counts failed checks in a row, retried with
+    # Polling of the address since this subscription was created. None until
+    # its first check; check_errors counts failed checks in a row, retried with
     # backoff until next_check_at. Defaults keep older services valid.
     last_checked_at: datetime | None = None
     next_check_at: datetime | None = None
@@ -182,10 +203,10 @@ class FeedReadRequest(_Strict):
     including ``up_to`` (an item id). Exactly one of the two; either can be
     narrowed to one ``subscription_id``."""
 
-    ids: list[int] | None = Field(default=None, min_length=1, max_length=500)
-    up_to: int | None = None
+    ids: list[Id] | None = Field(default=None, min_length=1, max_length=500)
+    up_to: Id | None = None
     # Only this subscription's items.
-    subscription_id: int | None = Field(default=None, ge=1)
+    subscription_id: Id | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self) -> "FeedReadRequest":

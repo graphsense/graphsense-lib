@@ -26,8 +26,15 @@ SUBSCRIPTION = {
     "network": "btc",
     "address": GENESIS,
     "frequency": "daily",
-    "filters": {"v": 1, "direction": "both", "min_value": None, "tokens": None, "include_zero_value": False},
+    "filters": {
+        "v": 1,
+        "direction": "both",
+        "min_value": None,
+        "tokens": None,
+        "include_zero_value": False,
+    },
     "label": "Genesis",
+    "email": True,
     "paused_reason": None,
     "created_at": "2026-10-12T10:00:00Z",
     "last_checked_at": "2026-10-12T10:05:00Z",
@@ -219,9 +226,7 @@ def test_delete_subscription_is_204():
 
 def test_feed_routes():
     client, seen = make_client()
-    assert client.get("/notifications/feed?unread=true").json()["items"] == [
-        FEED_ITEM
-    ]
+    assert client.get("/notifications/feed?unread=true").json()["items"] == [FEED_ITEM]
     assert seen[0].url.params["unread"] == "true"
     assert client.post("/notifications/feed/read", json={"up_to": 3}).json() == {
         "marked": 2
@@ -253,6 +258,43 @@ def test_deleting_all_data_is_not_exposed():
     # account deletion on the internal network, not a user-facing route.
     client, seen = make_client()
     assert client.delete("/notifications/me").status_code in (404, 405)
+    assert seen == []
+
+
+def test_email_switch_is_forwarded():
+    client, seen = make_client()
+    client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "email": False},
+    )
+    assert body_of(seen[0])["email"] is False
+    client.patch("/notifications/subscriptions/7", json={"email": True})
+    assert body_of(seen[1]) == {"email": True}
+
+
+@pytest.mark.parametrize("label", ["two\nlines", "tab\there", "del\x7f"])
+def test_label_with_control_chars_is_rejected_here(label):
+    client, seen = make_client()
+    created = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "label": label},
+    )
+    updated = client.patch("/notifications/subscriptions/7", json={"label": label})
+    assert (created.status_code, updated.status_code) == (422, 422)
+    assert seen == []
+
+
+def test_ids_beyond_bigint_are_rejected_here():
+    client, seen = make_client()
+    too_big = 2**63
+    assert (
+        client.post("/notifications/feed/read", json={"up_to": too_big}).status_code
+        == 422
+    )
+    assert (
+        client.post("/notifications/feed/read", json={"ids": [too_big]}).status_code
+        == 422
+    )
     assert seen == []
 
 
