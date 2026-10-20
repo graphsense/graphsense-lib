@@ -1,6 +1,7 @@
 """The /notifications/* routes forwarding to gs-notifications
 (web/routes/notifications.py), against a recording mock service."""
 
+import asyncio
 import json
 
 import httpx
@@ -13,6 +14,7 @@ from graphsenselib.web.app import _register_exception_handlers
 from graphsenselib.web.config import GSRestConfig, NotificationsConfig
 from graphsenselib.web.routes.notifications import (
     TAG_DESCRIPTION,
+    NotificationsClient,
     notifications_service_info,
     order_notifications_tag,
     register_notifications_routes,
@@ -369,6 +371,57 @@ def test_unreachable_service_is_502():
     response = client.get("/notifications/feed/unread_count")
     assert response.status_code == 502
     assert response.json() == {"detail": "notifications service unavailable"}
+
+
+def test_non_json_success_is_502():
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(200, text="<html>proxy page</html>")
+    )
+    response = client.get("/notifications/feed/unread_count")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "invalid answer from notifications service"}
+
+
+def test_timeout_is_504():
+    def slow(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client, _ = make_client(answer=slow)
+    response = client.get("/notifications/subscriptions")
+    assert response.status_code == 504
+    assert response.json() == {"detail": "notifications service timed out"}
+
+
+def test_ids_are_bounded_like_the_contract():
+    client, seen = make_client()
+    too_big = 2**63
+    assert client.get(f"/notifications/subscriptions/{too_big}").status_code == 422
+    assert client.delete(f"/notifications/subscriptions/{too_big}").status_code == 422
+    assert (
+        client.get(f"/notifications/feed?subscription_id={too_big}").status_code == 422
+    )
+    assert seen == []
+    assert client.get(f"/notifications/subscriptions/{too_big - 1}").status_code == 200
+
+
+async def test_meta_is_fetched_once_for_concurrent_callers():
+    calls = 0
+
+    async def slow_meta(request):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"version": "1", "api": 1})
+
+    client = NotificationsClient(
+        NotificationsConfig(enabled=True, url=SERVICE_URL),
+        httpx.AsyncClient(
+            base_url=SERVICE_URL, transport=httpx.MockTransport(slow_meta)
+        ),
+    )
+    docs = await asyncio.gather(*(client.meta() for _ in range(5)))
+    assert calls == 1
+    assert docs == [{"version": "1", "api": 1}] * 5
 
 
 def test_polling_state_passes_through_and_is_optional():

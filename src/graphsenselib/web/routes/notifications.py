@@ -15,12 +15,14 @@ else. The service trusts them because only this app can reach it.
 
 Errors: the service's 4xx and 5xx answers reach the client unchanged (status,
 ``detail``, ``Retry-After``); they are its decisions, e.g. 409 "already
-subscribed". A service that cannot be reached is a 502.
+subscribed". A service that cannot be reached, or whose 2xx answer is not
+JSON, is a 502; one that does not answer in time is a 504.
 
 Registered only when ``notifications.enabled`` is set (see
 ``register_notifications_routes``); without it the app has no such routes.
 """
 
+import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -36,6 +38,7 @@ from graphsenselib.web.models.notifications import (
     FeedPage,
     FeedReadRequest,
     FeedReadResult,
+    MAX_ID,
     Subscription,
     SubscriptionCreate,
     SubscriptionPage,
@@ -69,6 +72,12 @@ class _ServiceAnswer(Exception):
         self.response = response
 
 
+def _error(status_code: int, detail: str) -> _ServiceAnswer:
+    return _ServiceAnswer(
+        JSONResponse(status_code=status_code, content={"detail": detail})
+    )
+
+
 class NotificationsClient:
     """Talks to the service: one shared httpx client, identity headers only."""
 
@@ -82,6 +91,9 @@ class NotificationsClient:
         )
         # (monotonic time, answer) of the last GET /meta
         self._meta: Optional[tuple[float, Optional[dict[str, Any]]]] = None
+        # One refresh at a time: concurrent callers wait for it and share
+        # its answer instead of each waiting on a dead service.
+        self._meta_lock = asyncio.Lock()
 
     async def call(
         self,
@@ -107,22 +119,28 @@ class NotificationsClient:
                 json=body,
                 headers=headers,
             )
+        except httpx.TimeoutException as e:
+            logger.error("notifications service timed out: %r", e)
+            raise _error(504, "notifications service timed out") from e
         except httpx.HTTPError as e:
             logger.error("notifications service unreachable: %r", e)
-            raise _ServiceAnswer(
-                JSONResponse(
-                    status_code=502,
-                    content={"detail": "notifications service unavailable"},
-                )
-            ) from e
+            raise _error(502, "notifications service unavailable") from e
         if response.status_code == 204:
             return Response(status_code=204)
         if response.is_success:
+            try:
+                content = response.json()
+            except ValueError as e:
+                logger.error(
+                    "notifications service: %s %s answered %d without JSON",
+                    method,
+                    path,
+                    response.status_code,
+                )
+                raise _error(502, "invalid answer from notifications service") from e
             # Not re-validated against the response model (see module doc);
             # returning a Response makes FastAPI skip that.
-            return JSONResponse(
-                content=response.json(), status_code=response.status_code
-            )
+            return JSONResponse(content=content, status_code=response.status_code)
         try:
             content = response.json()
         except ValueError:
@@ -142,20 +160,28 @@ class NotificationsClient:
     async def meta(self) -> Optional[dict[str, Any]]:
         """The service's GET /meta (no identity needed), or None when it does
         not answer; cached for META_TTL_S either way."""
-        now = time.monotonic()
-        if self._meta is not None and now - self._meta[0] < META_TTL_S:
-            return self._meta[1]
-        doc: Optional[dict[str, Any]] = None
-        try:
-            response = await self.client.get("/meta", timeout=META_TIMEOUT_S)
-            response.raise_for_status()
-            answer = response.json()
-            if isinstance(answer, dict):
-                doc = answer
-        except (httpx.HTTPError, ValueError) as e:
-            logger.warning("notifications service /meta: %r", e)
-        self._meta = (now, doc)
-        return doc
+        if (cached := self._cached_meta()) is not None:
+            return cached[1]
+        async with self._meta_lock:
+            # Refreshed while we waited for the lock?
+            if (cached := self._cached_meta()) is not None:
+                return cached[1]
+            doc: Optional[dict[str, Any]] = None
+            try:
+                response = await self.client.get("/meta", timeout=META_TIMEOUT_S)
+                response.raise_for_status()
+                answer = response.json()
+                if isinstance(answer, dict):
+                    doc = answer
+            except (httpx.HTTPError, ValueError) as e:
+                logger.warning("notifications service /meta: %r", e)
+            self._meta = (time.monotonic(), doc)
+            return doc
+
+    def _cached_meta(self) -> Optional[tuple[float, Optional[dict[str, Any]]]]:
+        if self._meta is not None and time.monotonic() - self._meta[0] < META_TTL_S:
+            return self._meta
+        return None
 
 
 async def notifications_service_info(app: FastAPI) -> Optional[ServiceInfo]:
@@ -191,7 +217,7 @@ def _client(request: Request) -> NotificationsClient:
     return request.app.state.notifications_client
 
 
-SubscriptionIdPath = Path(..., ge=1, description="The subscription's id")
+SubscriptionIdPath = Path(..., ge=1, le=MAX_ID, description="The subscription's id")
 CursorQuery = Query(None, description="next_cursor of the previous page")
 LimitQuery = Query(50, ge=1, le=200, description="Page size")
 
@@ -298,7 +324,7 @@ async def read_feed(
     request: Request,
     unread: bool = Query(False, description="Only unread items"),
     subscription_id: Optional[int] = Query(
-        None, ge=1, description="Only this subscription's items"
+        None, ge=1, le=MAX_ID, description="Only this subscription's items"
     ),
     cursor: Optional[str] = CursorQuery,
     limit: int = LimitQuery,
