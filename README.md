@@ -622,8 +622,7 @@ environments:
       currencies:
         eth:
           lag_alert_minutes: 30
-        zec:
-          channel: canary                 # run by the canary daemon only
+        zec: {}
 ```
 
 The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates`,
@@ -634,40 +633,57 @@ long compaction does not hit the ingest timeout. `ingest_args` /
 `delta_update_args` take extra flags for the rare case the config has no
 field for.
 
-All jobs of a daemon share its container's memory limit, unlike `docker run
--m` per job: size it for what can run at once (see the `max_parallel_*`
-settings), or give the largest currencies a daemon of their own.
-
-Run one daemon per channel. To try a release on a few currencies, run the
-canary daemon from the new image:
+Run one daemon per currency, each in its own container (`-c`). A daemon
+runs its currency's jobs one after another, so the container's memory limit
+works like `docker run -m` per job does today. Its version is the image tag,
+so a canary is one service on a newer tag. Settings from the same `.graphsense.yaml`:
 
 ```yaml
 # docker compose
+x-sync: &sync
+  restart: unless-stopped
+  stop_grace_period: 3m           # lets running jobs stop cleanly
+  mem_limit: 45g
+  environment: {AWS_EC2_METADATA_DISABLED: "true"}
+  volumes:
+    - ~/.graphsense.yaml:/home/graphsense/.graphsense.yaml:ro
+    - /srv/graphsense-sync:/tmp/graphsense-sync   # only without Redis
+
 services:
-  sync-stable:
-    image: graphsense-lib:26.10.2
-    command: graphsense-cli -vv sync run -e prod --channel stable
-    restart: unless-stopped
-    stop_grace_period: 3m           # lets running jobs stop cleanly
-  sync-canary:
-    image: graphsense-lib:26.11.0-rc.1
-    command: graphsense-cli -vv sync run -e prod --channel canary
-    restart: unless-stopped
-    stop_grace_period: 3m
+  sync-btc:
+    <<: *sync
+    image: ghcr.io/graphsense/graphsense-lib:v26.10.2
+    command: graphsense-cli -v sync run -e prod -c btc
+  sync-eth:
+    <<: *sync
+    image: ghcr.io/graphsense/graphsense-lib:v26.10.2
+    command: graphsense-cli -v sync run -e prod -c eth
+  sync-zec:                       # canary: a newer tag
+    <<: *sync
+    image: ghcr.io/graphsense/graphsense-lib:v26.11.0-rc.1
+    command: graphsense-cli -v sync run -e prod -c zec
 ```
 
-Moving a currency between channels is a config edit: the daemon re-reads the
-file, and the other one picks the currency up after the current job. Move a
-currency back from canary only if the canary's schema migrations are
-backward compatible. Also avoid moving it while its delta update has a pending
-WAL record (written by another version, the record blocks the next run until
-replayed with `--force-wal-replay`).
+The `max_parallel_*` limits count within one daemon, so with one currency
+per daemon they limit nothing, and delta updates of different currencies can
+overlap, as cron jobs that start at the same minute do. Without Redis, mount
+the same state directory into every daemon and into wherever you run `sync
+status`/`pause`/`resume`, or they each see only their own state.
+
+Several currencies can also share a daemon: give them a `channel` and run
+`sync run --channel <name>`. Its jobs then share one memory limit, so size
+the container for what can run at once.
+
+Switch a currency's version only while its delta update has no pending WAL
+record (written by another version, the record blocks the next run until
+replayed with `--force-wal-replay`), and go back to an older version only if
+the newer one's schema migrations are backward compatible.
 
 ```bash
 graphsense-cli sync status -e prod
 graphsense-cli sync pause -e prod -c zec --reason "node resync" --for 6h
 graphsense-cli sync resume -e prod -c zec
-graphsense-cli sync run -e prod --channel canary --once -c zec   # one cycle, then exit
+graphsense-cli sync run -e prod --once -c zec   # one cycle, then exit
 ```
 
 Before every ingest, the newest raw block hashes are compared with the

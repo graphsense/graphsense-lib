@@ -98,7 +98,8 @@ def run(ctx, env: str, channel: str, once: bool, only):
 
     Per currency it ingests new blocks from the node, then runs the delta
     update, as child processes of the same graphsense-lib version. Configure
-    it under environments.<env>.sync; run one daemon per channel.
+    it under environments.<env>.sync; run one daemon per currency (-c) or
+    per channel (--channel).
     """
     from .jobs import JobRunner
     from .scheduler import SyncScheduler
