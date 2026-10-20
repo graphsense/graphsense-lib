@@ -90,8 +90,8 @@ def ingesting():
     "--sinks",
     type=click.Choice(INGEST_SINKS + ["delta"], case_sensitive=False),
     multiple=True,
-    default=["cassandra"],
-    help="Sinks to write to (default: cassandra). "
+    default=None,
+    help="Sinks to write to (default: ingest_config.sinks, else cassandra). "
     "Can be specified multiple times, e.g. --sinks cassandra --sinks delta.",
 )
 @click.option(
@@ -161,16 +161,23 @@ def ingesting():
     help="Run autocompation after ingest (delta sink only). Parameter "
     "controls age since last run and day the compaction should be run on, "
     "e.g. 7d;sunday means run on sundays iif the last compaction was more "
-    "than 7 days ago days ago",
+    "than 7 days ago days ago (default: ingest_config.auto_compact)",
 )
 @click.option(
     "--auto-compact-last-n",
     type=int,
-    default=10,
+    default=None,
     help="When --auto-compact triggers, restrict compaction to the most "
-    "recent N partitions of each table (default: 10). Older partitions are "
+    "recent N partitions of each table (default: "
+    "ingest_config.auto_compact_last_n, else 10). Older partitions are "
     "immutable raw data and don't accumulate small files. Has no effect on "
     "tables without a partition column (e.g. trc10).",
+)
+@click.option(
+    "--no-auto-compact",
+    is_flag=True,
+    help="Do not compact, even if ingest_config.auto_compact is set. The "
+    "sync daemon passes this and compacts in a step of its own.",
 )
 @click.option(
     "--mode",
@@ -247,6 +254,7 @@ def ingest(
     ignore_overwrite_safechecks,
     auto_compact,
     auto_compact_last_n,
+    no_auto_compact,
     mode,
     version,
     staleness_threshold,
@@ -302,12 +310,20 @@ def ingest(
         if ks_config.schema_type in ["account", "account_trx"]:
             version = 2
 
+    sinks = list(sinks) or ingest_cfg.sinks or ["cassandra"]
     use_cassandra = "cassandra" in sinks
     use_delta = "delta" in sinks
 
     if auto_compact and not use_delta:
         logger.error("--auto-compact requires --sinks delta.")
         sys.exit(11)
+    # A schedule from the config applies only where it can: a run without
+    # the delta sink has nothing to compact.
+    auto_compact, auto_compact_last_n = _auto_compact_settings(
+        ingest_cfg, auto_compact, auto_compact_last_n
+    )
+    if no_auto_compact or not use_delta:
+        auto_compact = None
 
     schema_tools = GraphsenseSchemas()
     ks_type = "raw"
@@ -480,6 +496,14 @@ def _run_new_ingest(
         info=info,
         source_max_workers=source_max_workers,
         reorg_backoff_blocks=reorg_backoff_blocks,
+    )
+
+
+def _auto_compact_settings(ingest_cfg, auto_compact, auto_compact_last_n):
+    """--auto-compact / --auto-compact-last-n, else ingest_config."""
+    return (
+        auto_compact or ingest_cfg.auto_compact,
+        auto_compact_last_n or ingest_cfg.auto_compact_last_n or 10,
     )
 
 

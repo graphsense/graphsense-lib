@@ -195,3 +195,21 @@ def test_delta_update_cli_rejects_removed_updater_version_1(monkeypatch):
     assert result.exit_code == 2
     assert "has been removed" in result.output
     assert calls == []
+
+
+def test_delta_update_settings_flag_over_config_over_default():
+    from graphsenselib.config import DeltaUpdateConfig
+    from graphsenselib.deltaupdate.deltaupdater import resolve_settings
+
+    assert resolve_settings(DeltaUpdateConfig(), None, None, None, None) == (
+        10,
+        1,
+        False,
+        False,
+    )
+    configured = DeltaUpdateConfig(
+        write_batch_size=60, parallel_workers=8, forward_fill_rates=True
+    )
+    assert resolve_settings(configured, None, None, None, None) == (60, 8, True, False)
+    # flags win, also an explicit "off" over a configured "on"
+    assert resolve_settings(configured, 5, 2, False, True) == (5, 2, False, True)

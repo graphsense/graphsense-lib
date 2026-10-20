@@ -11,6 +11,7 @@ from pydantic import BaseModel, TypeAdapter, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from ..utils import first_or_default, flatten, resolve_env_vars
+from ..utils.date import validate_older_than_run_spec
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ currency_to_public_schema_type = {
 }
 supported_fiat_currencies = ["USD", "EUR"]
 EXCHANGE_RATES_PROVIDERS = ["coingecko", "coinmarketcap", "cryptocompare"]
+# Sinks of `ingest from-node` (ingest.common.INGEST_SINKS plus delta).
+FROM_NODE_SINKS = ("cassandra", "delta", "parquet")
 avg_blocktimes_by_currencies = {
     "trx": 7,
     "eth": 15,
@@ -243,6 +246,49 @@ class IngestConfig(_WarnExtraModel):
         ),
     )
 
+    sinks: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Default --sinks of `ingest from-node`, e.g. [cassandra, delta]. "
+            "Unset: [cassandra]. --sinks on the command line replaces it."
+        ),
+    )
+    auto_compact: Optional[str] = Field(
+        default=None,
+        description=(
+            "When to compact the raw Delta Lake tables, e.g. '1w;sunday': on "
+            "Sundays if the last compaction is older than a week. Checked "
+            "after `ingest from-node` (with the delta sink), by `ingest "
+            "delta-lake auto-compact`, and by the sync daemon as a step of "
+            "its own. Unset: never."
+        ),
+    )
+    auto_compact_last_n: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Compact only the newest N partitions of each table (default 10)."
+        ),
+    )
+
+    @field_validator("sinks")
+    @classmethod
+    def _validate_sinks(cls, v):
+        if v is not None:
+            unknown = sorted(set(v) - set(FROM_NODE_SINKS))
+            if unknown or not v:
+                raise ValueError(
+                    f"sinks must be a non-empty list of {list(FROM_NODE_SINKS)}"
+                )
+        return v
+
+    @field_validator("auto_compact")
+    @classmethod
+    def _validate_auto_compact(cls, v):
+        if v is not None:
+            validate_older_than_run_spec(v)
+        return v
+
     @field_validator("exchange_rates_provider")
     @classmethod
     def _validate_exchange_rates_provider(cls, v):
@@ -269,6 +315,27 @@ class KeyspaceSetupConfig(_WarnExtraModel):
     data_configuration: Dict[str, object] = Field(default_factory=lambda: {})
 
 
+class DeltaUpdateConfig(_WarnExtraModel):
+    """Defaults for `delta-update update`; a flag on the command line wins.
+
+    Not to be confused with DeltaUpdaterConfig below, which the updater
+    builds at run time.
+    """
+
+    write_batch_size: Optional[int] = Field(
+        default=None, ge=1, description="Default --write-batch-size (unset: 10)."
+    )
+    parallel_workers: Optional[int] = Field(
+        default=None, ge=1, description="Default --parallel-workers (unset: 1)."
+    )
+    forward_fill_rates: Optional[bool] = Field(
+        default=None, description="Default --forward-fill-rates (unset: off)."
+    )
+    pedantic: Optional[bool] = Field(
+        default=None, description="Default --pedantic (unset: off)."
+    )
+
+
 class DeltaUpdaterConfig(BaseModel):
     delta_sink: Optional[FileSink]
     currency: str
@@ -281,6 +348,7 @@ class KeyspaceConfig(_WarnExtraModel):
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
     ingest_config: Optional[IngestConfig]
+    delta_update_config: DeltaUpdateConfig = Field(default_factory=DeltaUpdateConfig)
     keyspace_setup_config: Dict[str, KeyspaceSetupConfig] = Field(
         default_factory=lambda: {kst: KeyspaceSetupConfig() for kst in keyspace_types}
     )

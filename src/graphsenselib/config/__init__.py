@@ -3,6 +3,7 @@ from .config import (
     GRAPHSENSE_DEFAULT_DATETIME_FORMAT,
     GRAPHSENSE_VERBOSE_DATETIME_FORMAT,
     AppConfig,
+    DeltaUpdateConfig,
     Environment,
     KeyspaceConfig,
     IngestConfig,

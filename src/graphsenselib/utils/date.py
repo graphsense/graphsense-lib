@@ -168,6 +168,16 @@ def is_date_older_than(date_to_check, period_str, now=None):
     return date_to_check < threshold_date
 
 
+def validate_older_than_run_spec(spec: str) -> None:
+    """Raise ValueError unless spec is a valid '<period>[;<weekday>]'."""
+    parts = spec.split(";")
+    if len(parts) > 2:
+        raise ValueError(f"{spec!r}: use '<period>[;<weekday>]', e.g. '1w;sunday'")
+    parse_time_period(parts[0].strip())
+    if len(parts) == 2:
+        is_weekday(datetime.now(), parts[1].strip())
+
+
 def parse_older_than_run_spec(spec: str, to_compare, now=None) -> bool:
     """
     Parse a specification string for "older than" run checks.

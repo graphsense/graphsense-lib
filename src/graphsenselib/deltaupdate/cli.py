@@ -33,10 +33,10 @@ def delta():
 @click.option(
     "--write-batch-size",
     type=int,
-    show_default=True,
-    default=10,
+    default=None,
     help="Nr. of blocks to bundle in a write. Larger batches "
-    "usually yields better performance but needs more memory.",
+    "usually yields better performance but needs more memory. "
+    "(default: delta_update_config.write_batch_size, else 10)",
 )
 @click.option(
     "--start-block",
@@ -59,21 +59,26 @@ def delta():
     expose_value=False,
     help="Deprecated, accepted for existing scripts: 2 is the only version.",
 )
-@click.option("--pedantic/--no-pedantic", default=False)
+@click.option(
+    "--pedantic/--no-pedantic",
+    default=None,
+    help="(default: delta_update_config.pedantic, else off)",
+)
 @click.option(
     "--create-schema",
     is_flag=True,
     help="Create database schema if it does not exist",
 )
 @click.option(
-    "--forward-fill-rates",
-    is_flag=True,
+    "--forward-fill-rates/--no-forward-fill-rates",
+    default=None,
     help=(
         "When set the importer imports until the most recent block "
         "regardless if current exchange rates are available. "
         "If no rate for the current day is available it uses the last one available"
         "This allows the delta update provide close to real time updates "
-        "since it does not have to wait for current exchange rates."
+        "since it does not have to wait for current exchange rates. "
+        "(default: delta_update_config.forward_fill_rates, else off)"
     ),
 )
 @click.option(
@@ -84,12 +89,11 @@ def delta():
 @click.option(
     "--parallel-workers",
     type=int,
-    show_default=True,
-    default=1,
-    help="Nr. of worker processes for the batch reads and writes "
-    "(account and utxo updaters v2). The driver work is client-CPU-bound, "
-    "so values above 1 parallelize it across processes; 1 keeps the "
-    "single-process behavior.",
+    default=None,
+    help="Nr. of worker processes for the batch reads and writes. The "
+    "driver work is client-CPU-bound, so values above 1 parallelize it "
+    "across processes; 1 keeps the single-process behavior. "
+    "(default: delta_update_config.parallel_workers, else 1)",
 )
 @click.option(
     "--enable-wal/--no-enable-wal",

@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from graphsenselib.config import IngestConfig, SyncConfig, get_reorg_backoff_blocks
+from graphsenselib.config import (
+    DeltaUpdateConfig,
+    IngestConfig,
+    SyncConfig,
+    get_reorg_backoff_blocks,
+)
 from graphsenselib.sync.cli import _parse_duration
 from graphsenselib.sync.scheduler import default_max_blocks
 
@@ -31,3 +36,19 @@ def test_parse_duration():
     assert _parse_duration("2d") == 172800
     with pytest.raises(Exception):
         _parse_duration("0h")
+
+
+def test_ingest_and_delta_update_defaults_validated_at_load():
+    ic = IngestConfig(sinks=["cassandra", "delta"], auto_compact="1w;sunday")
+    assert ic.sinks == ["cassandra", "delta"]
+    for bad in (
+        {"sinks": ["kafka"]},
+        {"sinks": []},
+        {"auto_compact": "weekly"},
+        {"auto_compact": "1w;funday"},
+        {"auto_compact_last_n": 0},
+    ):
+        with pytest.raises(ValueError):
+            IngestConfig(**bad)
+    with pytest.raises(ValueError):
+        DeltaUpdateConfig(write_batch_size=0)
