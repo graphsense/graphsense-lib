@@ -371,13 +371,6 @@ def test_unreachable_service_is_502():
     assert response.json() == {"detail": "notifications service unavailable"}
 
 
-def test_response_that_breaks_the_contract_is_an_error():
-    client, _ = make_client(
-        answer=lambda r: httpx.Response(200, json={"count": "many"})
-    )
-    assert client.get("/notifications/feed/unread_count").status_code == 500
-
-
 def test_polling_state_passes_through_and_is_optional():
     polled = {
         **SUBSCRIPTION,
@@ -390,26 +383,70 @@ def test_polling_state_passes_through_and_is_optional():
     got = client.get("/notifications/subscriptions/7").json()
     assert (got["check_errors"], got["unread"]) == (2, 5)
     assert got["last_checked_at"].startswith("2026-10-14T12:00:00")
-    # an older service without the fields still meets the contract
+    # an older service without the fields: passed on as is
     polling = ("last_checked_at", "next_check_at", "check_errors", "unread")
     legacy = {k: v for k, v in SUBSCRIPTION.items() if k not in polling}
     client, _ = make_client(answer=lambda r: httpx.Response(200, json=legacy))
-    got = client.get("/notifications/subscriptions/7").json()
-    assert (got["last_checked_at"], got["check_errors"], got["unread"]) == (None, 0, 0)
+    response = client.get("/notifications/subscriptions/7")
+    assert (response.status_code, response.json()) == (200, legacy)
 
 
-def test_unknown_response_fields_are_dropped():
+# A newer service may add fields and enum values; the strict models
+# (Filters forbids extra keys) must not turn those into a 500 here.
+NEWER_SUBSCRIPTION = {
+    **SUBSCRIPTION,
+    "filters": {**SUBSCRIPTION["filters"], "max_value": "10"},
+    "paused_reason": "admin",
+    "frequency": "hourly",
+    "future_field": {"x": 1},
+}
+
+
+@pytest.mark.parametrize(
+    "method, path, answer",
+    [
+        ("GET", "/notifications/subscriptions/7", NEWER_SUBSCRIPTION),
+        ("PATCH", "/notifications/subscriptions/7", NEWER_SUBSCRIPTION),
+        (
+            "GET",
+            "/notifications/subscriptions",
+            {"items": [NEWER_SUBSCRIPTION], "next_cursor": None, "total": 1},
+        ),
+        (
+            "GET",
+            "/notifications/feed",
+            {
+                "items": [{**FEED_ITEM, "direction": "self", "fee": "1"}],
+                "next_cursor": None,
+            },
+        ),
+        ("GET", "/notifications/feed/unread_count", {"count": "many", "new": 1}),
+    ],
+)
+def test_success_bodies_pass_through_unvalidated(method, path, answer):
+    client, _ = make_client(answer=lambda r: httpx.Response(200, json=answer))
+    response = client.request(method, path, json={} if method == "PATCH" else None)
+    assert response.status_code == 200
+    assert response.json() == answer
+
+
+def test_created_subscription_passes_through_with_201():
     client, _ = make_client(
-        answer=lambda r: httpx.Response(
-            200, json={"count": 1, "capped": False, "internal": 1}
-        )
+        answer=lambda r: httpx.Response(201, json=NEWER_SUBSCRIPTION)
     )
-    # ... and a field an older service doesn't send gets its default
-    assert client.get("/notifications/feed/unread_count").json() == {
-        "count": 1,
-        "capped": False,
-        "subscriptions": 0,
-    }
+    response = client.post(
+        "/notifications/subscriptions", json={"network": "btc", "address": GENESIS}
+    )
+    assert (response.status_code, response.json()) == (201, NEWER_SUBSCRIPTION)
+
+
+def test_spec_keeps_the_response_models():
+    client, _ = make_client(include_in_schema=True)
+    spec = client.get("/openapi.json").json()
+    ok = spec["paths"]["/notifications/subscriptions/{subscription_id}"]["get"][
+        "responses"
+    ]["200"]
+    assert ok["content"]["application/json"]["schema"]["$ref"].endswith("/Subscription")
 
 
 def test_network_routes_are_not_shadowed():

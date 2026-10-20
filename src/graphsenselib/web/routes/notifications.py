@@ -5,7 +5,9 @@ subscriptions, polls this API for new transactions and fills each user's feed
 and email. These routes are its public face, so the dashboard and API clients
 use one API with one spec. They are typed, not a catch-all proxy: every route
 here exists in the service with the same models (models/notifications.py),
-and a response that does not match the model is an error, not passed on.
+and requests are validated with them before they are forwarded. A successful
+answer is passed on as the service sent it, not validated again: a newer
+service may add fields or enum values, which must not turn into a 500 here.
 
 Identity: the gateway authenticates the caller and sets the identity and
 roles headers (``forward_headers``); exactly those are passed on, nothing
@@ -89,9 +91,9 @@ class NotificationsClient:
         *,
         params: Optional[dict[str, Any]] = None,
         body: Optional[dict[str, Any]] = None,
-    ) -> Optional[Any]:
-        """The service's JSON answer for a 2xx (None for 204); raises
-        _ServiceAnswer otherwise."""
+    ) -> Response:
+        """The service's 2xx answer, status and JSON body unchanged (no body
+        for 204); raises _ServiceAnswer otherwise."""
         headers = {
             name: value
             for name in self.config.forward_headers
@@ -114,9 +116,13 @@ class NotificationsClient:
                 )
             ) from e
         if response.status_code == 204:
-            return None
+            return Response(status_code=204)
         if response.is_success:
-            return response.json()
+            # Not re-validated against the response model (see module doc);
+            # returning a Response makes FastAPI skip that.
+            return JSONResponse(
+                content=response.json(), status_code=response.status_code
+            )
         try:
             content = response.json()
         except ValueError:
@@ -279,8 +285,7 @@ async def delete_subscription(
     subscription_id: int = SubscriptionIdPath,
     client: NotificationsClient = Depends(_client),
 ):
-    await client.call(request, "DELETE", f"/subscriptions/{subscription_id}")
-    return Response(status_code=204)
+    return await client.call(request, "DELETE", f"/subscriptions/{subscription_id}")
 
 
 @router.get(
