@@ -1,11 +1,13 @@
-"""`ingest from-node` take sinks and the
+"""`ingest from-node` and `ingest delta-lake auto-compact` take sinks and the
 compaction schedule from ingest_config, with flags overriding."""
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from graphsenselib.config import IngestConfig
+from graphsenselib.utils.locking import LockAcquisitionError
 
 
 def _config(**ingest):
@@ -77,3 +79,41 @@ def test_configured_auto_compact_skipped_without_delta_sink():
     # ...but asking for it explicitly still is an error
     result, _, _ = _from_node(config, "--sinks", "cassandra", "--auto-compact", "1d")
     assert result.exit_code == 11
+
+
+def _auto_compact_cmd(config, *args, side_effect=None):
+    from graphsenselib.ingest.cli import auto_compact_deltalake
+
+    with (
+        patch("graphsenselib.ingest.cli.get_config", return_value=config),
+        patch(
+            "graphsenselib.ingest.cli._run_auto_compact", side_effect=side_effect
+        ) as compact,
+    ):
+        result = CliRunner().invoke(
+            auto_compact_deltalake, ["-e", "test", "-c", "btc", *args]
+        )
+    return result, compact
+
+
+def test_auto_compact_command_uses_config_schedule():
+    result, compact = _auto_compact_cmd(
+        _config(auto_compact="1w;sat", auto_compact_last_n=16)
+    )
+    assert result.exit_code == 0, result.output
+    assert compact.call_args.kwargs["auto_compact"] == "1w;sat"
+    assert compact.call_args.kwargs["auto_compact_last_n"] == 16
+
+    result, compact = _auto_compact_cmd(
+        _config(auto_compact="1w;sat"), "--auto-compact", "1d"
+    )
+    assert compact.call_args.kwargs["auto_compact"] == "1d"
+
+
+@pytest.mark.parametrize(
+    "side_effect, code", [(None, 11), (LockAcquisitionError("held"), 911)]
+)
+def test_auto_compact_command_exit_codes(side_effect, code):
+    config = _config() if side_effect is None else _config(auto_compact="1d")
+    result, _ = _auto_compact_cmd(config, side_effect=side_effect)
+    assert result.exit_code == code

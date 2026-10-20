@@ -5,6 +5,7 @@ from graphsenselib.config import (
     DeltaUpdateConfig,
     IngestConfig,
     SyncConfig,
+    SyncCurrencyConfig,
     get_reorg_backoff_blocks,
 )
 from graphsenselib.sync.cli import _parse_duration
@@ -36,6 +37,14 @@ def test_parse_duration():
     assert _parse_duration("2d") == 172800
     with pytest.raises(Exception):
         _parse_duration("0h")
+
+
+@pytest.mark.parametrize(
+    "arg", ["--auto-compact", "--auto-compact=1d", "--no-auto-compact"]
+)
+def test_compaction_flags_point_to_ingest_config(arg):
+    with pytest.raises(ValueError, match="ingest_config.auto_compact"):
+        SyncCurrencyConfig(ingest_args=[arg, "1d"])
 
 
 def test_ingest_and_delta_update_defaults_validated_at_load():

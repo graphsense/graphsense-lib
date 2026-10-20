@@ -587,33 +587,56 @@ stop cleanly after their current chunk. A second signal lists what is still
 running. A third kills the jobs: safe for the data, but a killed job's Redis
 lock stays behind until deleted (`redis-cli DEL`).
 
+How a currency is ingested and updated belongs in its keyspace config, so a
+manual run, a cron job and the daemon all do the same. The flags of the same
+name still override it for one run:
+
 ```yaml
 environments:
   prod:
+    keyspaces:
+      eth:
+        ingest_config:
+          exchange_rates_provider: coingecko
+          sinks: [cassandra, delta]       # default --sinks
+          auto_compact: "1w;sunday"       # compact on Sundays, at most weekly
+          auto_compact_last_n: 16
+        delta_update_config:
+          forward_fill_rates: true
+          write_batch_size: 60
+          parallel_workers: 8
+      zec:
+        ingest_config:
+          sinks: [cassandra, delta]
+          reorg_backoff_blocks: 24        # default 150; see CHANGELOG
+        delta_update_config:
+          forward_fill_rates: true
+          write_batch_size: 40
+          parallel_workers: 4
     sync:
       poll_seconds: 30
       max_parallel_currencies: 4
       max_parallel_delta_updates: 2
-      rates_every_minutes: 30       # exchange rates with every Nth ingest only
+      max_parallel_compactions: 1
+      rates_every_minutes: 30             # exchange rates with every Nth ingest only
       currencies:
-        btc:
-          ingest_args: [--sinks, cassandra, --sinks, delta]
-          delta_update_args: [--forward-fill-rates, --write-batch-size, 10, --parallel-workers, 4]
-          lag_alert_minutes: 90
+        eth:
+          lag_alert_minutes: 30
         zec:
-          channel: canary           # run by the canary daemon only
-          enabled: true
-          ingest_args: [--sinks, cassandra, --sinks, delta]
-          delta_update_args: [--forward-fill-rates, --write-batch-size, 40, --parallel-workers, 4]
-    keyspaces:
-      zec:
-        ingest_config:
-          reorg_backoff_blocks: 24  # default 150; see CHANGELOG
+          channel: canary                 # run by the canary daemon only
 ```
 
-The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates` and
-`--no-staleness-check` itself. Put everything else a cron line had into
-`ingest_args` / `delta_update_args`.
+The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates`,
+`--no-staleness-check` and `--no-auto-compact` itself. It compacts in a step
+of its own (`ingest delta-lake auto-compact`, checked every
+`compaction_check_every_minutes`, timeout `compaction_timeout_minutes`), so a
+long compaction does not hit the ingest timeout. `ingest_args` /
+`delta_update_args` take extra flags for the rare case the config has no
+field for.
+
+All jobs of a daemon share its container's memory limit, unlike `docker run
+-m` per job: size it for what can run at once (see the `max_parallel_*`
+settings), or give the largest currencies a daemon of their own.
 
 Run one daemon per channel. To try a release on a few currencies, run the
 canary daemon from the new image:

@@ -451,11 +451,24 @@ _SYNC_RESERVED_ARGS = frozenset(
 )
 
 
+# The daemon compacts in a step of its own, with its own timeout; inside an
+# ingest job a long compaction would hit the ingest timeout.
+_SYNC_COMPACTION_ARGS = frozenset(
+    {"--auto-compact", "--auto-compact-last-n", "--no-auto-compact"}
+)
+
+
 def _check_sync_args(args: List[str]) -> List[str]:
     for arg in args:
-        if arg.split("=", 1)[0] in _SYNC_RESERVED_ARGS:
+        name = arg.split("=", 1)[0]
+        if name in _SYNC_RESERVED_ARGS:
             raise ValueError(
                 f"{arg} is set by the sync scheduler and cannot be passed here"
+            )
+        if name in _SYNC_COMPACTION_ARGS:
+            raise ValueError(
+                f"{arg}: the sync daemon compacts in a step of its own; set "
+                "ingest_config.auto_compact (and auto_compact_last_n) instead"
             )
     return args
 
@@ -536,6 +549,17 @@ class SyncConfig(_WarnExtraModel):
         description="Run `monitoring check-consistency` this often. Unset: never.",
     )
     consistency_check_args: List[str] = Field(default_factory=list)
+    compaction_check_every_minutes: int = Field(
+        default=60,
+        ge=1,
+        description=(
+            "How often to run `ingest delta-lake auto-compact` for currencies "
+            "with ingest_config.auto_compact set. The command compacts only "
+            "when that schedule says so; otherwise it is a quick check."
+        ),
+    )
+    compaction_timeout_minutes: int = Field(default=360, ge=1)
+    max_parallel_compactions: int = Field(default=1, ge=1)
     alert_topic: str = "exceptions"
     failure_alert_after: int = Field(
         default=3, ge=1, description="Alert after this many failures in a row."

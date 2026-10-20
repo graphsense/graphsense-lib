@@ -6,6 +6,7 @@ Per currency, one *cycle* at a time:
     -> reorg check (newest raw block hashes vs. the node)
     -> ingest from-node   (bounded slice; with exchange rates once per interval)
     -> delta-update update
+    -> Delta Lake compaction check (if ingest_config.auto_compact is set)
     -> consistency check  (optional, periodic)
 
 then wait `poll_seconds` -- or start the next cycle at once while ingest is
@@ -19,6 +20,9 @@ delta-update gets no --end-block on purpose: an explicit range turns off its
 check for a torn bookkeeping write (`auto_resume` in deltaupdater.update), so
 only ingest is cut into slices. delta-update cannot run ahead of ingest, so its
 run is as long as the raw backlog.
+
+Compaction is a step of its own rather than `--auto-compact` on the ingest:
+a compaction can take hours, far beyond the ingest timeout.
 """
 
 import logging
@@ -81,9 +85,35 @@ class _Runtime:
     busy_since: Optional[float] = None  # monotonic
     last_rates_at: float = 0.0  # wall clock
     last_consistency_at: float = 0.0  # wall clock
+    last_compaction_at: float = 0.0  # wall clock
     future: Optional[Future] = None
     claimed: bool = False
     last_skip_reason: Optional[str] = None
+
+
+class _Slots:
+    """Limits how many jobs of one kind run at once, across currencies. The
+    limit follows config reloads; a job holding a slot of the old limit gives
+    it back there."""
+
+    def __init__(self):
+        self.size = 0
+        self._sem = threading.BoundedSemaphore(1)
+
+    def resize(self, size: int):
+        if size != self.size:
+            self._sem = threading.BoundedSemaphore(size)
+            self.size = size
+
+    def acquire(self, stop: threading.Event) -> Optional[threading.BoundedSemaphore]:
+        """Wait for a slot; returns what to release() it on, or None when
+        stopping."""
+        sem = self._sem
+        while not stop.is_set():
+            if sem.acquire(timeout=1.0):
+                return sem
+            sem = self._sem
+        return None
 
 
 class SyncScheduler:
@@ -122,8 +152,8 @@ class SyncScheduler:
             max_workers=_MAX_WORKER_THREADS, thread_name_prefix="sync-cycle"
         )
         self._environment: Optional[Environment] = None
-        self._delta_slots_size = 0
-        self._delta_slots = threading.BoundedSemaphore(1)
+        self._delta_slots = _Slots()
+        self._compaction_slots = _Slots()
         self._config_error_reported = False
         self._once = False
         self._signals = 0
@@ -243,12 +273,8 @@ class SyncScheduler:
                 logger.warning(f"No sync section in environment {self.env}")
             return
         sync = env.sync
-        if sync.max_parallel_delta_updates != self._delta_slots_size:
-            # New cycles use the new limit; running ones finish on the old one.
-            self._delta_slots = threading.BoundedSemaphore(
-                sync.max_parallel_delta_updates
-            )
-            self._delta_slots_size = sync.max_parallel_delta_updates
+        self._delta_slots.resize(sync.max_parallel_delta_updates)
+        self._compaction_slots.resize(sync.max_parallel_compactions)
 
         now = self._clock()
         running = sum(1 for rt in self._runtime.values() if _is_running(rt))
@@ -453,6 +479,7 @@ class SyncScheduler:
                 currency,
                 *ccfg.ingest_args,
                 "--no-staleness-check",
+                "--no-auto-compact",
             ]
             if not rates_due:
                 args.append("--no-exchange-rates")
@@ -489,23 +516,49 @@ class SyncScheduler:
                     [],
                 )
             if raw is not None and transformed < raw:
-                if not self._acquire_delta_slot():
+                result = self._step_in_slot(
+                    self._delta_slots,
+                    currency,
+                    "delta_update",
+                    ["delta-update", "update", "-e", self.env, "-c", currency]
+                    + ccfg.delta_update_args,
+                    sync.delta_update_timeout_minutes,
+                    status,
+                )
+                if result is None:
                     return 0, False  # stopping
-                try:
-                    result = self._step(
-                        currency,
-                        "delta_update",
-                        ["delta-update", "update", "-e", self.env, "-c", currency]
-                        + ccfg.delta_update_args,
-                        sync.delta_update_timeout_minutes,
-                        status,
-                    )
-                finally:
-                    self._delta_slots.release()
                 outcome = self._handle(currency, sync, rt, status, poll, result)
                 if outcome is not None:
                     return outcome
                 status["transformed"] = probe.transformed_height()
+
+        # -- compaction
+        if self._compaction_due(ks, sync, rt):
+            result = self._step_in_slot(
+                self._compaction_slots,
+                currency,
+                "compact",
+                [
+                    "ingest",
+                    "delta-lake",
+                    "auto-compact",
+                    "-e",
+                    self.env,
+                    "-c",
+                    currency,
+                ],
+                sync.compaction_timeout_minutes,
+                status,
+            )
+            if result is None:
+                return 0, False  # stopping
+            if result.outcome not in (Outcome.BUSY, Outcome.STOPPED):
+                # A failed compaction is retried at the next check, not on
+                # every cycle: ingest and delta-update go on meanwhile.
+                rt.last_compaction_at = self._wall()
+            outcome = self._handle(currency, sync, rt, status, poll, result)
+            if outcome is not None:
+                return outcome
 
         # -- consistency check
         every = sync.consistency_check_every_minutes
@@ -555,6 +608,28 @@ class SyncScheduler:
         }
         return result
 
+    def _step_in_slot(
+        self, slots: _Slots, currency, step, args, timeout_minutes, status
+    ) -> Optional[StepResult]:
+        """_step once a slot is free; None if we are stopping meanwhile."""
+        sem = slots.acquire(self._stop)
+        if sem is None:
+            return None
+        try:
+            return self._step(currency, step, args, timeout_minutes, status)
+        finally:
+            sem.release()
+
+    def _compaction_due(self, ks: KeyspaceConfig, sync: SyncConfig, rt) -> bool:
+        ic = ks.ingest_config
+        return (
+            ic is not None
+            and bool(ic.auto_compact)
+            and "delta" in ic.raw_keyspace_file_sinks
+            and self._wall() - rt.last_compaction_at
+            >= sync.compaction_check_every_minutes * 60
+        )
+
     def _handle(self, currency, sync, rt, status, poll, result: StepResult):
         """Turn a step result into an early cycle return, or None to go on."""
         if result.outcome is Outcome.STOPPED:
@@ -580,12 +655,6 @@ class SyncScheduler:
             return poll, False
         rt.busy_since = None
         return None
-
-    def _acquire_delta_slot(self) -> bool:
-        while not self._stop.is_set():
-            if self._delta_slots.acquire(timeout=1.0):
-                return True
-        return False
 
     def _success(self, currency, sync, rt, status):
         if rt.alerted:

@@ -4,7 +4,7 @@ import pytest
 
 from graphsenselib.config import Environment
 from graphsenselib.sync.jobs import Outcome, StepResult
-from graphsenselib.sync.scheduler import SyncScheduler
+from graphsenselib.sync.scheduler import SyncScheduler, _Slots
 from graphsenselib.sync.state import MemoryStateStore
 
 
@@ -293,13 +293,79 @@ def test_bad_config_reload_keeps_last_good(setup):
     assert runner.calls  # still scheduling on the old config
 
 
-def test_stop_during_delta_slot_wait(setup):
-    sched, probe, runner, _, _ = setup()
-    sched._delta_slots_size = 1
-    sched._delta_slots = threading.BoundedSemaphore(1)
-    sched._delta_slots.acquire()
-    sched._stop.set()
-    assert sched._acquire_delta_slot() is False
+def test_stop_during_slot_wait():
+    slots = _Slots()
+    slots.resize(1)
+    assert slots.acquire(threading.Event()) is not None
+    stop = threading.Event()
+    stop.set()
+    assert slots.acquire(stop) is None
+
+
+def test_slot_given_back_where_taken_after_resize():
+    # config reload while a job holds a slot: releasing it on the new,
+    # untouched semaphore would raise ValueError (BoundedSemaphore)
+    slots = _Slots()
+    slots.resize(1)
+    sem = slots.acquire(threading.Event())
+    slots.resize(2)
+    sem.release()
+    assert slots.acquire(threading.Event()) is not None
+
+
+def compacting_env(**sync):
+    return make_env(
+        sync={"currencies": {"zec": {}}, **sync},
+        raw_keyspace_file_sinks={"delta": {"directory": "/data/zec"}},
+        auto_compact="1w;sunday",
+    )
+
+
+def test_compaction_is_a_step_of_its_own(setup):
+    sched, probe, runner, _, clock = setup(
+        env=compacting_env(), probe=FakeProbe(raw=100, transformed=90)
+    )
+    one_tick(sched)
+    steps = [s for s, _ in runner.calls]
+    assert steps == ["ingest", "delta_update", "compact"]
+    # never inside the ingest job, where it would count against its timeout
+    assert "--no-auto-compact" in runner.calls[0][1]
+    assert runner.calls[2][1] == [
+        "ingest", "delta-lake", "auto-compact", "-e", "prod", "-c", "zec",
+    ]  # fmt: skip
+
+    # checked once per compaction_check_every_minutes (default 60)
+    runner.calls.clear()
+    clock.t += 30 * 60
+    one_tick(sched)
+    assert "compact" not in [s for s, _ in runner.calls]
+    clock.t += 31 * 60
+    one_tick(sched)
+    assert "compact" in [s for s, _ in runner.calls]
+
+
+def test_failed_compaction_waits_for_next_check(setup):
+    sched, probe, runner, alerts, clock = setup(env=compacting_env())
+    runner.outcomes["compact"] = [(Outcome.TIMEOUT, None)]
+    one_tick(sched)
+    rt = sched._runtime["zec"]
+    assert rt.failures == 1
+    # the retry cycle ingests and updates, but does not compact again yet
+    runner.calls.clear()
+    clock.t = rt.next_due
+    one_tick(sched)
+    assert "compact" not in [s for s, _ in runner.calls]
+    assert rt.failures == 0
+
+
+def test_no_compaction_without_schedule_or_delta_sink(setup):
+    for env in (
+        make_env(raw_keyspace_file_sinks={"delta": {"directory": "/d"}}),
+        make_env(auto_compact="1d"),
+    ):
+        sched, probe, runner, _, _ = setup(env=env)
+        one_tick(sched)
+        assert "compact" not in [s for s, _ in runner.calls]
 
 
 def test_signals_escalate(setup):

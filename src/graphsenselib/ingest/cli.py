@@ -858,6 +858,60 @@ def dump_rawdata(
         sys.exit(911)
 
 
+@deltalake.command("auto-compact")
+@require_environment()
+@require_currency(required=True)
+@click.option(
+    "--auto-compact",
+    type=str,
+    default=None,
+    help="Schedule, e.g. 7d;sunday: compact on Sundays if the last "
+    "compaction is older than 7 days (default: ingest_config.auto_compact).",
+)
+@click.option(
+    "--auto-compact-last-n",
+    type=int,
+    default=None,
+    help="Compact only the most recent N partitions of each table "
+    "(default: ingest_config.auto_compact_last_n, else 10).",
+)
+def auto_compact_deltalake(env, currency, auto_compact, auto_compact_last_n):
+    """Compact the raw Delta Lake tables if their schedule says it is time.
+
+    The check `ingest from-node --auto-compact` does after an ingest, on its
+    own: the sync daemon runs it as a separate step, so a long compaction
+    does not count against the ingest timeout. Exits 0 also when it is not
+    time yet.
+    \f
+    Args:
+        env (str): Environment to work on
+        currency (str): currency to work on
+    """
+    config = get_config()
+    ks_config = config.get_keyspace_config(env, currency)
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    auto_compact, auto_compact_last_n = _auto_compact_settings(
+        ingest_cfg, auto_compact, auto_compact_last_n
+    )
+    if not auto_compact:
+        logger.error(
+            "No compaction schedule: set ingest_config.auto_compact or pass "
+            "--auto-compact."
+        )
+        sys.exit(11)
+    try:
+        _run_auto_compact(
+            config=config,
+            ks_config=ks_config,
+            currency=currency,
+            auto_compact=auto_compact,
+            auto_compact_last_n=auto_compact_last_n,
+        )
+    except LockAcquisitionError as e:
+        logger.warning(str(e))
+        sys.exit(911)
+
+
 # optimize deltalake
 @deltalake.command("optimize")
 @require_environment()
