@@ -414,7 +414,7 @@ class SyncCurrencyConfig(_WarnExtraModel):
         default_factory=list,
         description=(
             "Extra arguments for `ingest from-node`, e.g. "
-            "[--sinks, cassandra, --sinks, delta, --mode, utxo_with_tx_graph]."
+            "[--sinks, cassandra, --sinks, delta]."
         ),
     )
     delta_update: bool = True
@@ -422,7 +422,7 @@ class SyncCurrencyConfig(_WarnExtraModel):
         default_factory=list,
         description=(
             "Extra arguments for `delta-update update`, e.g. "
-            "[--updater-version, 2, --forward-fill-rates]."
+            "[--forward-fill-rates, --parallel-workers, 4]."
         ),
     )
     lag_alert_minutes: Optional[int] = Field(

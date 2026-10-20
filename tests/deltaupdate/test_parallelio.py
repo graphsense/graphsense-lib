@@ -156,3 +156,42 @@ def test_delta_update_cli_exposes_parallel_workers_option():
     result = CliRunner().invoke(deltaupdate_cli, ["delta-update", "update", "--help"])
     assert result.exit_code == 0
     assert "--parallel-workers" in result.output
+
+
+def _invoke_update(monkeypatch, *extra):
+    from click.testing import CliRunner
+
+    from graphsenselib.deltaupdate import cli
+
+    calls = []
+    monkeypatch.setattr(cli, "update", lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(cli, "GraphsenseSchemas", lambda: _NoSchemas())
+    result = CliRunner().invoke(
+        cli.deltaupdate_cli,
+        ["delta-update", "update", "-e", "dev", "-c", "btc", *extra],
+    )
+    return result, calls
+
+
+class _NoSchemas:
+    def apply_migrations(self, *a, **kw):
+        pass
+
+
+def test_delta_update_cli_runs_v2_without_updater_version(monkeypatch):
+    result, calls = _invoke_update(monkeypatch)
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+
+
+def test_delta_update_cli_still_accepts_updater_version_2(monkeypatch):
+    result, calls = _invoke_update(monkeypatch, "--updater-version", "2")
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+
+
+def test_delta_update_cli_rejects_removed_updater_version_1(monkeypatch):
+    result, calls = _invoke_update(monkeypatch, "--updater-version", "1")
+    assert result.exit_code == 2
+    assert "has been removed" in result.output
+    assert calls == []

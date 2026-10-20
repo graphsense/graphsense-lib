@@ -1105,44 +1105,6 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
         return len(rows.current_rows) > 0
 
-    def known_addresses_batch(
-        self, address: list[str], inlcude_new_adresses_table=True
-    ):
-        stmt = self.select_stmt(
-            "address_ids_by_address_prefix",
-            columns=["address"],
-            where={"address_prefix": "?", "address": "?"},
-            limit=1,
-        )
-        adrs = [(a, self.to_db_address(a)) for a in address]
-        parameters = [(a, [adr.prefix, adr.db_encoding]) for a, adr in adrs]
-
-        results = self._db.execute_batch_async(stmt, parameters)
-        if inlcude_new_adresses_table:
-            stmt = self.select_stmt(
-                "new_addresses",
-                columns=["address"],
-                where={"address_prefix": "?", "address": "?"},
-                limit=1,
-            )
-            results_new = self._db.execute_batch_async(stmt, parameters)
-            r1 = {
-                a: (len(row.current_rows) > 0)
-                for (a, row) in self._db.await_batch(results)
-            }
-            r2 = {
-                a: (len(row.current_rows) > 0)
-                for (a, row) in self._db.await_batch(results_new)
-            }
-
-            return {a: (r or r2[a]) for (a, r) in r1.items()}
-
-        else:
-            return {
-                a: (len(row.current_rows) > 0)
-                for (a, row) in self._db.await_batch(results)
-            }
-
     def get_token_configuration(self):
         # No limit: load every configured token (supports hundreds-thousands).
         stmt = self.select_stmt("token_configuration")

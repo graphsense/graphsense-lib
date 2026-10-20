@@ -10,6 +10,17 @@ def deltaupdate_cli():
     pass
 
 
+def _check_updater_version(ctx, param, value):
+    # Version 1 only wrote new_addresses/dirty_addresses, yet advanced the
+    # delta_updater_history bookkeeping that version 2 resumes from: one run
+    # without --updater-version 2 silently skipped those blocks for good.
+    if value not in (None, 2):
+        raise click.BadParameter(
+            "the version 1 updater (addresses only) has been removed; "
+            "2 is the only version, so drop the option.",
+        )
+
+
 @deltaupdate_cli.group("delta-update")
 def delta():
     """Updating the transformed keyspace from the raw keyspace."""
@@ -43,12 +54,11 @@ def delta():
 @click.option(
     "--updater-version",
     type=int,
-    default=1,
-    help="Which version of the delta-updater to use, 1: legacy (addresses only)"
-    ", 2: full (default: 1)",
+    default=None,
+    callback=_check_updater_version,
+    expose_value=False,
+    help="Deprecated, accepted for existing scripts: 2 is the only version.",
 )
-@click.option("--write-new/--no-write-new", default=True)
-@click.option("--write-dirty/--no-write-dirty", default=True)
 @click.option("--pedantic/--no-pedantic", default=False)
 @click.option(
     "--create-schema",
@@ -103,10 +113,7 @@ def deltaupdate(
     currency,
     start_block,
     end_block,
-    write_new,
-    write_dirty,
     write_batch_size,
-    updater_version,
     pedantic,
     create_schema,
     forward_fill_rates,
@@ -121,8 +128,6 @@ def deltaupdate(
         env (str): Env to work on
         currency (str): currency to work on
         start_block (int): start block
-        write_new (bool): should I write new_address table?
-        write_dirty (bool): should I write dirty_address table?
         write_batch_size (int): how many blocks at a time are written.
     """
     if create_schema:
@@ -137,10 +142,7 @@ def deltaupdate(
         currency,
         start_block,
         end_block,
-        write_new,
-        write_dirty,
         write_batch_size,
-        updater_version,
         pedantic,
         forward_fill_rates,
         disable_safety_checks,

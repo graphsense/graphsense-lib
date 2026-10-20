@@ -597,14 +597,14 @@ environments:
       rates_every_minutes: 30       # exchange rates with every Nth ingest only
       currencies:
         btc:
-          ingest_args: [--sinks, cassandra, --sinks, delta, --mode, utxo_with_tx_graph]
-          delta_update_args: [--updater-version, 2, --forward-fill-rates]
+          ingest_args: [--sinks, cassandra, --sinks, delta]
+          delta_update_args: [--forward-fill-rates, --write-batch-size, 10, --parallel-workers, 4]
           lag_alert_minutes: 90
         zec:
           channel: canary           # run by the canary daemon only
           enabled: true
-          ingest_args: [--sinks, cassandra, --sinks, delta, --mode, utxo_with_tx_graph]
-          delta_update_args: [--updater-version, 2, --forward-fill-rates]
+          ingest_args: [--sinks, cassandra, --sinks, delta]
+          delta_update_args: [--forward-fill-rates, --write-batch-size, 40, --parallel-workers, 4]
     keyspaces:
       zec:
         ingest_config:

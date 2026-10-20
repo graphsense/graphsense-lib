@@ -22,6 +22,9 @@ Use one changelog file, but separate entries by track in each release window.
   - **Signals:** the first SIGINT/SIGTERM stops starting jobs and lets running jobs stop after their current chunk. The second lists what is still running. The third kills the jobs, which is crash-safe for the data but leaves a killed job's Redis lock behind. The jobs run in their own process group, so a terminal Ctrl-C reaches only the daemon.
 - **`ingest_config.reorg_backoff_blocks` overrides the built-in reorg backoff per network** (minimum 1). The defaults are unchanged. Some are far longer than the nodes need: zcashd and Zebra reject reorgs deeper than 99 blocks, yet zec waits 150 (~3h); BCHN finalizes at depth 10, yet bch waits 15 (~2.5h). With continuous sync, the backoff is most of the remaining lag.
 
+#### Removed
+- **The version 1 delta updater (addresses only) is removed; `delta-update update` always runs the full updater (formerly `--updater-version 2`).** Version 1 was still the default, and a run without `--updater-version 2` on a v2 keyspace wrote only `new_addresses`/`dirty_addresses` but still advanced `last_synced_block` in `delta_updater_history`. Version 2 then resumed past those blocks and never applied them. `--updater-version 2` is still accepted, so existing scripts keep working; `--updater-version 1` is refused with a usage error (exit 2). `--write-new/--no-write-new` and `--write-dirty/--no-write-dirty` (v1 only) are gone. No Spark change: version 2's output is unchanged.
+
 #### Fixed
 - **`ingest from-node` exits with 12 ("nothing to ingest") when the node is behind what is already ingested**, e.g. after a node restart or resync, instead of failing an assertion.
 - **The post-ingest staleness alert is sent at most once an hour per currency** (across processes with Redis, within the process without it). It ran unthrottled after every ingest, which was harmless hourly, but would flood Slack with frequent runs.
