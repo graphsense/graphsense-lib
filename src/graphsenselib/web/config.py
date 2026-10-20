@@ -186,7 +186,9 @@ class NotificationsConfig(BaseSettings):
     include_in_schema: bool = Field(
         default=False,
         description="List the routes in the OpenAPI spec (and so in the "
-        "generated clients). Off: dashboard-only, the contract stays private.",
+        "generated clients). Off: they are not in openapi.json or the "
+        "clients, but still answer any caller the gateway lets through (API "
+        "key, or login with the notifications role). Beta, may change.",
     )
 
     @model_validator(mode="after")
