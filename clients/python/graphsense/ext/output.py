@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from contextlib import contextmanager
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any, Generator, Iterable, Optional
 
 from graphsense.ext.client import _model_to_dict
 
@@ -81,7 +81,7 @@ def resolve_format(
 
 
 @contextmanager
-def open_out(path: Optional[str], *, mode: str = "w") -> Iterator[Any]:
+def open_out(path: Optional[str], *, mode: str = "w") -> Generator[Any, None, None]:
     """Yield a writable text stream — stdout, or an opened file."""
     if path is None or path == "-":
         yield sys.stdout

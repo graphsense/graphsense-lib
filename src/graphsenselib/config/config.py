@@ -939,6 +939,8 @@ class AppConfig(GoodConf):
         field = cls.model_fields.get(field_name)
         if field is None:
             raise ValueError("unknown config key")
+        # FieldInfo.annotation is Optional, but a declared model field always has one.
+        assert field.annotation is not None
         return TypeAdapter(field.annotation).validate_python(value)
 
     @staticmethod
