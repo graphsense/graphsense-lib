@@ -270,6 +270,37 @@ def test_configured_network_paths_proxy():
     assert seen[-1].headers["authorization"] == "backend-key"
 
 
+def test_a_configured_network_in_upper_case_proxies_in_lower_case():
+    """Core routes take a network in any case (ETH = eth); an externally
+    served one 404ed when it was not written in lower case."""
+    client, seen = make_client()
+    response = client.get("/BNB/blocks/1?include_io=true")
+    assert response.status_code == 200
+    assert response.json() == {"backend_path": "/bnb/blocks/1"}
+    assert response.headers["x-served-by"] == "external-backend"
+    assert seen[-1].url.query == b"include_io=true"
+
+    response = client.get(
+        "/Bnb/addresses/0xsame/related_addresses?address_relation_type=pubkey"
+    )
+    assert response.headers["x-served-by"] == "external-backend"
+    assert seen[-1].url.path == "/bnb/addresses/0xsame/related_addresses"
+
+
+def test_a_configured_network_in_upper_case_keeps_its_tag_routes_local():
+    client, seen = make_client()
+    assert client.get("/BNB/addresses/0xabc/tags").json() == {
+        "address_tags": ["local-tag"]
+    }
+    assert seen == []
+
+
+def test_other_networks_keep_the_case_they_were_written_in():
+    client, seen = make_client()
+    assert client.get("/BTC/blocks/1").json() == {"served": "local", "currency": "BTC"}
+    assert seen == []
+
+
 def test_other_networks_stay_local():
     client, seen = make_client()
     assert client.get("/btc/blocks/1").json() == {

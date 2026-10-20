@@ -262,6 +262,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         if not (self.config.enabled and self.config.networks):
             return await call_next(request)
+        self._lowercase_network(request)
         opt_out = {
             part.strip().lower()
             for part in request.headers.get(OPT_OUT_HEADER, "").split(",")
@@ -287,6 +288,25 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             headers=dict(response.headers),
             media_type=response.media_type,
         )
+
+    def _lowercase_network(self, request: Request) -> None:
+        """Write an externally served network of the path in lower case.
+
+        Core routes take a network in any case (``/ETH/...`` = ``/eth/...``),
+        the configured networks are lower case. Rewriting the request scope,
+        before anything reads ``request.url``, makes the routing below, the
+        proxied path and a local tag route see the same ``/bnb/...``. Other
+        networks keep the case they were written in."""
+        path = request.scope["path"]
+        first, sep, rest = path.lstrip("/").partition("/")
+        network = first.lower()
+        if network == first or network not in self.config.networks:
+            return
+        request.scope["path"] = f"/{network}{sep}{rest}"
+        raw_path = request.scope.get("raw_path")
+        if raw_path:
+            _, raw_sep, raw_rest = raw_path.lstrip(b"/").partition(b"/")
+            request.scope["raw_path"] = b"/" + network.encode() + raw_sep + raw_rest
 
     async def _route(self, request: Request) -> Optional[Response]:
         """Return a Response to short-circuit with, or None to serve locally.
