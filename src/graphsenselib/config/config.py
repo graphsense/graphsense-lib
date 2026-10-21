@@ -473,16 +473,16 @@ def _check_sync_args(args: List[str]) -> List[str]:
     return args
 
 
-class SyncCurrencyConfig(_WarnExtraModel):
-    """How `graphsense-cli sync run` keeps one currency up to date."""
+class SyncNetworkConfig(_WarnExtraModel):
+    """How `graphsense-cli sync run` keeps one network up to date."""
 
     enabled: bool = True
     channel: str = Field(
         default="stable",
         description=(
             "Only the sync daemon started with this --channel runs the "
-            "currency. Run a second daemon from a newer image with "
-            "--channel canary to try a release on a few currencies first."
+            "network. Run a second daemon from a newer image with "
+            "--channel canary to try a release on a few networks first."
         ),
     )
     poll_seconds: Optional[int] = Field(default=None, ge=5)
@@ -517,7 +517,7 @@ class SyncCurrencyConfig(_WarnExtraModel):
         description=(
             "Compare this many of the newest ingested block hashes with the "
             "node's before every ingest; a mismatch means a reorg deeper than "
-            "the reorg backoff, and pauses the currency. 0 disables the check."
+            "the reorg backoff, and pauses the network. 0 disables the check."
         ),
     )
 
@@ -531,7 +531,7 @@ class SyncConfig(_WarnExtraModel):
     """Settings for the continuous sync daemon (`graphsense-cli sync run`)."""
 
     poll_seconds: int = Field(default=30, ge=5)
-    max_parallel_currencies: int = Field(default=4, ge=1)
+    max_parallel_networks: int = Field(default=4, ge=1)
     max_parallel_delta_updates: int = Field(default=2, ge=1)
     ingest_timeout_minutes: int = Field(default=60, ge=1)
     delta_update_timeout_minutes: int = Field(default=180, ge=1)
@@ -553,7 +553,7 @@ class SyncConfig(_WarnExtraModel):
         default=60,
         ge=1,
         description=(
-            "How often to run `ingest delta-lake auto-compact` for currencies "
+            "How often to run `ingest delta-lake auto-compact` for networks "
             "with ingest_config.auto_compact set. The command compacts only "
             "when that schedule says so; otherwise it is a quick check."
         ),
@@ -565,7 +565,7 @@ class SyncConfig(_WarnExtraModel):
         default=3, ge=1, description="Alert after this many failures in a row."
     )
     max_backoff_minutes: int = Field(default=15, ge=1)
-    currencies: Dict[str, SyncCurrencyConfig] = Field(default_factory=dict)
+    networks: Dict[str, SyncNetworkConfig] = Field(default_factory=dict)
 
     @field_validator("consistency_check_args")
     @classmethod

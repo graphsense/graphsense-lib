@@ -5,7 +5,7 @@ from graphsenselib.config import (
     DeltaUpdateConfig,
     IngestConfig,
     SyncConfig,
-    SyncCurrencyConfig,
+    SyncNetworkConfig,
     get_reorg_backoff_blocks,
 )
 from graphsenselib.sync.cli import _parse_duration
@@ -17,7 +17,7 @@ from graphsenselib.sync.scheduler import default_max_blocks
 )
 def test_scheduler_owned_args_are_rejected(args):
     with pytest.raises(ValidationError):
-        SyncConfig(currencies={"zec": {"ingest_args": args}})
+        SyncConfig(networks={"zec": {"ingest_args": args}})
 
 
 def test_reorg_backoff_override():
@@ -44,7 +44,7 @@ def test_parse_duration():
 )
 def test_compaction_flags_point_to_ingest_config(arg):
     with pytest.raises(ValueError, match="ingest_config.auto_compact"):
-        SyncCurrencyConfig(ingest_args=[arg, "1d"])
+        SyncNetworkConfig(ingest_args=[arg, "1d"])
 
 
 def test_ingest_and_delta_update_defaults_validated_at_load():

@@ -21,7 +21,7 @@ def make_env(sync=None, **ingest):
         },
         sync=sync
         if sync is not None
-        else {"currencies": {"zec": {"max_blocks_per_job": 50}}},
+        else {"networks": {"zec": {"max_blocks_per_job": 50}}},
     )
 
 
@@ -145,7 +145,7 @@ def test_extra_args_and_rates_interval(setup):
     env = make_env(
         sync={
             "rates_every_minutes": 30,
-            "currencies": {
+            "networks": {
                 "zec": {
                     "ingest_args": ["--sinks", "cassandra"],
                     "delta_update_args": ["--forward-fill-rates"],
@@ -218,7 +218,7 @@ def test_lock_contention_is_not_a_failure(setup):
     assert rt.next_due == clock.t + 30
 
 
-def test_reorg_pauses_currency(setup):
+def test_reorg_pauses_network(setup):
     probe = FakeProbe(raw=100)
     probe.node_hashes[99] = "ff" * 32
     sched, _, runner, alerts, clock = setup(probe=probe)
@@ -250,7 +250,7 @@ def test_pause_and_channel_and_claims(setup):
     assert runner.calls == []
 
     store.resume("zec")
-    canary = make_env(sync={"currencies": {"zec": {"channel": "canary"}}})
+    canary = make_env(sync={"networks": {"zec": {"channel": "canary"}}})
     sched, _, runner, _, _ = setup(env=canary, store=store)
     one_tick(sched)
     assert runner.calls == []
@@ -261,7 +261,7 @@ def test_pause_and_channel_and_claims(setup):
     assert runner.calls == []
 
 
-def test_currency_moved_to_other_channel_releases_claim(setup):
+def test_network_moved_to_other_channel_releases_claim(setup):
     envs = [make_env()]
     store = MemoryStateStore()
     sched, _, runner, _, clock = setup(store=store)
@@ -269,7 +269,7 @@ def test_currency_moved_to_other_channel_releases_claim(setup):
     one_tick(sched)
     assert store.claim_owner("zec") == sched.daemon_id
 
-    envs[0] = make_env(sync={"currencies": {"zec": {"channel": "canary"}}})
+    envs[0] = make_env(sync={"networks": {"zec": {"channel": "canary"}}})
     one_tick(sched)
     assert store.claim_owner("zec") is None
 
@@ -315,7 +315,7 @@ def test_slot_given_back_where_taken_after_resize():
 
 def compacting_env(**sync):
     return make_env(
-        sync={"currencies": {"zec": {}}, **sync},
+        sync={"networks": {"zec": {}}, **sync},
         raw_keyspace_file_sinks={"delta": {"directory": "/data/zec"}},
         auto_compact="1w;sunday",
     )

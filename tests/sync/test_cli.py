@@ -17,7 +17,7 @@ environments:
         schema_type: utxo
         ingest_config: {node_reference: "http://127.0.0.1:1"}
     sync:
-      currencies:
+      networks:
         zec: {channel: CHANNEL}
 """
 
@@ -43,11 +43,11 @@ def test_run_passes_config_file_to_jobs_and_reloads(tmp_path):
     assert seen["runner"].global_args == ["-vv", "--config-file", str(cfg)]
 
     load = seen["load_environment"]
-    assert load().sync.currencies["zec"].channel == "canary"
+    assert load().sync.networks["zec"].channel == "canary"
     cfg.write_text(CONFIG.replace("CHANNEL", "stable"))
     future = time.time() + 5
     os.utime(cfg, (future, future))
-    assert load().sync.currencies["zec"].channel == "stable"
+    assert load().sync.networks["zec"].channel == "stable"
 
 
 def test_pause_status_resume_without_redis(tmp_path):

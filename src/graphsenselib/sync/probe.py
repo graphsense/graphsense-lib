@@ -20,9 +20,9 @@ _RPC_MAX_RETRIES = 3
 
 
 class ChainProbe:
-    def __init__(self, env: str, currency: str, ks_config: KeyspaceConfig):
+    def __init__(self, env: str, network: str, ks_config: KeyspaceConfig):
         self.env = env
-        self.currency = currency
+        self.network = network
         self.schema_type = ks_config.schema_type
         ic = ks_config.ingest_config
         sources = ic.all_node_references if ic is not None else []
@@ -37,7 +37,7 @@ class ChainProbe:
     def _client(self) -> BatchRpcClient:
         if self.provider_uri is None:
             raise ValueError(
-                f"No http node reference configured for {self.env}/{self.currency}"
+                f"No http node reference configured for {self.env}/{self.network}"
             )
         if self._rpc is None:
             self._rpc = BatchRpcClient(self.provider_uri, timeout=_RPC_TIMEOUT_SECONDS)
@@ -74,7 +74,7 @@ class ChainProbe:
 
     def db(self) -> AnalyticsDb:
         if self._db is None:
-            db = DbFactory().from_config(self.env, self.currency, readonly=True)
+            db = DbFactory().from_config(self.env, self.network, readonly=True)
             db.open()
             self._db = db
         return self._db
@@ -118,7 +118,7 @@ class ChainProbe:
             try:
                 self._db.close()
             except Exception as e:
-                logger.debug(f"Closing probe db for {self.currency}: {e}")
+                logger.debug(f"Closing probe db for {self.network}: {e}")
             self._db = None
         self._rpc = None
 

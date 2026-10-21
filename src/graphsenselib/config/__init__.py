@@ -8,7 +8,7 @@ from .config import (
     KeyspaceConfig,
     IngestConfig,
     SyncConfig,
-    SyncCurrencyConfig,
+    SyncNetworkConfig,
     avg_blocktimes_by_currencies,
     chain_forks,
     currency_to_schema_type,

@@ -1,6 +1,6 @@
 """The continuous sync loop behind `graphsense-cli sync run`.
 
-Per currency, one *cycle* at a time:
+Per network, one *cycle* at a time:
 
     probe node tip / raw / transformed
     -> reorg check (newest raw block hashes vs. the node)
@@ -10,10 +10,10 @@ Per currency, one *cycle* at a time:
     -> consistency check  (optional, periodic)
 
 then wait `poll_seconds` -- or start the next cycle at once while ingest is
-still catching up. Currencies run in parallel, each cycle on its own thread;
+still catching up. Networks run in parallel, each cycle on its own thread;
 the steps themselves are child processes (see jobs.py).
 
-Within a currency the steps must run one after the other anyway: ingest and
+Within a network the steps must run one after the other anyway: ingest and
 delta-update take the same raw-keyspace lock.
 
 delta-update gets no --end-block on purpose: an explicit range turns off its
@@ -41,7 +41,7 @@ from ..config import (
     Environment,
     KeyspaceConfig,
     SyncConfig,
-    SyncCurrencyConfig,
+    SyncNetworkConfig,
     avg_blocktimes_by_currencies,
     get_config,
     get_reorg_backoff_blocks,
@@ -58,15 +58,15 @@ _ALERT_EVERY_SECONDS = 60 * 60
 _PAUSE_REMINDER_AFTER_SECONDS = 24 * 60 * 60
 _BUSY_ALERT_AFTER_SECONDS = 30 * 60
 # Upper bound on threads; how many cycles actually run at once is
-# sync.max_parallel_currencies, re-read on every config reload.
+# sync.max_parallel_networks, re-read on every config reload.
 _MAX_WORKER_THREADS = 64
 _TICK_SECONDS = 1.0
 
 Notifier = Callable[[str, str, str, int], object]
 
 
-def default_max_blocks(currency: str) -> int:
-    return max(1, _DEFAULT_SLICE_SECONDS // avg_blocktimes_by_currencies[currency])
+def default_max_blocks(network: str) -> int:
+    return max(1, _DEFAULT_SLICE_SECONDS // avg_blocktimes_by_currencies[network])
 
 
 def _default_notifier(topic: str, msg: str, dedup_key: str, every_seconds: int):
@@ -77,7 +77,7 @@ def _default_notifier(topic: str, msg: str, dedup_key: str, every_seconds: int):
 
 @dataclass
 class _Runtime:
-    """What the scheduler remembers about one currency between cycles."""
+    """What the scheduler remembers about one network between cycles."""
 
     next_due: float = 0.0  # monotonic
     failures: int = 0
@@ -92,7 +92,7 @@ class _Runtime:
 
 
 class _Slots:
-    """Limits how many jobs of one kind run at once, across currencies. The
+    """Limits how many jobs of one kind run at once, across networks. The
     limit follows config reloads; a job holding a slot of the old limit gives
     it back there."""
 
@@ -170,7 +170,7 @@ class SyncScheduler:
 
         Killing is crash-safe for the data (ingest writes `block` last and
         cleans up after itself, delta-update replays its WAL), but a killed
-        job leaves its Redis lock behind, and the next run of that currency
+        job leaves its Redis lock behind, and the next run of that network
         stays blocked until someone deletes it (`redis-cli DEL`, see
         utils/locking.py). File locks are released by the OS.
         """
@@ -204,7 +204,7 @@ class SyncScheduler:
         self._reload_requested.set()
 
     def run(self, once: bool = False) -> int:
-        """Run until stopped (SIGTERM/SIGINT), or one cycle per currency with
+        """Run until stopped (SIGTERM/SIGINT), or one cycle per network with
         ``once``. Returns a process exit code."""
         if threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGTERM, self._on_signal)
@@ -234,12 +234,12 @@ class SyncScheduler:
         logger.info("sync daemon stopping, waiting for running jobs")
         self._stop.set()
         self._executor.shutdown(wait=True)
-        for currency, rt in self._runtime.items():
+        for network, rt in self._runtime.items():
             if rt.claimed:
                 try:
-                    self.store.release(currency, self.daemon_id)
+                    self.store.release(network, self.daemon_id)
                 except Exception as e:
-                    logger.warning(f"Could not release claim on {currency}: {e}")
+                    logger.warning(f"Could not release claim on {network}: {e}")
         for probe in self._probes.values():
             probe.close()
         try:
@@ -278,81 +278,79 @@ class SyncScheduler:
 
         now = self._clock()
         running = sum(1 for rt in self._runtime.values() if _is_running(rt))
-        for currency, ccfg in sync.currencies.items():
-            rt = self._runtime.setdefault(currency, _Runtime())
+        for network, ccfg in sync.networks.items():
+            rt = self._runtime.setdefault(network, _Runtime())
             try:
-                if self._schedule_one(currency, ccfg, env, sync, rt, now, running):
+                if self._schedule_one(network, ccfg, env, sync, rt, now, running):
                     running += 1
             except Exception as e:
                 # e.g. Redis unreachable: try again next tick.
-                logger.warning(f"Scheduling {currency} failed: {e}")
+                logger.warning(f"Scheduling {network} failed: {e}")
         self._announce(sync)
 
     def _schedule_one(
         self,
-        currency: str,
-        ccfg: SyncCurrencyConfig,
+        network: str,
+        ccfg: SyncNetworkConfig,
         env: Environment,
         sync: SyncConfig,
         rt: _Runtime,
         now: float,
         running: int,
     ) -> bool:
-        """Start a cycle for the currency if it is ours and due. Returns
+        """Start a cycle for the network if it is ours and due. Returns
         whether one was started."""
         mine = (
             ccfg.enabled
             and ccfg.channel == self.channel
-            and (self.only is None or currency in self.only)
+            and (self.only is None or network in self.only)
         )
         if _is_running(rt):
-            # Keep the claim alive while the cycle runs, even if the currency
+            # Keep the claim alive while the cycle runs, even if the network
             # was just moved away: the job is still going.
-            rt.claimed = self.store.claim(currency, self.daemon_id)
+            rt.claimed = self.store.claim(network, self.daemon_id)
             return False
         rt.future = None
         if not mine:
             if rt.claimed:
-                self.store.release(currency, self.daemon_id)
+                self.store.release(network, self.daemon_id)
                 rt.claimed = False
-                logger.info(
-                    f"{currency}: no longer on channel {self.channel}, released"
-                )
+                logger.info(f"{network}: no longer on channel {self.channel}, released")
             return False
-        if currency not in env.keyspaces:
-            self._skip(rt, currency, f"not configured in environment {self.env}")
+        if network not in env.keyspaces:
+            self._skip(rt, network, f"not configured in environment {self.env}")
             return False
 
-        pause = self.store.get_pause(currency)
+        pause = self.store.get_pause(network)
         if pause is not None:
-            self._skip(rt, currency, f"paused: {pause.get('reason')}")
-            self._remind_paused(currency, pause, sync)
+            self._skip(rt, network, f"paused: {pause.get('reason')}")
+            self._remind_paused(network, pause, sync)
             if rt.claimed:
-                rt.claimed = self.store.claim(currency, self.daemon_id)
+                rt.claimed = self.store.claim(network, self.daemon_id)
             return False
 
-        at_capacity = not self._once and running >= sync.max_parallel_currencies
+        at_capacity = not self._once and running >= sync.max_parallel_networks
         if now < rt.next_due or at_capacity:
             if rt.claimed:
-                rt.claimed = self.store.claim(currency, self.daemon_id)
+                rt.claimed = self.store.claim(network, self.daemon_id)
             return False
 
-        if not self.store.claim(currency, self.daemon_id):
+        if not self.store.claim(network, self.daemon_id):
             rt.claimed = False
-            owner = self.store.claim_owner(currency)
-            self._skip(rt, currency, f"claimed by another daemon: {owner}")
+            owner = self.store.claim_owner(network)
+            self._skip(rt, network, f"claimed by another daemon: {owner}")
             rt.next_due = now + (ccfg.poll_seconds or sync.poll_seconds)
             return False
         rt.claimed = True
         rt.last_skip_reason = None
         rt.future = self._executor.submit(
-            self._run_cycle, currency, ccfg, env.keyspaces[currency], sync, rt
+            self._run_cycle, network, ccfg, env.keyspaces[network], sync, rt
         )
         return True
 
-    def _skip(self, rt: _Runtime, currency: str, reason: str):
+    def _skip(self, rt: _Runtime, network: str, reason: str):
         if rt.last_skip_reason != reason:
-            logger.info(f"{currency}: skipped, {reason}")
+            logger.info(f"{network}: skipped, {reason}")
             rt.last_skip_reason = reason
 
     def _announce(self, sync: SyncConfig):
@@ -373,17 +371,17 @@ class SyncScheduler:
         except Exception as e:
             logger.debug(f"Daemon heartbeat failed: {e}")
 
-    def _remind_paused(self, currency: str, pause: dict, sync: SyncConfig):
+    def _remind_paused(self, network: str, pause: dict, sync: SyncConfig):
         since = pause.get("since") or 0
         if pause.get("until") is None and self._wall() - since > (
             _PAUSE_REMINDER_AFTER_SECONDS
         ):
             self._alert(
                 sync,
-                f"sync-paused:{self.env}:{currency}",
-                f"sync {self.env}/{currency} has been paused since "
+                f"sync-paused:{self.env}:{network}",
+                f"sync {self.env}/{network} has been paused since "
                 f"{_fmt_ts(since)} by {pause.get('by')}: {pause.get('reason')}. "
-                f"Resume with: graphsense-cli sync resume -e {self.env} -c {currency}",
+                f"Resume with: graphsense-cli sync resume -e {self.env} -c {network}",
                 every=_PAUSE_REMINDER_AFTER_SECONDS,
             )
 
@@ -391,8 +389,8 @@ class SyncScheduler:
 
     def _run_cycle(
         self,
-        currency: str,
-        ccfg: SyncCurrencyConfig,
+        network: str,
+        ccfg: SyncNetworkConfig,
         ks: KeyspaceConfig,
         sync: SyncConfig,
         rt: _Runtime,
@@ -406,49 +404,49 @@ class SyncScheduler:
         }
         poll = ccfg.poll_seconds or sync.poll_seconds
         try:
-            delay, failed = self._cycle(currency, ccfg, ks, sync, rt, status)
+            delay, failed = self._cycle(network, ccfg, ks, sync, rt, status)
         except Exception as e:
-            logger.exception(f"{currency}: cycle crashed")
-            probe = self._probes.pop(currency, None)
+            logger.exception(f"{network}: cycle crashed")
+            probe = self._probes.pop(network, None)
             if probe is not None:
                 probe.close()
-            delay, failed = self._failure(currency, sync, rt, status, poll, str(e), [])
+            delay, failed = self._failure(network, sync, rt, status, poll, str(e), [])
         rt.next_due = self._clock() + delay
         status["next_cycle_at"] = int(self._wall() + delay)
         status["failures"] = rt.failures
         try:
-            self.store.write_status(currency, status)
+            self.store.write_status(network, status)
         except Exception as e:
-            logger.warning(f"{currency}: could not write status: {e}")
+            logger.warning(f"{network}: could not write status: {e}")
         return failed
 
-    def _probe(self, currency: str, ks: KeyspaceConfig) -> ChainProbe:
-        probe = self._probes.get(currency)
+    def _probe(self, network: str, ks: KeyspaceConfig) -> ChainProbe:
+        probe = self._probes.get(network)
         if probe is None:
-            probe = self._probe_factory(self.env, currency, ks)
-            self._probes[currency] = probe
+            probe = self._probe_factory(self.env, network, ks)
+            self._probes[network] = probe
         return probe
 
-    def _cycle(self, currency, ccfg, ks, sync, rt, status):
+    def _cycle(self, network, ccfg, ks, sync, rt, status):
         poll = ccfg.poll_seconds or sync.poll_seconds
-        probe = self._probe(currency, ks)
+        probe = self._probe(network, ks)
         try:
             tip = probe.node_tip()
             raw = probe.raw_height()
         except Exception as e:
             probe.reset()
             return self._failure(
-                currency, sync, rt, status, poll, f"probe failed: {e}", []
+                network, sync, rt, status, poll, f"probe failed: {e}", []
             )
         ic = ks.ingest_config
         backoff = get_reorg_backoff_blocks(
-            currency, override=ic.reorg_backoff_blocks if ic else None
+            network, override=ic.reorg_backoff_blocks if ic else None
         )
         target = tip - backoff
         status.update(node_tip=tip, target=target, raw=raw)
         if raw is None:
             return self._failure(
-                currency,
+                network,
                 sync,
                 rt,
                 status,
@@ -461,10 +459,10 @@ class SyncScheduler:
         if ccfg.reorg_check_depth > 0:
             mismatch = self._find_reorg(probe, raw, tip, ccfg.reorg_check_depth)
             if mismatch is not None:
-                self._pause_for_reorg(currency, sync, mismatch, status)
+                self._pause_for_reorg(network, sync, mismatch, status)
                 return poll, True
 
-        self._check_lag(currency, ccfg, sync, probe, raw)
+        self._check_lag(network, ccfg, sync, probe, raw)
 
         # -- ingest
         rates_due = self._wall() - rt.last_rates_at >= sync.rates_every_minutes * 60
@@ -476,7 +474,7 @@ class SyncScheduler:
                 "-e",
                 self.env,
                 "-c",
-                currency,
+                network,
                 *ccfg.ingest_args,
                 "--no-staleness-check",
                 "--no-auto-compact",
@@ -487,13 +485,13 @@ class SyncScheduler:
             if raw < target:
                 end = min(
                     target,
-                    raw + (ccfg.max_blocks_per_job or default_max_blocks(currency)),
+                    raw + (ccfg.max_blocks_per_job or default_max_blocks(network)),
                 )
                 args += ["--end-block", str(end)]
             result = self._step(
-                currency, "ingest", args, sync.ingest_timeout_minutes, status
+                network, "ingest", args, sync.ingest_timeout_minutes, status
             )
-            outcome = self._handle(currency, sync, rt, status, poll, result)
+            outcome = self._handle(network, sync, rt, status, poll, result)
             if outcome is not None:
                 return outcome
             if rates_due:
@@ -507,7 +505,7 @@ class SyncScheduler:
             status.update(raw=raw, transformed=transformed)
             if transformed is None:
                 return self._failure(
-                    currency,
+                    network,
                     sync,
                     rt,
                     status,
@@ -518,16 +516,16 @@ class SyncScheduler:
             if raw is not None and transformed < raw:
                 result = self._step_in_slot(
                     self._delta_slots,
-                    currency,
+                    network,
                     "delta_update",
-                    ["delta-update", "update", "-e", self.env, "-c", currency]
+                    ["delta-update", "update", "-e", self.env, "-c", network]
                     + ccfg.delta_update_args,
                     sync.delta_update_timeout_minutes,
                     status,
                 )
                 if result is None:
                     return 0, False  # stopping
-                outcome = self._handle(currency, sync, rt, status, poll, result)
+                outcome = self._handle(network, sync, rt, status, poll, result)
                 if outcome is not None:
                     return outcome
                 status["transformed"] = probe.transformed_height()
@@ -536,7 +534,7 @@ class SyncScheduler:
         if self._compaction_due(ks, sync, rt):
             result = self._step_in_slot(
                 self._compaction_slots,
-                currency,
+                network,
                 "compact",
                 [
                     "ingest",
@@ -545,7 +543,7 @@ class SyncScheduler:
                     "-e",
                     self.env,
                     "-c",
-                    currency,
+                    network,
                 ],
                 sync.compaction_timeout_minutes,
                 status,
@@ -556,7 +554,7 @@ class SyncScheduler:
                 # A failed compaction is retried at the next check, not on
                 # every cycle: ingest and delta-update go on meanwhile.
                 rt.last_compaction_at = self._wall()
-            outcome = self._handle(currency, sync, rt, status, poll, result)
+            outcome = self._handle(network, sync, rt, status, poll, result)
             if outcome is not None:
                 return outcome
 
@@ -564,9 +562,9 @@ class SyncScheduler:
         every = sync.consistency_check_every_minutes
         if every is not None and self._wall() - rt.last_consistency_at >= every * 60:
             result = self._step(
-                currency,
+                network,
                 "consistency",
-                ["monitoring", "check-consistency", "-e", self.env, "-c", currency]
+                ["monitoring", "check-consistency", "-e", self.env, "-c", network]
                 + sync.consistency_check_args,
                 sync.delta_update_timeout_minutes,
                 status,
@@ -578,26 +576,26 @@ class SyncScheduler:
             if result.exit_code == EXIT_INCONSISTENT:
                 self._alert(
                     sync,
-                    f"sync-inconsistent:{self.env}:{currency}",
-                    f"sync {self.env}/{currency}: consistency check failed.\n"
+                    f"sync-inconsistent:{self.env}:{network}",
+                    f"sync {self.env}/{network}: consistency check failed.\n"
                     + _fmt_tail(result.tail),
                 )
             elif result.failed:
                 return self._failure(
-                    currency, sync, rt, status, poll, _describe(result), result.tail
+                    network, sync, rt, status, poll, _describe(result), result.tail
                 )
 
-        self._success(currency, sync, rt, status)
+        self._success(network, sync, rt, status)
         return (0.0 if catching_up else poll), False
 
-    def _step(self, currency, step, args, timeout_minutes, status) -> StepResult:
+    def _step(self, network, step, args, timeout_minutes, status) -> StepResult:
         status["running"] = step
         try:
-            self.store.write_status(currency, status)
+            self.store.write_status(network, status)
         except Exception:
             pass
         result = self.runner.run(
-            step, args, timeout_minutes * 60, self._stop, label=f"{currency} {step}"
+            step, args, timeout_minutes * 60, self._stop, label=f"{network} {step}"
         )
         status.pop("running", None)
         status.setdefault("steps", {})[step] = {
@@ -609,14 +607,14 @@ class SyncScheduler:
         return result
 
     def _step_in_slot(
-        self, slots: _Slots, currency, step, args, timeout_minutes, status
+        self, slots: _Slots, network, step, args, timeout_minutes, status
     ) -> Optional[StepResult]:
         """_step once a slot is free; None if we are stopping meanwhile."""
         sem = slots.acquire(self._stop)
         if sem is None:
             return None
         try:
-            return self._step(currency, step, args, timeout_minutes, status)
+            return self._step(network, step, args, timeout_minutes, status)
         finally:
             sem.release()
 
@@ -630,13 +628,13 @@ class SyncScheduler:
             >= sync.compaction_check_every_minutes * 60
         )
 
-    def _handle(self, currency, sync, rt, status, poll, result: StepResult):
+    def _handle(self, network, sync, rt, status, poll, result: StepResult):
         """Turn a step result into an early cycle return, or None to go on."""
         if result.outcome is Outcome.STOPPED:
             return 0, False
         if result.failed:
             return self._failure(
-                currency, sync, rt, status, poll, _describe(result), result.tail
+                network, sync, rt, status, poll, _describe(result), result.tail
             )
         if result.outcome is Outcome.BUSY:
             now = self._clock()
@@ -644,8 +642,8 @@ class SyncScheduler:
             if now - rt.busy_since > _BUSY_ALERT_AFTER_SECONDS:
                 self._alert(
                     sync,
-                    f"sync-busy:{self.env}:{currency}",
-                    f"sync {self.env}/{currency}: `{result.step}` has found its "
+                    f"sync-busy:{self.env}:{network}",
+                    f"sync {self.env}/{network}: `{result.step}` has found its "
                     f"lock taken for {int((now - rt.busy_since) // 60)} min. "
                     "Is a manual run going on, or did a killed job leave the "
                     "lock behind? The job log names the holder.\n"
@@ -656,13 +654,13 @@ class SyncScheduler:
         rt.busy_since = None
         return None
 
-    def _success(self, currency, sync, rt, status):
+    def _success(self, network, sync, rt, status):
         if rt.alerted:
             self._notify(
                 sync.alert_topic,
-                f"sync {self.env}/{currency} recovered after {rt.failures} "
+                f"sync {self.env}/{network} recovered after {rt.failures} "
                 "failed cycles.",
-                f"sync-recovered:{self.env}:{currency}:{uuid.uuid4().hex}",
+                f"sync-recovered:{self.env}:{network}:{uuid.uuid4().hex}",
                 60,
             )
         rt.failures = 0
@@ -670,11 +668,11 @@ class SyncScheduler:
         status["last_result"] = "ok"
         status["last_success_at"] = int(self._wall())
 
-    def _failure(self, currency, sync, rt, status, poll, reason, tail):
+    def _failure(self, network, sync, rt, status, poll, reason, tail):
         rt.failures += 1
         delay = min(poll * 2 ** (rt.failures - 1), sync.max_backoff_minutes * 60)
         logger.error(
-            f"{currency}: cycle failed ({rt.failures} in a row), retry in "
+            f"{network}: cycle failed ({rt.failures} in a row), retry in "
             f"{delay:.0f}s: {reason}"
         )
         status["last_result"] = f"failed: {reason}"
@@ -682,8 +680,8 @@ class SyncScheduler:
         if rt.failures >= sync.failure_alert_after:
             self._alert(
                 sync,
-                f"sync-failure:{self.env}:{currency}",
-                f"sync {self.env}/{currency} failed {rt.failures} times in a "
+                f"sync-failure:{self.env}:{network}",
+                f"sync {self.env}/{network} failed {rt.failures} times in a "
                 f"row (channel {self.channel}, graphsense-lib {__version__}). "
                 f"Last error: {reason}\n" + _fmt_tail(tail),
             )
@@ -713,29 +711,29 @@ class SyncScheduler:
                 return {"height": height, "raw": ours, "node": theirs}
         return None
 
-    def _pause_for_reorg(self, currency, sync, mismatch, status):
+    def _pause_for_reorg(self, network, sync, mismatch, status):
         reason = (
             f"reorg detected: block {mismatch['height']} is {mismatch['raw']} in "
             f"raw but {mismatch['node']} at the node"
         )
-        self.store.pause(currency, reason, by=f"sync daemon {self._daemon_key}")
+        self.store.pause(network, reason, by=f"sync daemon {self._daemon_key}")
         status["last_result"] = reason
         self._alert(
             sync,
-            f"sync-reorg:{self.env}:{currency}",
-            f"sync {self.env}/{currency} PAUSED: {reason}. The reorg went "
+            f"sync-reorg:{self.env}:{network}",
+            f"sync {self.env}/{network} PAUSED: {reason}. The reorg went "
             "deeper than the reorg backoff, so raw (and possibly transformed) "
             "holds orphaned blocks. Repair them, then resume with: "
-            f"graphsense-cli sync resume -e {self.env} -c {currency}",
+            f"graphsense-cli sync resume -e {self.env} -c {network}",
         )
 
-    def _check_lag(self, currency, ccfg, sync, probe, raw):
+    def _check_lag(self, network, ccfg, sync, probe, raw):
         if ccfg.lag_alert_minutes is None:
             return
         try:
             ts = probe.raw_block_timestamp(raw)
         except Exception as e:
-            logger.debug(f"{currency}: lag check skipped: {e}")
+            logger.debug(f"{network}: lag check skipped: {e}")
             return
         if ts is None:
             return
@@ -747,8 +745,8 @@ class SyncScheduler:
         if age_min > ccfg.lag_alert_minutes:
             self._alert(
                 sync,
-                f"sync-lag:{self.env}:{currency}",
-                f"sync {self.env}/{currency}: newest raw block {raw} is "
+                f"sync-lag:{self.env}:{network}",
+                f"sync {self.env}/{network}: newest raw block {raw} is "
                 f"{age_min:.0f} min old (alert above {ccfg.lag_alert_minutes} min).",
             )
 

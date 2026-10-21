@@ -22,7 +22,7 @@ def sync_cli():
 
 @sync_cli.group("sync")
 def sync():
-    """Keep currencies continuously up to date (replaces per-currency cron jobs)."""
+    """Keep networks continuously up to date (replaces per-network cron jobs)."""
     pass
 
 
@@ -46,7 +46,7 @@ def _store(env: str):
 
 
 class _EnvironmentReloader:
-    """Re-reads the config file when it changes, so enabling a currency or
+    """Re-reads the config file when it changes, so enabling a network or
     moving it to another channel needs no daemon restart."""
 
     def __init__(self, env: str, path: Optional[str]):
@@ -77,28 +77,28 @@ class _EnvironmentReloader:
     "--channel",
     default="stable",
     show_default=True,
-    help="Run only the currencies whose sync.currencies.<c>.channel matches.",
+    help="Run only the networks whose sync.networks.<c>.channel matches.",
 )
 @click.option(
     "--once",
     is_flag=True,
-    help="One cycle per currency, then exit (non-zero if any failed).",
+    help="One cycle per network, then exit (non-zero if any failed).",
 )
 @click.option(
     "--currency",
     "-c",
     "only",
     multiple=True,
-    help="Restrict to these currencies (repeatable). They must still be "
+    help="Restrict to these networks (repeatable). They must still be "
     "enabled and on this channel.",
 )
 @click.pass_context
 def run(ctx, env: str, channel: str, once: bool, only):
     """Run the sync daemon.
 
-    Per currency it ingests new blocks from the node, then runs the delta
+    Per network it ingests new blocks from the node, then runs the delta
     update, as child processes of the same graphsense-lib version. Configure
-    it under environments.<env>.sync; run one daemon per currency (-c) or
+    it under environments.<env>.sync; run one daemon per network (-c) or
     per channel (--channel).
     """
     from .jobs import JobRunner
@@ -128,12 +128,12 @@ def run(ctx, env: str, channel: str, once: bool, only):
 @sync.command("status")
 @require_environment()
 def status(env: str):
-    """Show every configured currency: owner, pause, heights, last result."""
+    """Show every configured network: owner, pause, heights, last result."""
     from rich.table import Table
 
     store = _store(env)
     sync_cfg = get_config().get_environment(env).sync
-    currencies = sorted(sync_cfg.currencies) if sync_cfg else []
+    networks = sorted(sync_cfg.networks) if sync_cfg else []
 
     daemons = Table(title=f"sync daemons ({env})")
     for col in ("id", "channel", "host", "version", "up since", "running"):
@@ -149,9 +149,9 @@ def status(env: str):
         )
     console.print(daemons)
 
-    table = Table(title=f"sync currencies ({env})")
+    table = Table(title=f"sync networks ({env})")
     for col in (
-        "currency",
+        "network",
         "channel",
         "state",
         "node tip",
@@ -163,10 +163,10 @@ def status(env: str):
         "next cycle",
     ):
         table.add_column(col)
-    for currency in currencies:
-        ccfg = sync_cfg.currencies[currency]
-        st = store.read_status(currency) or {}
-        pause = store.get_pause(currency)
+    for network in networks:
+        ccfg = sync_cfg.networks[network]
+        st = store.read_status(network) or {}
+        pause = store.get_pause(network)
         if not ccfg.enabled:
             state = "disabled"
         elif pause is not None:
@@ -176,7 +176,7 @@ def status(env: str):
             )
         elif st.get("running"):
             state = f"running {st['running']}"
-        elif store.claim_owner(currency) is None:
+        elif store.claim_owner(network) is None:
             state = "no daemon"
         elif st.get("failures"):
             state = f"retrying ({st['failures']} failed)"
@@ -185,7 +185,7 @@ def status(env: str):
         raw, target = st.get("raw"), st.get("target")
         behind = str(target - raw) if raw is not None and target is not None else ""
         table.add_row(
-            currency,
+            network,
             ccfg.channel,
             state,
             _fmt_int(st.get("node_tip")),
@@ -211,7 +211,7 @@ def status(env: str):
     "Default: until `sync resume`.",
 )
 def pause(env: str, currency: str, reason: str, duration: Optional[str]):
-    """Stop starting new jobs for a currency. A running job finishes first."""
+    """Stop starting new jobs for a network. A running job finishes first."""
     seconds = _parse_duration(duration) if duration else None
     by = os.environ.get("USER") or "unknown"
     _store(env).pause(currency, reason, by=by, seconds=seconds)

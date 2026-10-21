@@ -1,9 +1,9 @@
-"""Shared state of the sync daemons: who runs which currency, what is paused,
-and the last status of every currency.
+"""Shared state of the sync daemons: who runs which network, what is paused,
+and the last status of every network.
 
 None of this protects data. Two jobs on one keyspace are already kept apart by
 the per-keyspace ingest/delta-update locks (`utils/locking.py`); the claim here
-only keeps two daemons from *scheduling* the same currency. That is why a claim
+only keeps two daemons from *scheduling* the same network. That is why a claim
 may be a lease with a TTL while the locks deliberately are not: a claim that
 expires under a live daemon at worst makes both daemons start a job, and one of
 them gets lock contention (exit 911).
@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 from filelock import FileLock
 
-# Long enough to survive a slow scheduler tick, short enough that a currency
+# Long enough to survive a slow scheduler tick, short enough that a network
 # moved to another channel (or orphaned by a dead daemon) is picked up quickly.
 CLAIM_TTL_SECONDS = 120
 DAEMON_TTL_SECONDS = 60
@@ -44,34 +44,34 @@ def new_daemon_id(channel: str) -> str:
 
 class StateStore(ABC):
     @abstractmethod
-    def claim(self, currency: str, owner: str) -> bool:
-        """Take the currency, or extend our claim on it. False if another
+    def claim(self, network: str, owner: str) -> bool:
+        """Take the network, or extend our claim on it. False if another
         daemon holds it."""
 
     @abstractmethod
-    def release(self, currency: str, owner: str) -> None:
-        """Give the currency up, if we hold it."""
+    def release(self, network: str, owner: str) -> None:
+        """Give the network up, if we hold it."""
 
     @abstractmethod
-    def claim_owner(self, currency: str) -> Optional[str]: ...
+    def claim_owner(self, network: str) -> Optional[str]: ...
 
     @abstractmethod
     def pause(
-        self, currency: str, reason: str, by: str, seconds: Optional[int] = None
+        self, network: str, reason: str, by: str, seconds: Optional[int] = None
     ) -> None: ...
 
     @abstractmethod
-    def resume(self, currency: str) -> bool:
-        """Lift a pause. False if the currency was not paused."""
+    def resume(self, network: str) -> bool:
+        """Lift a pause. False if the network was not paused."""
 
     @abstractmethod
-    def get_pause(self, currency: str) -> Optional[dict]: ...
+    def get_pause(self, network: str) -> Optional[dict]: ...
 
     @abstractmethod
-    def write_status(self, currency: str, status: dict) -> None: ...
+    def write_status(self, network: str, status: dict) -> None: ...
 
     @abstractmethod
-    def read_status(self, currency: str) -> Optional[dict]: ...
+    def read_status(self, network: str) -> Optional[dict]: ...
 
     @abstractmethod
     def announce_daemon(self, daemon_id: str, info: dict) -> None:
@@ -105,44 +105,44 @@ class MemoryStateStore(StateStore):
     def _set(self, key, value, ttl=None):
         self._data[key] = (value, None if ttl is None else self._clock() + ttl)
 
-    def claim(self, currency, owner):
+    def claim(self, network, owner):
         with self._lock:
-            current = self._get(("claim", currency))
+            current = self._get(("claim", network))
             if current not in (None, owner):
                 return False
-            self._set(("claim", currency), owner, CLAIM_TTL_SECONDS)
+            self._set(("claim", network), owner, CLAIM_TTL_SECONDS)
             return True
 
-    def release(self, currency, owner):
+    def release(self, network, owner):
         with self._lock:
-            if self._get(("claim", currency)) == owner:
-                del self._data[("claim", currency)]
+            if self._get(("claim", network)) == owner:
+                del self._data[("claim", network)]
 
-    def claim_owner(self, currency):
+    def claim_owner(self, network):
         with self._lock:
-            return self._get(("claim", currency))
+            return self._get(("claim", network))
 
-    def pause(self, currency, reason, by, seconds=None):
+    def pause(self, network, reason, by, seconds=None):
         with self._lock:
-            self._set(("pause", currency), _pause_record(reason, by, seconds), seconds)
+            self._set(("pause", network), _pause_record(reason, by, seconds), seconds)
 
-    def resume(self, currency):
+    def resume(self, network):
         with self._lock:
-            found = self._get(("pause", currency)) is not None
-            self._data.pop(("pause", currency), None)
+            found = self._get(("pause", network)) is not None
+            self._data.pop(("pause", network), None)
             return found
 
-    def get_pause(self, currency):
+    def get_pause(self, network):
         with self._lock:
-            return self._get(("pause", currency))
+            return self._get(("pause", network))
 
-    def write_status(self, currency, status):
+    def write_status(self, network, status):
         with self._lock:
-            self._set(("status", currency), dict(status))
+            self._set(("status", network), dict(status))
 
-    def read_status(self, currency):
+    def read_status(self, network):
         with self._lock:
-            return self._get(("status", currency))
+            return self._get(("status", network))
 
     def announce_daemon(self, daemon_id, info):
         with self._lock:
@@ -208,42 +208,42 @@ class FileStateStore(StateStore):
         except FileNotFoundError:
             return False
 
-    def claim(self, currency, owner):
-        path = self._path("claim", currency)
+    def claim(self, network, owner):
+        path = self._path("claim", network)
         with self._locked(path):
             if self._read(path) not in (None, owner):
                 return False
             self._write(path, owner, CLAIM_TTL_SECONDS)
             return True
 
-    def release(self, currency, owner):
-        path = self._path("claim", currency)
+    def release(self, network, owner):
+        path = self._path("claim", network)
         with self._locked(path):
             if self._read(path) == owner:
                 self._delete(path)
 
-    def claim_owner(self, currency):
-        return self._read(self._path("claim", currency))
+    def claim_owner(self, network):
+        return self._read(self._path("claim", network))
 
-    def pause(self, currency, reason, by, seconds=None):
+    def pause(self, network, reason, by, seconds=None):
         self._write(
-            self._path("pause", currency), _pause_record(reason, by, seconds), seconds
+            self._path("pause", network), _pause_record(reason, by, seconds), seconds
         )
 
-    def resume(self, currency):
-        path = self._path("pause", currency)
+    def resume(self, network):
+        path = self._path("pause", network)
         found = self._read(path) is not None
         self._delete(path)
         return found
 
-    def get_pause(self, currency):
-        return self._read(self._path("pause", currency))
+    def get_pause(self, network):
+        return self._read(self._path("pause", network))
 
-    def write_status(self, currency, status):
-        self._write(self._path("status", currency), dict(status))
+    def write_status(self, network, status):
+        self._write(self._path("status", network), dict(status))
 
-    def read_status(self, currency):
-        return self._read(self._path("status", currency))
+    def read_status(self, network):
+        return self._read(self._path("status", network))
 
     def announce_daemon(self, daemon_id, info):
         self._write(self._path("daemon", daemon_id), dict(info), DAEMON_TTL_SECONDS)
@@ -289,36 +289,36 @@ class RedisStateStore(StateStore):
     def _k(self, *parts) -> str:
         return self._prefix + ":".join(parts)
 
-    def claim(self, currency, owner):
-        key = self._k("claim", currency)
+    def claim(self, network, owner):
+        key = self._k("claim", network)
         if self._r.set(key, owner, nx=True, ex=CLAIM_TTL_SECONDS):
             return True
         return bool(self._extend(keys=[key], args=[owner, CLAIM_TTL_SECONDS]))
 
-    def release(self, currency, owner):
-        self._delete(keys=[self._k("claim", currency)], args=[owner])
+    def release(self, network, owner):
+        self._delete(keys=[self._k("claim", network)], args=[owner])
 
-    def claim_owner(self, currency):
-        return self._r.get(self._k("claim", currency))
+    def claim_owner(self, network):
+        return self._r.get(self._k("claim", network))
 
-    def pause(self, currency, reason, by, seconds=None):
+    def pause(self, network, reason, by, seconds=None):
         self._r.set(
-            self._k("pause", currency),
+            self._k("pause", network),
             json.dumps(_pause_record(reason, by, seconds)),
             ex=seconds,
         )
 
-    def resume(self, currency):
-        return bool(self._r.delete(self._k("pause", currency)))
+    def resume(self, network):
+        return bool(self._r.delete(self._k("pause", network)))
 
-    def get_pause(self, currency):
-        return _loads(self._r.get(self._k("pause", currency)))
+    def get_pause(self, network):
+        return _loads(self._r.get(self._k("pause", network)))
 
-    def write_status(self, currency, status):
-        self._r.set(self._k("status", currency), json.dumps(status))
+    def write_status(self, network, status):
+        self._r.set(self._k("status", network), json.dumps(status))
 
-    def read_status(self, currency):
-        return _loads(self._r.get(self._k("status", currency)))
+    def read_status(self, network):
+        return _loads(self._r.get(self._k("status", network)))
 
     def announce_daemon(self, daemon_id, info):
         self._r.set(
