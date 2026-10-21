@@ -666,9 +666,10 @@ def _validate_tagpack_file(
     )
     logger.info(f"Validating {tagpack_file}")
     tagpack.validate()
-    # verify valid blocknetwork addresses using internal checksum
+    # verify valid blocknetwork addresses using internal checksum; validate is
+    # strict, sync/insert never runs this check
     if not no_address_validation:
-        tagpack.verify_addresses()
+        tagpack.verify_addresses(strict=True)
     actors = set()
     header_actor = tagpack.all_header_fields.get("actor")
     if header_actor:

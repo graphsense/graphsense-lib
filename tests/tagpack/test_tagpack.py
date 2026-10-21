@@ -456,6 +456,44 @@ def test_verify_addresses_uses_shortened_source_name(tagpack, caplog):
     assert "..." in src
 
 
+def test_verify_addresses_strict_raises_on_invalid(tagpack):
+    with pytest.raises(ValidationError, match="possible invalid address"):
+        tagpack.verify_addresses(strict=True)
+
+
+def test_verify_addresses_strict_raises_on_whitespace(tagpack):
+    tagpack.contents["tags"] = [
+        {"label": "binance", "address": "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s "},
+    ]
+    with pytest.raises(ValidationError, match="contain whitespace"):
+        tagpack.verify_addresses(strict=True)
+
+
+def test_verify_addresses_strict_passes_valid(tagpack):
+    tagpack.contents["tags"] = [
+        {"label": "binance", "address": "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s"},
+    ]
+    assert tagpack.verify_addresses(strict=True) is None
+
+
+def test_verify_addresses_checks_token_tags_by_network(tagpack):
+    # A USDT tag on TRX is checked against the TRX rules, not skipped as an
+    # unsupported currency; the hex form is not a valid TRX address.
+    tagpack.contents["tags"] = [
+        {
+            "label": "usdt on tron",
+            "address": "0xa614f803b6fd780986a42c78ec9c7f77e6ded13c",
+            "network": "TRX",
+            "currency": "USDT",
+        },
+    ]
+    with pytest.raises(ValidationError, match=r"\[TRX\]"):
+        tagpack.verify_addresses(strict=True)
+
+    tagpack.contents["tags"][0]["address"] = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    assert tagpack.verify_addresses(strict=True) is None
+
+
 def test_validate_no_actor_warning_with_missing_uri_does_not_fail(tagpack, caplog):
     tagpack.uri = None
     assert tagpack.validate() is True

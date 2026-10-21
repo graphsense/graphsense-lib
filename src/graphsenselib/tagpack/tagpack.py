@@ -1097,21 +1097,29 @@ class TagPack(object):
             logger.warning(msg)
         return True
 
-    def verify_addresses(self):
+    def verify_addresses(self, strict=False):
         """
         Verify valid blockchain addresses. In
         general, this is done by decoding the address (e.g. to base58) and
         calculating a checksum using the first bytes of the decoded value,
         which should match with the last bytes of the decoded value.
+
+        The check uses the tag's network (falling back to its currency), so a
+        token tag such as network TRX / currency USDT is checked as TRX.
+        With ``strict``, invalid addresses and addresses with whitespace raise
+        a ValidationError instead of being logged as warnings.
         """
 
         unsupported = defaultdict(set)
         invalid = defaultdict(list)  # cupper -> [address, ...]
         whitespace_addrs = []
         for tag in self.get_unique_tags():
-            currency = tag.all_fields.get("currency", "").lower()
+            fields = tag.all_fields
+            currency = str(
+                fields.get("network") or fields.get("currency") or ""
+            ).lower()
             cupper = currency.upper()
-            address = tag.all_fields.get("address")
+            address = fields.get("address")
             if address is not None:
                 if len(address) != len(address.strip()):
                     whitespace_addrs.append(address)
@@ -1133,9 +1141,11 @@ class TagPack(object):
 
         src_prefix = self._source_prefix()
 
+        problems = []
+
         if whitespace_addrs:
             total, samples, extra = _fmt_summary(whitespace_addrs, repr_items=True)
-            logger.warning(
+            problems.append(
                 f"{src_prefix}{total} address(es) contain whitespace: {samples}{extra}"
             )
 
@@ -1143,9 +1153,14 @@ class TagPack(object):
             all_invalid = [a for addrs in invalid.values() for a in addrs]
             currencies = ", ".join(sorted(invalid.keys()))
             total, samples, extra = _fmt_summary(all_invalid)
-            logger.warning(
+            problems.append(
                 f"{src_prefix}{total} possible invalid address(es) [{currencies}]: {samples}{extra}"
             )
+
+        if strict and problems:
+            raise ValidationError("; ".join(problems))
+        for problem in problems:
+            logger.warning(problem)
 
         if unsupported:
             total_unsupported = sum(len(v) for v in unsupported.values())
