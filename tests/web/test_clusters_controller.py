@@ -460,6 +460,24 @@ def test_search_cluster_neighbors(client):
     ]
 
 
+def test_search_cluster_neighbors_unsupported_key_returns_400(client):
+    path = (
+        "/{currency}/clusters/{cluster}/search"
+        "?direction=out&key={key}&value={value}&depth=2&breadth=10"
+    )
+    status, body = raw_request(
+        client,
+        path,
+        currency="btc",
+        cluster=entityWithTags.entity,
+        key="actors",
+        value="some_actor",
+    )
+
+    assert status == 400
+    assert "Unsupported search key 'actors'" in body
+
+
 def test_list_cluster_txs(client):
     path = "/{currency}/clusters/{cluster}/txs"
     path_with_pagesize = path + "?pagesize={pagesize}&page={page}"

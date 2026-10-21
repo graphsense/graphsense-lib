@@ -265,6 +265,12 @@ async def search_cluster_neighbors(
         def match_neighbor(neighbor):
             return str(neighbor.entity.entity) in value
 
+    else:
+        raise BadUserInputException(
+            f"Unsupported search key '{key}'; expected one of: category, "
+            "total_received, balance, addresses, entities"
+        )
+
     async def list_neighbors(entity):
         pagesize = max(breadth, len(targets)) if targets else breadth
         result = await list_cluster_neighbors(
