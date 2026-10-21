@@ -167,6 +167,10 @@ class Subscription(BaseModel):
     check_errors: int = 0
     # Unread feed items of this subscription (on networks the caller may see).
     unread: int = 0
+    # How busy the address is: its transactions a day (all of them, not only
+    # those the filters let through), as seen by the poller. None until about
+    # an hour after the subscription was created.
+    transactions_per_day: int | None = None
 
 
 class SubscriptionPage(BaseModel):
