@@ -310,6 +310,19 @@ def test_hourly_is_refused_here():
     assert seen == []
 
 
+def test_locale_is_forwarded_and_checked():
+    client, seen = make_client()
+    client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "locale": "de"},
+    )
+    assert body_of(seen[0])["locale"] == "de"
+    client.patch("/notifications/subscriptions/7", json={"locale": "en-GB"})
+    assert body_of(seen[1]) == {"locale": "en-GB"}
+    r = client.patch("/notifications/subscriptions/7", json={"locale": "deutsch!"})
+    assert r.status_code == 422 and len(seen) == 2
+
+
 def test_timezone_on_update_is_forwarded():
     client, seen = make_client()
     client.patch("/notifications/subscriptions/7", json={"timezone": "Europe/Vienna"})

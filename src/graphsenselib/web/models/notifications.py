@@ -48,6 +48,10 @@ MAX_ID = 2**63 - 1
 Id = Annotated[int, Field(ge=1, le=MAX_ID)]
 
 
+# A BCP 47 language tag as browsers give it: "de", "en-GB", "de_AT".
+LOCALE_PATTERN = r"^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$"
+
+
 def _offered(v: Frequency | None) -> Frequency | None:
     if v == Frequency.hourly:
         raise ValueError("hourly is not offered at the moment: use instant or daily")
@@ -121,6 +125,10 @@ class SubscriptionCreate(_Strict):
     # When given it becomes the user's timezone: times in mails, the hour
     # daily digests go out. Unset keeps the current one (initially UTC).
     timezone: str | None = Field(default=None, max_length=64)
+    # The dashboard's language ("de"). When given, mails are written in it;
+    # unset keeps the current one, and with none the portal uses the
+    # account's Keycloak language.
+    locale: str | None = Field(default=None, max_length=16, pattern=LOCALE_PATTERN)
 
     _check_timezone = field_validator("timezone")(_known_timezone)
     _check_label = field_validator("label")(_no_control_chars)
@@ -140,6 +148,8 @@ class SubscriptionUpdate(_Strict):
     paused: bool | None = None
     # The browser's IANA zone, as on create: becomes the user's timezone.
     timezone: str | None = Field(default=None, max_length=64)
+    # The dashboard's language, as on create: mails are written in it.
+    locale: str | None = Field(default=None, max_length=16, pattern=LOCALE_PATTERN)
 
     _check_label = field_validator("label")(_no_control_chars)
     _check_frequency = field_validator("frequency")(_offered)
