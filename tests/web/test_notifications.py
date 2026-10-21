@@ -274,6 +274,27 @@ def test_email_switch_is_forwarded():
     assert body_of(seen[1]) == {"email": True}
 
 
+def test_hourly_is_refused_here():
+    client, seen = make_client()
+    created = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "frequency": "hourly"},
+    )
+    updated = client.patch(
+        "/notifications/subscriptions/7", json={"frequency": "hourly"}
+    )
+    assert (created.status_code, updated.status_code) == (422, 422)
+    assert seen == []
+
+
+def test_timezone_on_update_is_forwarded():
+    client, seen = make_client()
+    client.patch("/notifications/subscriptions/7", json={"timezone": "Europe/Vienna"})
+    assert body_of(seen[0]) == {"timezone": "Europe/Vienna"}
+    r = client.patch("/notifications/subscriptions/7", json={"timezone": "Mars/X"})
+    assert r.status_code == 422 and len(seen) == 1
+
+
 @pytest.mark.parametrize("label", ["two\nlines", "tab\there", "del\x7f"])
 def test_label_with_control_chars_is_rejected_here(label):
     client, seen = make_client()

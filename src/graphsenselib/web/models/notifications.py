@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 class Frequency(str, Enum):
     instant = "instant"
+    # Not offered at the moment: refused in requests (_offered), still valid
+    # in answers for subscriptions that have it.
     hourly = "hourly"
     daily = "daily"
 
@@ -44,6 +46,12 @@ class _Strict(BaseModel):
 # Ids are Postgres bigints.
 MAX_ID = 2**63 - 1
 Id = Annotated[int, Field(ge=1, le=MAX_ID)]
+
+
+def _offered(v: Frequency | None) -> Frequency | None:
+    if v == Frequency.hourly:
+        raise ValueError("hourly is not offered at the moment: use instant or daily")
+    return v
 
 
 def _no_control_chars(v: str | None) -> str | None:
@@ -116,6 +124,7 @@ class SubscriptionCreate(_Strict):
 
     _check_timezone = field_validator("timezone")(_known_timezone)
     _check_label = field_validator("label")(_no_control_chars)
+    _check_frequency = field_validator("frequency")(_offered)
 
 
 class SubscriptionUpdate(_Strict):
@@ -129,8 +138,12 @@ class SubscriptionUpdate(_Strict):
     # true pauses; false resumes (stays paused with no_access while the
     # network is not allowed).
     paused: bool | None = None
+    # The browser's IANA zone, as on create: becomes the user's timezone.
+    timezone: str | None = Field(default=None, max_length=64)
 
     _check_label = field_validator("label")(_no_control_chars)
+    _check_frequency = field_validator("frequency")(_offered)
+    _check_timezone = field_validator("timezone")(_known_timezone)
 
 
 class Subscription(BaseModel):
@@ -247,3 +260,4 @@ class UserSettingsUpdate(_Strict):
     timezone: str | None = None
 
     _check_timezone = field_validator("timezone")(_known_timezone)
+    _check_frequency = field_validator("default_frequency")(_offered)
