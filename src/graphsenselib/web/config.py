@@ -3,7 +3,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.config.tagstore_config import TagStoreReaderConfig
-from pydantic import ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings
 
 
@@ -183,6 +190,17 @@ class NotificationsConfig(BaseSettings):
         "identity and the roles it gates networks with. Nothing else is "
         "forwarded.",
     )
+    service_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Shared secret sent to the service with every forwarded "
+        "call (in service_token_header), so it trusts the identity headers "
+        "only from this app. Must equal the service's identity.service_token. "
+        "Unset or blank: not sent.",
+    )
+    service_token_header: str = Field(
+        default="X-Service-Token",
+        description="Header carrying service_token.",
+    )
     include_in_schema: bool = Field(
         default=False,
         description="List the routes in the OpenAPI spec (and so in the "
@@ -190,6 +208,14 @@ class NotificationsConfig(BaseSettings):
         "clients, but still answer any caller the gateway lets through (API "
         "key, or login with the notifications role). Beta, may change.",
     )
+
+    @field_validator("service_token", mode="before")
+    @classmethod
+    def _blank_token_is_none(cls, v: Any) -> Any:
+        # Compose passes an unset token as "": not sent, not an empty secret.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     @model_validator(mode="after")
     def _url_when_enabled(self) -> "NotificationsConfig":

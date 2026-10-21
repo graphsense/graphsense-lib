@@ -111,6 +111,12 @@ class NotificationsClient:
             for name in self.config.forward_headers
             if (value := request.headers.get(name)) is not None
         }
+        # Proves to the service that the identity comes from us; set last,
+        # so a client's own copy can never get through.
+        if self.config.service_token is not None:
+            headers[self.config.service_token_header] = (
+                self.config.service_token.get_secret_value()
+            )
         try:
             response = await self.client.request(
                 method,

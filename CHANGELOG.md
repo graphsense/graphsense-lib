@@ -22,6 +22,7 @@ Use one changelog file, but separate entries by track in each release window.
   - A service that does not answer in time is a 504 (unreachable stays 502), and a 2xx answer that is not JSON is a 502. Concurrent `/capabilities` calls share one `GET /meta` instead of each waiting on a slow service.
   - `hourly` is refused in requests (422, before forwarding) while the dashboard doesn't offer it; existing hourly subscriptions still show as hourly. PATCH takes an optional `timezone` like create (the browser's zone becomes the user's).
   - Subscriptions carry `transactions_per_day` (optional): how busy the address is, as the service counts it.
+  - `notifications.service_token` (and `service_token_header`, default `X-Service-Token`): sent with every forwarded call so the service trusts the identity headers only from gs-rest (its `identity.service_token`). Note for deployments: gs-rest versions before this one refuse the unknown key, so set it only together with this version.
 - **`/capabilities` lists the optional services of the deployment** in a new `services` field (Python client: `Capabilities.services`, model `ServiceInfo`): `name`, `available`, `version`, `api` (contract version) and `beta`. Address notifications appear there when enabled, read from the service's `GET /meta` (cached for a minute; `available: false` when it does not answer). A service absent from the list is not offered, and unknown names must be ignored. Without optional services the field is an empty list.
 
 #### Fixed

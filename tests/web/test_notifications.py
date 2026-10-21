@@ -73,7 +73,7 @@ GATEWAY_HEADERS = {
 }
 
 
-def make_client(answer=None, include_in_schema=False, enabled=True):
+def make_client(answer=None, include_in_schema=False, enabled=True, service_token=None):
     """App with the routes behind a recording mock service. ``answer(request)``
     overrides the service's response."""
     seen: list[httpx.Request] = []
@@ -118,7 +118,10 @@ def make_client(answer=None, include_in_schema=False, enabled=True):
     app = FastAPI()
     _register_exception_handlers(app)
     config = NotificationsConfig(
-        enabled=enabled, url=SERVICE_URL, include_in_schema=include_in_schema
+        enabled=enabled,
+        url=SERVICE_URL,
+        include_in_schema=include_in_schema,
+        service_token=service_token,
     )
     register_notifications_routes(
         app,
@@ -155,6 +158,26 @@ def test_only_identity_and_roles_headers_are_forwarded():
     assert forwarded["x-user-roles"] == "currency-bnb,ikn-dashboard"
     for header in ("authorization", "cookie", "x-consumer-username"):
         assert header not in forwarded
+
+
+def test_the_service_token_is_sent_and_a_clients_copy_is_not():
+    client, seen = make_client(service_token="s3cret")
+    client.get(
+        "/notifications/subscriptions",
+        headers={**GATEWAY_HEADERS, "X-Service-Token": "forged"},
+    )
+    assert seen[0].headers["x-service-token"] == "s3cret"
+    client, seen = make_client()
+    client.get(
+        "/notifications/subscriptions",
+        headers={**GATEWAY_HEADERS, "X-Service-Token": "forged"},
+    )
+    assert "x-service-token" not in seen[0].headers
+
+
+def test_a_blank_service_token_is_none():
+    config = NotificationsConfig(enabled=True, url=SERVICE_URL, service_token=" ")
+    assert config.service_token is None
 
 
 def test_missing_identity_is_not_invented():
