@@ -289,6 +289,7 @@ def export_delta(
     info: bool = False,
     file_batch_size: Optional[int] = None,
     source_max_workers: Optional[int] = None,
+    reorg_backoff_blocks: Optional[int] = None,
 ):
     if currency not in PIPELINE_REGISTRY:
         raise ValueError(f"{currency} not supported by ingest module")
@@ -355,7 +356,7 @@ def export_delta(
             if name is not None:
                 lock_stack.enter_context(create_lock(name, disabled=lock_disabled))
 
-        backoff = get_reorg_backoff_blocks(currency)
+        backoff = get_reorg_backoff_blocks(currency, override=reorg_backoff_blocks)
 
         # Auto-detect start_block. In append mode every registered sink must
         # agree on its highest block — otherwise writing forward from one
@@ -396,7 +397,10 @@ def export_delta(
                 )
 
                 if start_block is None:
-                    if agreed_height == highest_block_node:
+                    # `>=`, not `==`: a node that restarted or is resyncing can
+                    # report a tip (minus backoff) below what we already have.
+                    # That is "nothing new yet", not an error.
+                    if agreed_height >= highest_block_node:
                         logger.info(
                             f"Data already present up to highest block "
                             f"{agreed_height:,}, no need to append."

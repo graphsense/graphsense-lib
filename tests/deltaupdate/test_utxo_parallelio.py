@@ -236,9 +236,6 @@ def test_factory_passes_pool_to_utxo_v2():
     updater = UpdaterFactory().get_updater(
         _DuConfig(),
         _StubDb(),
-        version=2,
-        write_new=False,
-        write_dirty=False,
         pedantic=False,
         write_batch=10,
         patch_mode=False,
@@ -260,9 +257,6 @@ def test_factory_drops_pool_for_utxo_tx_mode():
     updater = UpdaterFactory().get_updater(
         _DuConfig(),
         _StubDb(),
-        version=2,
-        write_new=False,
-        write_dirty=False,
         pedantic=False,
         write_batch=1,
         patch_mode=False,

@@ -572,6 +572,124 @@ graphsense-cli delta-update patch-exchange-rates \
     --end-block 200000
 ```
 
+### Continuous Sync
+
+`sync run` replaces the per-currency cron jobs (`ingest from-node`, then
+`delta-update update`). It is one long-running daemon that polls each node
+and runs ingest and the delta update as soon as there is something new, as
+child processes. Claims, pauses and status live in Redis when
+`use_redis_locks`/`redis_url` are set, otherwise in files under
+`/tmp/graphsense-sync/<env>`. Without Redis, daemons in separate containers
+need that directory, and `/tmp` for the jobs' file locks, on a shared volume.
+
+Ctrl-C (or SIGTERM, e.g. `docker stop`) stops starting jobs, and running jobs
+stop cleanly after their current chunk. A second signal lists what is still
+running. A third kills the jobs: safe for the data, but a killed job's Redis
+lock stays behind until deleted (`redis-cli DEL`).
+
+How a currency is ingested and updated belongs in its keyspace config, so a
+manual run, a cron job and the daemon all do the same. The flags of the same
+name still override it for one run:
+
+```yaml
+environments:
+  prod:
+    keyspaces:
+      eth:
+        ingest_config:
+          exchange_rates_provider: coingecko
+          sinks: [cassandra, delta]       # default --sinks
+          auto_compact: "1w;sunday"       # compact on Sundays, at most weekly
+          auto_compact_last_n: 16
+        delta_update_config:
+          forward_fill_rates: true
+          write_batch_size: 60
+          parallel_workers: 8
+      zec:
+        ingest_config:
+          sinks: [cassandra, delta]
+          reorg_backoff_blocks: 24        # default 150; see CHANGELOG
+        delta_update_config:
+          forward_fill_rates: true
+          write_batch_size: 40
+          parallel_workers: 4
+    sync:
+      poll_seconds: 30
+      max_parallel_currencies: 4
+      max_parallel_delta_updates: 2
+      max_parallel_compactions: 1
+      rates_every_minutes: 30             # exchange rates with every Nth ingest only
+      currencies:
+        eth:
+          lag_alert_minutes: 30
+        zec: {}
+```
+
+The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates`,
+`--no-staleness-check` and `--no-auto-compact` itself. It compacts in a step
+of its own (`ingest delta-lake auto-compact`, checked every
+`compaction_check_every_minutes`, timeout `compaction_timeout_minutes`), so a
+long compaction does not hit the ingest timeout. `ingest_args` /
+`delta_update_args` take extra flags for the rare case the config has no
+field for.
+
+Run one daemon per currency, each in its own container (`-c`). A daemon
+runs its currency's jobs one after another, so the container's memory limit
+works like `docker run -m` per job does today. Its version is the image tag,
+so a canary is one service on a newer tag. Settings from the same `.graphsense.yaml`:
+
+```yaml
+# docker compose
+x-sync: &sync
+  restart: unless-stopped
+  stop_grace_period: 3m           # lets running jobs stop cleanly
+  mem_limit: 45g
+  environment: {AWS_EC2_METADATA_DISABLED: "true"}
+  volumes:
+    - ~/.graphsense.yaml:/home/graphsense/.graphsense.yaml:ro
+    - /srv/graphsense-sync:/tmp/graphsense-sync   # only without Redis
+
+services:
+  sync-btc:
+    <<: *sync
+    image: ghcr.io/graphsense/graphsense-lib:v26.10.2
+    command: graphsense-cli -v sync run -e prod -c btc
+  sync-eth:
+    <<: *sync
+    image: ghcr.io/graphsense/graphsense-lib:v26.10.2
+    command: graphsense-cli -v sync run -e prod -c eth
+  sync-zec:                       # canary: a newer tag
+    <<: *sync
+    image: ghcr.io/graphsense/graphsense-lib:v26.11.0-rc.1
+    command: graphsense-cli -v sync run -e prod -c zec
+```
+
+The `max_parallel_*` limits count within one daemon, so with one currency
+per daemon they limit nothing, and delta updates of different currencies can
+overlap, as cron jobs that start at the same minute do. Without Redis, mount
+the same state directory into every daemon and into wherever you run `sync
+status`/`pause`/`resume`, or they each see only their own state.
+
+Several currencies can also share a daemon: give them a `channel` and run
+`sync run --channel <name>`. Its jobs then share one memory limit, so size
+the container for what can run at once.
+
+Switch a currency's version only while its delta update has no pending WAL
+record (written by another version, the record blocks the next run until
+replayed with `--force-wal-replay`), and go back to an older version only if
+the newer one's schema migrations are backward compatible.
+
+```bash
+graphsense-cli sync status -e prod
+graphsense-cli sync pause -e prod -c zec --reason "node resync" --for 6h
+graphsense-cli sync resume -e prod -c zec
+graphsense-cli sync run -e prod --once -c zec   # one cycle, then exit
+```
+
+Before every ingest, the newest raw block hashes are compared with the
+node's. A mismatch means a reorg went deeper than the reorg backoff, and the
+currency is paused until someone has repaired raw and runs `sync resume`.
+
 ### Exchange Rates
 
 Fetch and ingest exchange rates from various sources.
