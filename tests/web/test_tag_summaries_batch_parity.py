@@ -71,6 +71,7 @@ class FakeTagstore:
         page_size: Optional[int],
         groups: List[str],
         network: Optional[str] = None,
+        scoped_identifier=None,
     ) -> List[TagPublic]:
         return list(self.tags_by_subject.get(subject_id.strip(), []))
 

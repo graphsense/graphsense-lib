@@ -61,7 +61,9 @@ class FakeTagstore:
     def __init__(self, best_by_public_id):
         self.best_by_public_id = best_by_public_id
 
-    async def get_tags_by_subjectid(self, address, offset, limit, groups):
+    async def get_tags_by_subjectid(
+        self, address, offset, limit, groups, scoped_identifier=None
+    ):
         return []
 
     async def get_tags_by_subjectids(self, subject_ids, groups, network=None):

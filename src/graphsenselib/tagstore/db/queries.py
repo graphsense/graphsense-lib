@@ -5,10 +5,20 @@ from datetime import timezone
 from enum import IntEnum
 from functools import wraps
 from json import JSONDecodeError
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
+from sqlalchemy import (
+    BigInteger,
+    String,
+    and_,
+    asc,
+    bindparam,
+    desc,
+    distinct,
+    func,
+    or_,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -319,14 +329,23 @@ def _get_tags_by_subjectid_stmt(
     page_size: Optional[int],
     groups: List[str],
     network: Optional[str],
+    scoped_identifier: Optional[Tuple[str, str]] = None,
 ):
+    """``scoped_identifier`` is an (identifier, network) pair matched in the
+    same query, but only against tags of that network."""
+    match = Tag.identifier == identifier
+    if scoped_identifier is not None:
+        scoped_id, scoped_network = scoped_identifier
+        match = or_(
+            match, and_(Tag.identifier == scoped_id, Tag.network == scoped_network)
+        )
     q = (
         select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(Tag.identifier == identifier)
+        .where(match)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
@@ -939,12 +958,18 @@ class TagstoreDbAsync:
         page_size: int,
         groups: List[str],
         network: Optional[str] = None,
+        scoped_identifier: Optional[Tuple[str, str]] = None,
         session=None,
     ) -> List[Tag]:
         return (
             await session.exec(
                 _get_tags_by_subjectid_stmt(
-                    identifier, offset, page_size, groups, network=network
+                    identifier,
+                    offset,
+                    page_size,
+                    groups,
+                    network=network,
+                    scoped_identifier=scoped_identifier,
                 )
             )
         ).unique()
@@ -957,14 +982,21 @@ class TagstoreDbAsync:
         page_size: Optional[int],
         groups: List[str],
         network: Optional[str] = None,
+        scoped_identifier: Optional[Tuple[str, str]] = None,
         session=None,
     ) -> List[TagPublic]:
+        if scoped_identifier is not None:
+            scoped_identifier = (
+                _normalize_subject_id(scoped_identifier[0]),
+                scoped_identifier[1],
+            )
         results = await self._get_tags_by_subjectid(
             _normalize_subject_id(subject_id),
             offset,
             page_size,
             groups,
             network=network,
+            scoped_identifier=scoped_identifier,
             session=session,
         )
         return [TagPublic.fromDB(t, tp) for t, tp, _ in results]

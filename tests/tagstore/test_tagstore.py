@@ -749,6 +749,82 @@ tags:
 
 
 @pytest.mark.asyncio
+async def test_scoped_identifier_matches_hex_trx_tags_only(
+    db_setup, async_tagstore_db, tmp_path
+):
+    """A TRX address lookup can also match TRX tags stored in their 0x form,
+    in the same query, without picking up EVM-network tags of those bytes."""
+    tron = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    evm = "0xa614f803b6fd780986a42c78ec9c7f77e6ded13c"
+    tagpack_file = tmp_path / "trx_hex_form.yaml"
+    tagpack_file.write_text(
+        f"""
+title: TRX Hex Form TagPack
+creator: Test Creator
+source: http://example.com/trx_hex_form
+confidence: web_crawl
+currency: TRX
+network: TRX
+lastmod: 2021-04-21
+tags:
+- address: {tron}
+  label: trxnative
+- address: {evm}
+  label: trxhexform
+- address: {evm}
+  label: ethsamebytes
+  currency: ETH
+  network: ETH
+"""
+    )
+
+    m_succ, _ = insert_tagpack(
+        db_setup["db_connection_string"],
+        DEFAULT_SCHEMA,
+        str(tagpack_file.resolve()),
+        batch_size=100,
+        public=True,
+        force=False,
+        add_new=False,
+        no_strict_check=True,
+        no_git=True,
+        n_workers=1,
+        no_validation=True,
+        tag_type_default="actor",
+        config=None,
+        update_flag=False,
+    )
+    assert m_succ == 1
+
+    db = async_tagstore_db
+    groups = ["public"]
+    plain = await db.get_tags_by_subjectid(
+        tron, offset=None, page_size=None, groups=groups
+    )
+    assert [t.label for t in plain] == ["trxnative"]
+
+    scoped = await db.get_tags_by_subjectid(
+        tron,
+        offset=None,
+        page_size=None,
+        groups=groups,
+        scoped_identifier=(evm.upper().replace("0X", "0x"), "TRX"),
+    )
+    assert sorted(t.label for t in scoped) == ["trxhexform", "trxnative"]
+
+    first_page = await db.get_tags_by_subjectid(
+        tron, offset=0, page_size=1, groups=groups, scoped_identifier=(evm, "TRX")
+    )
+    second_page = await db.get_tags_by_subjectid(
+        tron, offset=1, page_size=1, groups=groups, scoped_identifier=(evm, "TRX")
+    )
+    assert sorted(t.label for t in first_page + second_page) == [
+        "trxhexform",
+        "trxnative",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_user_reported_tag_lowercases_hex_address(async_tagstore_db):
     db = async_tagstore_db
     checksummed = "0xdAC17F958D2ee523a2206206994597C13D831ec7"

@@ -69,7 +69,12 @@ class MockTagstoreDb:
         return {}
 
     async def get_tags_by_subjectid(
-        self, address: str, offset: int, limit: Optional[int], groups: list[str]
+        self,
+        address: str,
+        offset: int,
+        limit: Optional[int],
+        groups: list[str],
+        scoped_identifier: Optional[tuple[str, str]] = None,
     ) -> list[Any]:
         return []
 

@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, Union, Calla
 
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
-from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.address import address_to_user_format, validate_trx_address
+from graphsenselib.utils.tron import tron_address_to_evm_string
 from graphsenselib.utils.slack import send_message_to_slack
 
 # TODO : add proper type hints for the tagstore once tagstore is migrated to gslib
@@ -69,7 +70,12 @@ class TagstoreProtocol(Protocol):
         self, subject_ids: List[str], groups: List[str], session: Any = None
     ) -> Dict[str, List[Any]]: ...
     async def get_tags_by_subjectid(
-        self, address: str, offset: int, limit: Optional[int], groups: List[str]
+        self,
+        address: str,
+        offset: int,
+        limit: Optional[int],
+        groups: List[str],
+        scoped_identifier: Optional[Tuple[str, str]] = None,
     ) -> List["TagPublic"]: ...  # noqa: F821
     async def get_tags_by_subjectids(
         self,
@@ -287,12 +293,19 @@ class TagsService:
 
         assert page is None or isinstance(page, int)
 
+        # Some TRX tags are stored in their 0x (EVM) form; match those in the
+        # same query, but only TRX tags, not EVM-network tags of that address.
+        scoped_identifier = None
+        if currency.lower() == "trx" and validate_trx_address(address):
+            scoped_identifier = (tron_address_to_evm_string(address), "TRX")
+
         tags = list(
             await self.tagstore.get_tags_by_subjectid(
                 address,
                 page * (pagesize or 0),
                 (pagesize + 1) if pagesize is not None else None,
                 tagstore_groups,
+                scoped_identifier=scoped_identifier,
             )
         )
 
