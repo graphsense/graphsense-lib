@@ -366,6 +366,9 @@ class SyncScheduler:
                     "running": sorted(
                         c for c, rt in self._runtime.items() if _is_running(rt)
                     ),
+                    "networks": sorted(
+                        c for c, rt in self._runtime.items() if rt.claimed
+                    ),
                 },
             )
         except Exception as e:

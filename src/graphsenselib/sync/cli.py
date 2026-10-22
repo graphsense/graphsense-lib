@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import click
+from rich.markup import escape
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config
+from ..config.config import DEFAULT_SYNC_CHANNEL
 from ..utils.console import console
 
 logger = logging.getLogger(__name__)
@@ -75,7 +77,7 @@ class _EnvironmentReloader:
 @require_environment()
 @click.option(
     "--channel",
-    default="stable",
+    default=DEFAULT_SYNC_CHANNEL,
     show_default=True,
     help="Run only the networks whose sync.networks.<c>.channel matches.",
 )
@@ -134,78 +136,105 @@ def status(env: str):
 
 
 def _print_status(env: str, store, only: Optional[str] = None):
-    from rich.table import Table
-
+    """Daemons as two lines each, then one block per network."""
     environment = get_config().get_environment(env)
     sync_cfg = environment.sync
     networks = sorted(sync_cfg.networks) if sync_cfg else []
     if only is not None:
         networks = [n for n in networks if n == only]
 
-    daemons = Table(title=f"sync daemons ({env})")
-    for col in ("id", "channel", "host", "version", "up since", "running"):
-        daemons.add_column(col)
-    for key, info in sorted(store.list_daemons()):
-        daemons.add_row(
-            key,
-            info.get("channel", ""),
-            info.get("host", ""),
-            info.get("version", ""),
-            _fmt_ts(info.get("started_at")),
-            ", ".join(info.get("running", [])),
-        )
-    console.print(daemons)
-
-    table = Table(title=f"sync networks ({env})")
-    for col in (
-        "network",
-        "channel",
-        "state",
-        "node tip",
-        "raw",
-        "behind",
-        "transformed",
-        "WAL",
-        "last result",
-        "last success",
-        "next cycle",
-    ):
-        table.add_column(col)
+    daemons = sorted(store.list_daemons())
+    n = len(daemons)
+    console.print(f"[bold]sync {env}[/bold] · {n} daemon{'' if n == 1 else 's'}")
+    for key, info in daemons:
+        console.print(_daemon_lines(key, info), highlight=False)
     for network in networks:
-        ccfg = sync_cfg.networks[network]
-        st = store.read_status(network) or {}
-        pause = store.get_pause(network)
-        if not ccfg.enabled:
-            state = "disabled"
-        elif pause is not None:
-            until = pause.get("until")
-            state = f"paused ({pause.get('reason')}" + (
-                f", until {_fmt_ts(until)})" if until else ")"
-            )
-        elif st.get("running"):
-            state = f"running {st['running']}"
-        elif store.claim_owner(network) is None:
-            state = "no daemon"
-        elif st.get("failures"):
-            state = f"retrying ({st['failures']} failed)"
-        else:
-            state = "idle"
-        raw, target = st.get("raw"), st.get("target")
-        behind = str(target - raw) if raw is not None and target is not None else ""
-        table.add_row(
-            network,
-            ccfg.channel,
-            state,
-            _fmt_int(st.get("node_tip")),
-            _fmt_int(raw),
-            behind,
-            _fmt_int(st.get("transformed")),
-            _wal_state(env, network, environment.keyspaces.get(network)),
-            _shorten(str(st.get("last_result", ""))),
-            _fmt_ts(st.get("last_success_at")),
-            _fmt_ts(st.get("next_cycle_at")),
+        console.print()
+        console.print(
+            _network_lines(
+                env,
+                network,
+                sync_cfg.networks[network],
+                environment.keyspaces.get(network),
+                store,
+            ),
+            highlight=False,
         )
-    console.print(table)
+
+
+def _daemon_lines(key: str, info: dict) -> str:
+    channel = info.get("channel", "")
+    label = ", ".join(info.get("networks") or []) or f"channel {channel}"
+    first = f"  {escape(label)} · daemon {key} on {info.get('host', '?')}"
+    if channel and channel != DEFAULT_SYNC_CHANNEL and info.get("networks"):
+        first += f", channel {escape(channel)}"
+    second = f"    {_fmt_build(info.get('version', ''))}"
+    if info.get("started_at"):
+        second += f", up {_fmt_duration(time.time() - info['started_at'])}"
+    if info.get("running"):
+        second += f", in a cycle of {', '.join(info['running'])}"
+    return first + "\n" + second
+
+
+def _network_lines(env: str, network: str, ccfg, ks, store) -> str:
+    st = store.read_status(network) or {}
+    pause = store.get_pause(network)
+    schedulable = False
+    if not ccfg.enabled:
+        state = "[dim]disabled[/dim]"
+    elif pause is not None:
+        until = pause.get("until")
+        state = f"[yellow]paused[/yellow] ({escape(str(pause.get('reason')))}" + (
+            f", until {_fmt_clock(until)})" if until else ")"
+        )
+    elif st.get("running"):
+        state = f"[cyan]running {st['running']}[/cyan]"
+    elif store.claim_owner(network) is None:
+        state = "[red]no daemon[/red]"
+    elif st.get("failures"):
+        state = f"[red]retrying[/red] ({st['failures']} failed in a row)"
+        schedulable = True
+    else:
+        state = "[green]idle[/green]"
+        schedulable = True
+    head = f"[bold]{network}[/bold] · {state}"
+    if schedulable and st.get("next_cycle_at"):
+        wait = st["next_cycle_at"] - time.time()
+        head += (
+            f" · next cycle in {_fmt_duration(wait)}" if wait > 0 else " · cycle due"
+        )
+    if ccfg.channel != DEFAULT_SYNC_CHANNEL:
+        head += f" · channel {escape(ccfg.channel)}"
+
+    rows = []
+    tip, target, raw = st.get("node_tip"), st.get("target"), st.get("raw")
+    transformed = st.get("transformed")
+    if tip is not None:
+        node = f"{tip:,}"
+        if target is not None:
+            node += f"  (target {target:,}, backoff {tip - target})"
+        rows.append(("node", node))
+    if raw is not None:
+        line = f"{raw:,}"
+        if target is not None:
+            line += f"  {max(target - raw, 0):,} behind target"
+        rows.append(("raw", line))
+    if transformed is not None:
+        line = f"{transformed:,}"
+        if raw is not None and transformed < raw:
+            line += f"  {raw - transformed:,} behind raw"
+        rows.append(("transformed", line))
+    wal = _wal_state(env, network, ks)
+    if wal:
+        rows.append(("WAL", f"[red]{wal}[/red]" if wal.startswith("pending") else wal))
+    result = st.get("last_result")
+    if result == "ok":
+        rows.append(("last", f"ok, {_fmt_clock(st.get('last_success_at'))}"))
+    elif result:
+        rows.append(("last", f"[red]{escape(_shorten(str(result)))}[/red]"))
+        if st.get("last_success_at"):
+            rows.append(("last ok", _fmt_clock(st["last_success_at"])))
+    return "\n".join([head] + [f"  {k:<12} {v}" for k, v in rows])
 
 
 def _wal_state(env: str, network: str, ks) -> str:
@@ -308,16 +337,36 @@ def _shorten(text: str, limit: int = 80) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _fmt_int(v) -> str:
-    return f"{v:,}" if isinstance(v, int) else ""
+def _fmt_build(version: str) -> str:
+    """'2.19.0.dev52+g1309bed27' -> 'dev build 1309bed (2.19.0.dev52)', a tagged
+    version -> 'release 2.18.1'. The image tag is the release track, not the
+    channel."""
+    if not version:
+        return "?"
+    base, _, local = version.partition("+")
+    m = re.match(r"g([0-9a-f]{7,})", local)
+    if ".dev" in base or m:
+        return f"dev build {m.group(1)[:7]} ({base})" if m else f"dev build ({base})"
+    return f"release {base}"
 
 
-def _fmt_ts(ts) -> str:
+def _fmt_duration(seconds: float) -> str:
+    minutes = int(abs(seconds) // 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h{minutes:02d}m"
+    return f"{hours // 24}d{hours % 24}h"
+
+
+def _fmt_clock(ts) -> str:
+    """'14:30 UTC (5m ago)', with the date when it is not today."""
     if not ts:
         return ""
     dt = datetime.fromtimestamp(ts, timezone.utc)
+    now = datetime.now(timezone.utc)
+    when = dt.strftime("%H:%M UTC" if dt.date() == now.date() else "%m-%d %H:%M UTC")
     age = time.time() - ts
-    when = dt.strftime("%m-%d %H:%M")
-    if abs(age) < 3600:
-        return f"{when} ({int(abs(age) // 60)}m {'ago' if age >= 0 else 'ahead'})"
-    return when
+    rel = f"{_fmt_duration(age)} ago" if age >= 0 else f"in {_fmt_duration(age)}"
+    return f"{when} ({rel})"

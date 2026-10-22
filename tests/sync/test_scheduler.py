@@ -90,7 +90,7 @@ class Clock:
 
 @pytest.fixture
 def setup():
-    def make(env=None, probe=None, channel="stable", store=None):
+    def make(env=None, probe=None, channel="default", store=None):
         probe = probe or FakeProbe()
         runner = FakeRunner(probe)
         alerts = []
@@ -396,3 +396,12 @@ def test_signals_escalate(setup):
     assert not sched.runner.kill_now.is_set()
     sched._on_signal(signal.SIGTERM, None)
     assert sched.runner.kill_now.is_set()
+
+
+def test_heartbeat_lists_claimed_networks(setup):
+    sched, probe, runner, alerts, clock = setup()
+    one_tick(sched)
+    sched.tick()  # the heartbeat after the cycle
+    [(_, info)] = sched.store.list_daemons()
+    assert info["networks"] == ["zec"]
+    assert info["channel"] == "default"

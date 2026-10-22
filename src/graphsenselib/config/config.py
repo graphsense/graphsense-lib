@@ -473,16 +473,21 @@ def _check_sync_args(args: List[str]) -> List[str]:
     return args
 
 
+# A channel only says which daemon runs a network; it is no release track
+# (the image tag is). Daemons started with -c ignore it unless set.
+DEFAULT_SYNC_CHANNEL = "default"
+
+
 class SyncNetworkConfig(_WarnExtraModel):
     """How `graphsense-cli sync run` keeps one network up to date."""
 
     enabled: bool = True
     channel: str = Field(
-        default="stable",
+        default=DEFAULT_SYNC_CHANNEL,
         description=(
             "Only the sync daemon started with this --channel runs the "
-            "network. Run a second daemon from a newer image with "
-            "--channel canary to try a release on a few networks first."
+            "network, e.g. to let several networks share one daemon. With "
+            "one daemon per network (-c) leave it unset."
         ),
     )
     poll_seconds: Optional[int] = Field(default=None, ge=5)

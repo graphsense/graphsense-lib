@@ -150,3 +150,64 @@ def test_pause_wait_stops_when_pause_is_lifted(tmp_path, monkeypatch):
     )
     assert r.exit_code == 0, r.output
     assert "no longer paused" in r.output
+
+
+def test_fmt_build():
+    from graphsenselib.sync.cli import _fmt_build
+
+    assert _fmt_build("2.19.0.dev52+g1309bed27") == "dev build 1309bed (2.19.0.dev52)"
+    assert _fmt_build("2.19.0.dev3") == "dev build (2.19.0.dev3)"
+    assert _fmt_build("2.18.1") == "release 2.18.1"
+    assert _fmt_build("2.18.1rc1") == "release 2.18.1rc1"
+    assert _fmt_build("") == "?"
+
+
+def test_status_blocks(tmp_path, monkeypatch):
+    from graphsenselib.sync.state import FileStateStore
+
+    cfg = tmp_path / "gs.yaml"
+    cfg.write_text(CONFIG.replace("{channel: CHANNEL}", "{}"))
+    monkeypatch.setattr("graphsenselib.sync.cli.FILE_STATE_DIR", str(tmp_path / "st"))
+    monkeypatch.setattr(
+        "graphsenselib.sync.cli._wal_state", lambda env, network, ks: "empty"
+    )
+    store = FileStateStore(str(tmp_path / "st" / "dev"))
+    now = time.time()
+    store.announce_daemon(
+        "d1",
+        {
+            "channel": "default",
+            "host": "h1",
+            "version": "2.19.0.dev52+g1309bed27",
+            "started_at": now - 1500,
+            "running": [],
+            "networks": ["zec"],
+        },
+    )
+    store.claim("zec", "d1")
+    store.write_status(
+        "zec",
+        {
+            "node_tip": 1100,
+            "target": 1000,
+            "raw": 990,
+            "transformed": 980,
+            "last_result": "ok",
+            "last_success_at": now - 300,
+            "next_cycle_at": now + 360,
+        },
+    )
+    r = CliRunner().invoke(
+        cli, ["--config-file", str(cfg), "sync", "status", "-e", "dev"]
+    )
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "zec · daemon d1 on h1" in out
+    assert "dev build 1309bed (2.19.0.dev52), up 25m" in out
+    assert "zec · idle · next cycle in 5m" in out
+    assert "channel" not in out  # default channel is not shown
+    assert "1,100  (target 1,000, backoff 100)" in out
+    assert "990  10 behind target" in out
+    assert "980  10 behind raw" in out
+    assert "WAL          empty" in out
+    assert "last         ok, " in out
