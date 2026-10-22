@@ -1050,7 +1050,6 @@ def _run_batch_hook(monkeypatch, cluster_inputs, activity):
     stubbed.  Returns (strategy, changes committed inline, args the hook passed
     to ``_clustering_changes_for``)."""
     import graphsenselib.deltaupdate.update.utxo.update as upd
-    from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
 
     addr_change = DbChange.new(table="address", data={"address_id": 1})
     fresh_change = DbChange.new(table="fresh_cluster_stats", data={"cluster_id": 1})
@@ -1069,8 +1068,6 @@ def _run_batch_hook(monkeypatch, cluster_inputs, activity):
     monkeypatch.setattr(upd, "apply_changes", lambda *a, **k: committed.append(a))
 
     s = object.__new__(upd.UpdateStrategyUtxo)
-    s.application_strategy = ApplicationStrategy.BATCH
-    s.crash_recoverer = MutableNamedTuple(is_in_recovery_mode=lambda: False)
     s._db = MutableNamedTuple(
         raw=MutableNamedTuple(get_block_timestamp=lambda b: 0),
         transformed=MutableNamedTuple(

@@ -13,14 +13,6 @@ from ...utils import group_by, groupby_property
 from ...utils.account import get_id_group
 
 
-class ApplicationStrategy(Enum):
-    TX = "transaction"
-    BATCH = "batch"
-
-    def __str__(self):
-        return str(self.value)
-
-
 class DeltaUpdate(ABC):
     @abstractmethod
     def merge(self, other_delta):

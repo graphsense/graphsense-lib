@@ -1,6 +1,5 @@
 from collections import namedtuple
 
-from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
 from graphsenselib.deltaupdate.update.utxo import parallelio
 from graphsenselib.deltaupdate.update.utxo import update as utxo_update
 
@@ -163,12 +162,11 @@ class _StubDb:
     transformed = _StubTransformed()
 
 
-def _make_strategy(application_strategy, pool):
+def _make_strategy(pool):
     strategy = utxo_update.UpdateStrategyUtxo(
         _StubDb(),
         "btc",
         pedantic=False,
-        application_strategy=application_strategy,
         parallel_pool=pool,
     )
     strategy._batch_start_time = 0.0
@@ -178,19 +176,19 @@ def _make_strategy(application_strategy, pool):
 def test_persist_pool_writes_data_shards_before_bookkeeping(monkeypatch):
     calls = []
 
-    def record(db, changes, pedantic, try_atomic_writes, pool=None):
-        calls.append((list(changes), try_atomic_writes, pool))
+    def record(db, changes, pedantic, pool=None):
+        calls.append((list(changes), pool))
 
     monkeypatch.setattr(utxo_update, "apply_changes", record)
     pool = object()
-    strategy = _make_strategy(ApplicationStrategy.BATCH, pool)
+    strategy = _make_strategy(pool)
     strategy.changes = ["data1", "data2"]
     strategy.bookkeeping_changes = ["bookkeeping"]
     strategy.persist_updater_progress()
 
     assert calls == [
-        (["data1", "data2"], False, pool),
-        (["bookkeeping"], False, None),
+        (["data1", "data2"], pool),
+        (["bookkeeping"], None),
     ]
     assert strategy.changes is None
     assert strategy.bookkeeping_changes is None
@@ -199,31 +197,16 @@ def test_persist_pool_writes_data_shards_before_bookkeeping(monkeypatch):
 def test_persist_without_pool_combines_data_and_bookkeeping(monkeypatch):
     calls = []
 
-    def record(db, changes, pedantic, try_atomic_writes, pool=None):
-        calls.append((list(changes), try_atomic_writes, pool))
+    def record(db, changes, pedantic, pool=None):
+        calls.append((list(changes), pool))
 
     monkeypatch.setattr(utxo_update, "apply_changes", record)
-    strategy = _make_strategy(ApplicationStrategy.BATCH, None)
+    strategy = _make_strategy(None)
     strategy.changes = ["data1"]
     strategy.bookkeeping_changes = ["bookkeeping"]
     strategy.persist_updater_progress()
 
-    assert calls == [(["data1", "bookkeeping"], False, None)]
-
-
-def test_persist_pool_ignored_in_tx_mode(monkeypatch):
-    calls = []
-
-    def record(db, changes, pedantic, try_atomic_writes, pool=None):
-        calls.append((list(changes), try_atomic_writes, pool))
-
-    monkeypatch.setattr(utxo_update, "apply_changes", record)
-    strategy = _make_strategy(ApplicationStrategy.TX, object())
-    strategy.changes = ["data1"]
-    strategy.bookkeeping_changes = ["bookkeeping"]
-    strategy.persist_updater_progress()
-
-    assert calls == [(["data1", "bookkeeping"], True, None)]
+    assert calls == [(["data1", "bookkeeping"], None)]
 
 
 def test_factory_passes_pool_to_utxo_v2():
@@ -245,23 +228,22 @@ def test_factory_passes_pool_to_utxo_v2():
     assert updater._parallel_pool is pool
 
 
-def test_factory_drops_pool_for_utxo_tx_mode():
-    # TX mode (write_batch == 1) is the conservative per-transaction path
-    # and stays fully single-process; without this gate the block-read
-    # phase (which runs before the mode branch) would still use the pool.
+def test_factory_keeps_pool_for_one_block_batches():
+    # write_batch 1 is an ordinary batch of one block (the per-transaction
+    # mode it used to select is gone), so the pool stays.
     from graphsenselib.deltaupdate.update.factory import UpdaterFactory
 
     class _DuConfig:
         currency = "btc"
 
+    pool = object()
     updater = UpdaterFactory().get_updater(
         _DuConfig(),
         _StubDb(),
         pedantic=False,
         write_batch=1,
         patch_mode=False,
-        parallel_pool=object(),
+        parallel_pool=pool,
     )
     assert isinstance(updater, utxo_update.UpdateStrategyUtxo)
-    assert updater.application_strategy == ApplicationStrategy.TX
-    assert updater._parallel_pool is None
+    assert updater._parallel_pool is pool

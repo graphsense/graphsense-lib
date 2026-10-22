@@ -41,7 +41,7 @@ def _recover_pending_writes(db, pedantic: bool, force_wal_replay: bool = False) 
     wal.ensure_schema()
 
     def apply_fn(changes):
-        apply_changes(db, changes, pedantic, try_atomic_writes=False)
+        apply_changes(db, changes, pedantic)
 
     try:
         wal.recover(apply_fn)

@@ -142,7 +142,7 @@ def test_apply_changes_dispatches_data_changes_to_pool():
     changes = [
         DbChange.update(table="address", data={"address_id": i}) for i in range(5)
     ]
-    apply_changes(None, changes, pedantic=False, try_atomic_writes=False, pool=pool)
+    apply_changes(None, changes, pedantic=False, pool=pool)
     fn, items = pool.dispatched[0]
     assert fn is worker_apply_changes
     assert items == changes

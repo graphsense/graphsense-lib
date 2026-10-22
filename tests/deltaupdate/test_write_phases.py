@@ -10,7 +10,6 @@ import random
 import re
 
 import pytest
-from cassandra import InvalidRequest
 
 from graphsenselib.datatypes import DbChangeType, EntityType
 from graphsenselib.db.analytics import ApplyChangesResult, DbChange
@@ -303,20 +302,17 @@ def test_every_table_the_updaters_write_has_a_phase():
 
 
 class RecordingTransformed:
-    def __init__(self, atomic_error=None):
-        self.atomic_error = atomic_error
+    def __init__(self):
         self.calls = []
 
     def apply_changes(self, changes, atomic):
-        if atomic and self.atomic_error is not None:
-            raise self.atomic_error
         self.calls.append((list(changes), atomic))
         return OK
 
 
 class RecordingDb:
-    def __init__(self, atomic_error=None):
-        self.transformed = RecordingTransformed(atomic_error)
+    def __init__(self):
+        self.transformed = RecordingTransformed()
 
 
 class RecordingPool:
@@ -339,7 +335,7 @@ PHASE_ORDER = [
 
 def test_single_process_writes_phase_after_phase():
     db = RecordingDb()
-    apply_changes(db, shuffled(BATCH), pedantic=False, try_atomic_writes=False)
+    apply_changes(db, shuffled(BATCH), pedantic=False)
     calls = db.transformed.calls
     assert [{write_phase(c) for c in changes} for changes, _ in calls] == PHASE_ORDER
     assert not any(atomic for _, atomic in calls)
@@ -350,25 +346,11 @@ def test_single_process_writes_phase_after_phase():
 
 def test_pool_gets_one_dispatch_per_phase():
     pool = RecordingPool()
-    apply_changes(None, shuffled(BATCH), False, try_atomic_writes=False, pool=pool)
+    apply_changes(None, shuffled(BATCH), False, pool=pool)
     assert all(fn is worker_apply_changes for fn, _ in pool.dispatched)
     assert [{write_phase(c) for c in items} for _, items in pool.dispatched] == (
         PHASE_ORDER
     )
-
-
-def test_atomic_write_stays_one_logged_batch():
-    db = RecordingDb()
-    changes = shuffled(BATCH)
-    apply_changes(db, changes, pedantic=False, try_atomic_writes=True)
-    assert db.transformed.calls == [(changes, True)]
-
-
-def test_too_large_atomic_batch_falls_back_to_phases():
-    db = RecordingDb(atomic_error=InvalidRequest("Batch too large"))
-    apply_changes(db, shuffled(BATCH), pedantic=False, try_atomic_writes=True)
-    calls = db.transformed.calls
-    assert [{write_phase(c) for c in changes} for changes, _ in calls] == PHASE_ORDER
 
 
 @pytest.mark.parametrize("use_pool", [False, True])
@@ -380,7 +362,6 @@ def test_table_without_a_phase_fails_before_any_write(use_pool):
             db,
             changes,
             pedantic=False,
-            try_atomic_writes=False,
             pool=pool if use_pool else None,
         )
     assert db.transformed.calls == []
