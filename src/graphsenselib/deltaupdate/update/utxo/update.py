@@ -1644,8 +1644,9 @@ class WritePhase(IntEnum):
     """Order in which a non-atomic apply writes a batch's changes.
 
     REST follows ids from row to row: address string -> prefix row ->
-    address row -> cluster row -> root address row, relation -> neighbor,
-    tx list -> the tx's input/output addresses by string. Written
+    address row -> cluster row -> root address row, address row -> its
+    first/last tx by id, relation -> neighbor, tx list -> the tx's
+    input/output addresses by string. Written
     concurrently in one go, a reader can land on a row whose target is not
     written yet (an address whose cluster row is missing ->
     DBInconsistencyException -> HTTP 500). A row a reader can reach only
@@ -1654,28 +1655,39 @@ class WritePhase(IntEnum):
     resolves at every moment of the write.
     """
 
+    # Lookups an updated address row depends on (account networks). An
+    # existing address is already published, so what its new row names must
+    # resolve the moment the row is visible: the tx id -> hash mapping of its
+    # new last_tx_id (pointing only at raw rows ingest wrote before), and the
+    # raised bucket number in *_secondary_ids, up to which REST reads tx
+    # lists and relations. A bucket number above every row is harmless (REST
+    # skips an empty bucket); one below a visible row leaves that row out.
+    LOOKUPS = 1
     # The rows a reference ends at. A new object's records are unreachable
     # while they are written: nothing published points at the object yet.
-    RECORDS = 1
+    RECORDS = 2
     # Lookup rows that make a new address or tx findable by its string.
-    PUBLISH = 2
+    PUBLISH = 3
     # Rows pointing from one object to another. Tx lists come after PUBLISH
     # because REST resolves a listed tx's input/output addresses by string.
-    EDGES = 3
+    EDGES = 4
     # Deletes, once the edges replacing them are written: an absorbed fresh
     # cluster goes only after its members point at the survivor.
-    UNLINKS = 4
+    UNLINKS = 5
     # The checkpoint, so a partially written batch never looks complete.
-    BOOKKEEPING = 5
+    BOOKKEEPING = 6
 
 
 _WRITE_PHASE_BY_TABLE = {
+    "transaction_ids_by_transaction_id_group": WritePhase.LOOKUPS,
+    "address_transactions_secondary_ids": WritePhase.LOOKUPS,
+    "address_incoming_relations_secondary_ids": WritePhase.LOOKUPS,
+    "address_outgoing_relations_secondary_ids": WritePhase.LOOKUPS,
     "address": WritePhase.RECORDS,
     "cluster": WritePhase.RECORDS,
     "fresh_cluster_stats": WritePhase.RECORDS,
     "balance": WritePhase.RECORDS,
     "token_exchange_rates": WritePhase.RECORDS,
-    "transaction_ids_by_transaction_id_group": WritePhase.RECORDS,
     "address_ids_by_address_prefix": WritePhase.PUBLISH,
     "transaction_ids_by_transaction_prefix": WritePhase.PUBLISH,
     "address_incoming_relations": WritePhase.EDGES,
@@ -1688,9 +1700,6 @@ _WRITE_PHASE_BY_TABLE = {
     "address_transactions": WritePhase.EDGES,
     "cluster_transactions": WritePhase.EDGES,
     "block_transactions": WritePhase.EDGES,
-    "address_transactions_secondary_ids": WritePhase.EDGES,
-    "address_incoming_relations_secondary_ids": WritePhase.EDGES,
-    "address_outgoing_relations_secondary_ids": WritePhase.EDGES,
     "summary_statistics": WritePhase.BOOKKEEPING,
     TABLE_NAME_DELTA_HISTORY: WritePhase.BOOKKEEPING,
 }

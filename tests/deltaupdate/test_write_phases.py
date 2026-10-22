@@ -129,6 +129,10 @@ KEYS = {
     "fresh_cluster_addresses": ("cluster_id", "address_id"),
     "address_transactions": ("address_id", "tx_id"),
     "cluster_transactions": ("cluster_id", "tx_id"),
+    "transaction_ids_by_transaction_id_group": ("transaction_id",),
+    "transaction_ids_by_transaction_prefix": ("transaction",),
+    "block_transactions": ("block_id", "tx_id"),
+    "address_transactions_secondary_ids": ("address_id_group",),
     "summary_statistics": ("id",),
     TABLE_NAME_DELTA_HISTORY: ("last_synced_block",),
 }
@@ -215,13 +219,13 @@ def _dangling(reach, present):
     return missing
 
 
-def dangling_while_writing(phases):
+def dangling_while_writing(phases, pre=PRE, dangling=_dangling):
     """Every reference that dangles at some moment while the phases are
     written one after the other. Within a phase any subset of its changes
     may be visible: a reader can see both versions of an overwritten row,
     and only rows present before and after the phase are sure to exist."""
     found = set()
-    state = _apply(PRE, [])
+    state = _apply(pre, [])
     for phase in phases:
         after = _apply(state, phase)
         reach = {
@@ -236,7 +240,7 @@ def dangling_while_writing(phases):
             for table in KEYS
         }
         present = {table: state[table].keys() & after[table].keys() for table in KEYS}
-        found |= _dangling(reach, present)
+        found |= dangling(reach, present)
         state = after
     return found
 
@@ -272,7 +276,127 @@ def test_each_phase_boundary_is_needed(first, second):
     assert dangling_while_writing(phases) != set()
 
 
+# Account networks: an address row names its first and last tx by id, and
+# REST resolves an id through transaction_ids_by_transaction_id_group. Prod
+# served a hot address whose new last_tx_id was visible before that mapping
+# row and answered /addresses/{a} with a 500. A tx list is read bucket by
+# bucket (by block), up to the bucket in *_secondary_ids and at most to the
+# bucket of the address's last tx; a row in a bucket past that number is not
+# listed. Before the batch: address 1 ("y") with tx 100 in bucket 0; the
+# batch's tx 200, in the new bucket 1, goes from y to the new address 2 ("z").
+ETH_PRE = {
+    "address": {(1,): {"address_id": 1, "first_tx_id": 100, "last_tx_id": 100}},
+    "address_ids_by_address_prefix": {("y",): {"address": "y", "address_id": 1}},
+    "transaction_ids_by_transaction_id_group": {(100,): {"transaction_id": 100}},
+    "address_transactions": {(1, 100): {"address_id": 1, "tx_id": 100}},
+    "address_transactions_secondary_ids": {
+        (0,): {"address_id_group": 0, "max_secondary_id": 0}
+    },
+}
+
+ETH_BATCH = [
+    upd("address", address_id=1, first_tx_id=100, last_tx_id=200),
+    new("address", address_id=2, first_tx_id=200, last_tx_id=200),
+    new("transaction_ids_by_transaction_id_group", transaction_id=200),
+    new(
+        "transaction_ids_by_transaction_prefix", transaction="h200", transaction_id=200
+    ),
+    new("address_ids_by_address_prefix", address="z", address_id=2),
+    new("address_transactions", address_id=1, tx_id=200),
+    new("address_transactions", address_id=2, tx_id=200),
+    upd("address_transactions_secondary_ids", address_id_group=0, max_secondary_id=1),
+    new("block_transactions", block_id=5, tx_id=200),
+    new("summary_statistics", id=0),
+]
+
+
+def _bucket(tx_id):
+    return tx_id // 200  # both addresses are in id group 0
+
+
+def _dangling_eth(reach, present):
+    """Tx ids a reader resolves through the id mapping whose mapping row is
+    not in `present` (an address's first/last tx, an address's or a block's
+    tx list), and the bucket number a reader may see below a bucket that
+    already holds a visible row or the address's last tx."""
+    missing = set()
+
+    def resolve(tx_id):
+        if (tx_id,) not in present["transaction_ids_by_transaction_id_group"]:
+            missing.add(("transaction_ids_by_transaction_id_group", (tx_id,)))
+
+    def listed(tx_id):
+        seen = reach["address_transactions_secondary_ids"][(0,)]
+        if any(row["max_secondary_id"] < _bucket(tx_id) for row in seen):
+            missing.add(("address_transactions_secondary_ids", (0,)))
+
+    for rows in reach["address_ids_by_address_prefix"].values():
+        for prefix_row in rows:
+            for row in reach["address"].get((prefix_row["address_id"],), []):
+                resolve(row["first_tx_id"])
+                resolve(row["last_tx_id"])
+                listed(row["last_tx_id"])
+    for rows in reach["address_transactions"].values():
+        for row in rows:
+            resolve(row["tx_id"])
+            listed(row["tx_id"])
+    for rows in reach["block_transactions"].values():
+        for row in rows:
+            resolve(row["tx_id"])
+    return missing
+
+
+def eth_dangling_while_writing(phases):
+    return dangling_while_writing(phases, pre=ETH_PRE, dangling=_dangling_eth)
+
+
+def eth_phases_with(table, phase):
+    """ETH_BATCH split into phases, with `table` moved to `phase`."""
+    by_phase = {}
+    for change in ETH_BATCH:
+        this = phase if change.table == table else write_phase(change)
+        by_phase.setdefault(this, []).append(change)
+    return [by_phase[p] for p in sorted(by_phase)]
+
+
+def test_eth_state_before_the_batch_is_consistent():
+    assert eth_dangling_while_writing([[]]) == set()
+
+
+def test_eth_phased_write_never_exposes_a_dangling_reference():
+    phases = split_into_write_phases(shuffled(ETH_BATCH))
+    assert eth_dangling_while_writing(phases) == set()
+
+
+def test_eth_updated_address_needs_its_tx_ids_written_first():
+    """The prod failure: the mapping row in the same phase as the address
+    row that points at it."""
+    phases = eth_phases_with(
+        "transaction_ids_by_transaction_id_group", WritePhase.RECORDS
+    )
+    assert eth_dangling_while_writing(phases) == {
+        ("transaction_ids_by_transaction_id_group", (200,))
+    }
+
+
+@pytest.mark.parametrize("phase", [WritePhase.RECORDS, WritePhase.EDGES])
+def test_eth_bucket_number_goes_up_before_the_rows_in_the_bucket(phase):
+    """Written with the address row or the tx list, a reader can see the new
+    tx without the raised bucket number, and the list leaves it out."""
+    phases = eth_phases_with("address_transactions_secondary_ids", phase)
+    assert eth_dangling_while_writing(phases) == {
+        ("address_transactions_secondary_ids", (0,))
+    }
+
+
 def test_write_phase_of_each_kind_of_row():
+    for table in (
+        "transaction_ids_by_transaction_id_group",
+        "address_transactions_secondary_ids",
+        "address_incoming_relations_secondary_ids",
+        "address_outgoing_relations_secondary_ids",
+    ):
+        assert write_phase(upd(table, id=1)) == WritePhase.LOOKUPS
     assert write_phase(new("cluster", cluster_id=1)) == WritePhase.RECORDS
     assert write_phase(upd("address", address_id=1)) == WritePhase.RECORDS
     assert (
