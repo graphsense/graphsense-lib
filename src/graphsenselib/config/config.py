@@ -570,6 +570,17 @@ class SyncConfig(_WarnExtraModel):
         default=3, ge=1, description="Alert after this many failures in a row."
     )
     max_backoff_minutes: int = Field(default=15, ge=1)
+    stop_grace_seconds: int = Field(
+        default=480,
+        ge=10,
+        description=(
+            "When the daemon stops (SIGTERM, e.g. docker stop or a new image), "
+            "how long a running job may take to finish its current chunk "
+            "before it is killed. Long enough for a delta-update batch, so no "
+            "WAL record is left for the next version. Keep the container's "
+            "stop grace period above it (compose stop_grace_period: 10m)."
+        ),
+    )
     networks: Dict[str, SyncNetworkConfig] = Field(default_factory=dict)
 
     @field_validator("consistency_check_args")

@@ -274,6 +274,7 @@ class SyncScheduler:
             return
         sync = env.sync
         self._delta_slots.resize(sync.max_parallel_delta_updates)
+        self.runner.stop_grace_seconds = sync.stop_grace_seconds
         self._compaction_slots.resize(sync.max_parallel_compactions)
 
         now = self._clock()

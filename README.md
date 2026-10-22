@@ -583,9 +583,14 @@ child processes. Claims, pauses and status live in Redis when
 need that directory, and `/tmp` for the jobs' file locks, on a shared volume.
 
 Ctrl-C (or SIGTERM, e.g. `docker stop`) stops starting jobs, and running jobs
-stop cleanly after their current chunk. A second signal lists what is still
+stop cleanly after their current chunk, within `sync.stop_grace_seconds`
+(default 480) before they are killed. A second signal lists what is still
 running. A third kills the jobs: safe for the data, but a killed job's Redis
-lock stays behind until deleted (`redis-cli DEL`).
+lock stays behind until deleted (`redis-cli DEL`). So switching a daemon to a
+new image is a plain `docker compose up -d` after changing the tag, as long as
+the container's `stop_grace_period` is longer than `stop_grace_seconds`. The
+one exception is a Delta Lake compaction: it cannot stop midway, and if it is
+killed its lock stays behind (the data is safe).
 
 How a network is ingested and updated belongs in its keyspace config, so a
 manual run, a cron job and the daemon all do the same. The flags of the same
@@ -642,7 +647,7 @@ so a canary is one service on a newer tag. Settings from the same `.graphsense.y
 # docker compose
 x-sync: &sync
   restart: unless-stopped
-  stop_grace_period: 3m           # lets running jobs stop cleanly
+  stop_grace_period: 10m          # > sync.stop_grace_seconds (8 min): jobs stop cleanly
   mem_limit: 45g
   environment: {AWS_EC2_METADATA_DISABLED: "true"}
   volumes:

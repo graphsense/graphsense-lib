@@ -78,3 +78,42 @@ def test_kill_now_cuts_grace_short():
     assert r.outcome is Outcome.STOPPED
     assert r.exit_code == -9
     assert r.seconds < 10
+
+
+def test_stop_uses_stop_grace_not_timeout_grace():
+    # a job that needs ~2s to finish its chunk after SIGTERM
+    code = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, lambda *a: None)\n"
+        "print('started', flush=True)\n"
+        "time.sleep(0.5)\n"
+        "time.sleep(2)\n"
+    )
+    runner = JobRunner(cli_command=PY, terminate_grace_seconds=1, stop_grace_seconds=10)
+    stop = threading.Event()
+    threading.Timer(0.3, stop.set).start()
+    r = runner.run("step", [code], 30, stop, "test")
+    assert r.outcome is Outcome.STOPPED
+    assert r.exit_code == 0  # finished, not killed after the 1s timeout grace
+
+
+SIGTERM_CLEANUP_JOB = (
+    "import time\n"
+    "from graphsenselib.utils.signals import install_sigterm_as_interrupt\n"
+    "install_sigterm_as_interrupt()\n"
+    "try:\n"
+    "    print('lock taken', flush=True)\n"
+    "    time.sleep(60)\n"
+    "finally:\n"
+    "    print('lock released', flush=True)\n"
+)
+
+
+def test_sigterm_outside_graceful_section_still_runs_cleanup():
+    # what releases a Redis lock that is held outside graceful_ctlc_shutdown
+    stop = threading.Event()
+    threading.Timer(1.0, stop.set).start()
+    r = run(SIGTERM_CLEANUP_JOB, stop=stop)
+    assert r.outcome is Outcome.STOPPED
+    assert "lock released" in r.tail
+    assert r.exit_code != -9

@@ -17,6 +17,7 @@ from ..sync.cli import sync_cli
 from ..sync.jobs import SYNC_JOB_ENV_VAR
 from ..utils.console import console
 from ..utils.logging import configure_logging
+from ..utils.signals import install_sigterm_as_interrupt
 from ..utils.slack import ClickSlackErrorNotificationContext
 from ..utils.generic import filter_sensitive_sys_argv
 from ..watch.cli import watch_cli
@@ -153,6 +154,9 @@ def cli(ctx, verbosity: int, config_file: str):
         verbosity (int): One v stands for loglevel warning, two for info and so on...
     """
 
+    # docker stop / the sync daemon send SIGTERM: unwind like Ctrl-C so locks
+    # are released (see utils/signals.py).
+    install_sigterm_as_interrupt()
     configure_logging(verbosity)
     config, h = try_load_config(config_file)
     # if we have a config, we can set up the slack notification context. Not

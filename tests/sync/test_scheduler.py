@@ -405,3 +405,15 @@ def test_heartbeat_lists_claimed_networks(setup):
     [(_, info)] = sched.store.list_daemons()
     assert info["networks"] == ["zec"]
     assert info["channel"] == "default"
+
+
+def test_stop_grace_follows_config(setup):
+    sched, probe, runner, alerts, clock = setup()
+    sched.tick()
+    assert runner.stop_grace_seconds == 480
+    env = make_env(
+        sync={"stop_grace_seconds": 300, "networks": {"zec": {}}},
+    )
+    sched._load_environment = lambda: env
+    sched.tick()
+    assert runner.stop_grace_seconds == 300

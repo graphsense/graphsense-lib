@@ -40,6 +40,8 @@ EXIT_INCONSISTENT = 92
 
 # How long a job gets to stop cleanly after SIGTERM before SIGKILL. Ingest and
 # delta-update stop after the current chunk/batch (graceful_ctlc_shutdown).
+# This one is for a job that hit its timeout; when the daemon itself stops,
+# stop_grace_seconds applies (sync.stop_grace_seconds), which is longer.
 TERMINATE_GRACE_SECONDS = 120
 _TAIL_LINES = 30
 
@@ -98,11 +100,17 @@ class JobRunner:
         cli_command: Optional[List[str]] = None,
         global_args: Optional[List[str]] = None,
         terminate_grace_seconds: int = TERMINATE_GRACE_SECONDS,
+        stop_grace_seconds: Optional[int] = None,
     ):
         self.cli_command = cli_command or default_cli_command()
         # e.g. ["-vv", "--config-file", "..."]: go before the subcommand.
         self.global_args = global_args or []
         self.terminate_grace_seconds = terminate_grace_seconds
+        # Grace when the daemon stops (docker stop, a new image): long enough
+        # for a delta-update batch to finish, so no WAL record is left behind
+        # for the next version, which refuses to replay another version's.
+        # The scheduler keeps it in line with sync.stop_grace_seconds.
+        self.stop_grace_seconds = stop_grace_seconds
         # Set to cut the grace period short: SIGKILL instead of waiting for a
         # clean stop (the daemon's third Ctrl-C).
         self.kill_now = threading.Event()
@@ -165,8 +173,11 @@ class JobRunner:
 
         if timed_out or stopped:
             why = "timed out" if timed_out else "stopping"
-            logger.warning(f"[{label}] {why}, sending SIGTERM")
-            self._terminate(proc, label)
+            grace = self.terminate_grace_seconds
+            if stopped and self.stop_grace_seconds is not None:
+                grace = self.stop_grace_seconds
+            logger.warning(f"[{label}] {why}, sending SIGTERM (SIGKILL after {grace}s)")
+            self._terminate(proc, label, grace)
 
         with self._running_lock:
             self._running.pop(label, None)
@@ -186,9 +197,9 @@ class JobRunner:
         )
         return StepResult(step, outcome, code, seconds, list(tail))
 
-    def _terminate(self, proc: subprocess.Popen, label: str):
+    def _terminate(self, proc: subprocess.Popen, label: str, grace: float):
         _signal_group(proc, signal.SIGTERM)
-        deadline = time.monotonic() + self.terminate_grace_seconds
+        deadline = time.monotonic() + grace
         while time.monotonic() < deadline and not self.kill_now.is_set():
             try:
                 proc.wait(timeout=1.0)
@@ -198,7 +209,7 @@ class JobRunner:
         why = (
             "kill requested"
             if self.kill_now.is_set()
-            else f"still running {self.terminate_grace_seconds}s after SIGTERM"
+            else f"still running {grace:.0f}s after SIGTERM"
         )
         logger.error(f"[{label}] {why}, sending SIGKILL")
         _signal_group(proc, signal.SIGKILL)
