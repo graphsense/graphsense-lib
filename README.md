@@ -577,24 +577,29 @@ graphsense-cli delta-update patch-exchange-rates \
 `sync run` replaces the per-network cron jobs (`ingest from-node`, then
 `delta-update update`). It is one long-running daemon that polls each node
 and runs ingest and the delta update as soon as there is something new, as
-child processes. Claims, pauses and status live in Redis when
-`use_redis_locks`/`redis_url` are set, otherwise in files under
-`/tmp/graphsense-sync/<env>`. Without Redis, daemons in separate containers
-need that directory, and `/tmp` for the jobs' file locks, on a shared volume.
+child processes of the same graphsense-lib version. Claims, pauses and status
+live in Redis when `use_redis_locks`/`redis_url` are set, otherwise in files
+under `/tmp/graphsense-sync/<env>`. Without Redis, daemons in separate
+containers need that directory, and `/tmp` for the jobs' file locks, on a
+shared volume.
 
-Ctrl-C (or SIGTERM, e.g. `docker stop`) stops starting jobs, and running jobs
-stop cleanly after their current chunk, within `sync.stop_grace_seconds`
-(default 480) before they are killed. A second signal lists what is still
-running. A third kills the jobs: safe for the data, but a killed job's Redis
-lock stays behind until deleted (`redis-cli DEL`). So switching a daemon to a
-new image is a plain `docker compose up -d` after changing the tag, as long as
-the container's `stop_grace_period` is longer than `stop_grace_seconds`. The
-one exception is a Delta Lake compaction: it cannot stop midway, and if it is
-killed its lock stays behind (the data is safe).
+#### Configuration
 
 How a network is ingested and updated belongs in its keyspace config, so a
 manual run, a cron job and the daemon all do the same. The flags of the same
-name still override it for one run:
+name still override it for one run. When moving a network from cron, every
+flag of its cron command goes here (`--write-mode append` and
+`--updater-version 2` are the defaults and can be dropped):
+
+| cron flag | keyspace config |
+| --- | --- |
+| `--exchange-rates-provider coingecko` | `ingest_config.exchange_rates_provider` |
+| `--sinks cassandra --sinks delta` | `ingest_config.sinks` |
+| `--auto-compact "1w;sunday"`, `--auto-compact-last-n 16` | `ingest_config.auto_compact`, `auto_compact_last_n` |
+| `--write-batch-size`, `--parallel-workers`, `--forward-fill-rates` | `delta_update_config.*` |
+
+A missing `sinks` makes the daemon ingest into Cassandra only, and the Delta
+Lake falls behind silently; a missing `auto_compact` means no compaction.
 
 ```yaml
 environments:
@@ -612,23 +617,45 @@ environments:
           parallel_workers: 8
       zec:
         ingest_config:
+          exchange_rates_provider: coingecko
           sinks: [cassandra, delta]
-          reorg_backoff_blocks: 24        # default 100; see CHANGELOG
+          auto_compact: "1w;sat"
+          # reorg_backoff_blocks: 24      # override the built-in backoff (zec: 100)
         delta_update_config:
           forward_fill_rates: true
           write_batch_size: 40
           parallel_workers: 4
     sync:
-      poll_seconds: 30
-      max_parallel_networks: 4
-      max_parallel_delta_updates: 2
-      max_parallel_compactions: 1
       rates_every_minutes: 30             # exchange rates with every Nth ingest only
+      stop_grace_seconds: 480             # see "Stopping and switching images"
       networks:
         eth:
-          lag_alert_minutes: 30
-        zec: {}
+          poll_seconds: 600
+          lag_alert_minutes: 60
+        zec:
+          poll_seconds: 600
+          lag_alert_minutes: 300
 ```
+
+A network is only run by the daemon if it has an entry under
+`sync.networks`: without one, `sync run -c <net>` does nothing and still
+exits 0. Entries without a daemon are harmless; `sync status` lists them as
+"no daemon", which makes it safe to prepare the config for every network
+while the cron jobs still run (older versions only warn about the keys they
+do not know).
+
+- **`poll_seconds`** (default 30): how often the node is checked. Every check
+  that finds new blocks starts an ingest and a delta update, each a new
+  process with a few seconds of startup, so for fast chains (eth, trx, zec)
+  a few minutes collect several blocks per job instead of one.
+- **`lag_alert_minutes`**: alert when the newest raw block is older than
+  this. Raw always trails the node by the reorg backoff (built in: btc 3,
+  ltc 12, bch 10, zec 100, eth 70, trx 20 blocks; `reorg_backoff_blocks`
+  overrides it), so the threshold must exceed backoff × block time, plus the
+  poll interval and some block-time jitter. It replaces the per-run
+  `raw_ingest_staleness_threshold`, which the daemon turns off.
+- **`rates_every_minutes`**: ingest jobs skip the exchange-rates pre-step
+  except once per interval, and always in the first cycle after a start.
 
 The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates`,
 `--no-staleness-check` and `--no-auto-compact` itself. It compacts in a step
@@ -636,62 +663,117 @@ of its own (`ingest delta-lake auto-compact`, checked every
 `compaction_check_every_minutes`, timeout `compaction_timeout_minutes`), so a
 long compaction does not hit the ingest timeout. `ingest_args` /
 `delta_update_args` take extra flags for the rare case the config has no
-field for.
+field for. The config file is re-read when it changes, so none of these
+settings needs a restart.
 
-Run one daemon per network, each in its own container (`-c`). A daemon
-runs its network's jobs one after another, so the container's memory limit
-works like `docker run -m` per job does today. Its version is the image tag,
-so a canary is one service on a newer tag. Settings from the same `.graphsense.yaml`:
+#### Running with docker compose
+
+Run one daemon per network, each in its own container (`-c`). A daemon runs
+its network's jobs one after another, so the container's memory limit works
+like `docker run -m` per job of a cron job. Its version is the image tag, so
+a canary is one service on a newer tag. The shared settings go into one
+block, so a network is four lines:
 
 ```yaml
-# docker compose
+# compose.yaml
 x-sync: &sync
+  image: ghcr.io/graphsense/graphsense-lib:v2.19.0
   restart: unless-stopped
-  stop_grace_period: 10m          # > sync.stop_grace_seconds (8 min): jobs stop cleanly
-  mem_limit: 45g
-  environment: {AWS_EC2_METADATA_DISABLED: "true"}
+  init: true                      # reaps the jobs' child processes
+  stop_grace_period: 10m          # > sync.stop_grace_seconds (8 min)
+  mem_limit: 45g                  # per running job, like docker run -m
+  environment:
+    AWS_EC2_METADATA_DISABLED: "true"
   volumes:
     - ~/.graphsense.yaml:/home/graphsense/.graphsense.yaml:ro
     - /srv/graphsense-sync:/tmp/graphsense-sync   # only without Redis
+  logging:
+    driver: json-file
+    options: {max-size: 100m, max-file: "5"}
 
 services:
   sync-btc:
     <<: *sync
-    image: ghcr.io/graphsense/graphsense-lib:v26.10.2
+    container_name: sync-btc
     command: graphsense-cli -v sync run -e prod -c btc
-  sync-eth:
+  sync-zec:
     <<: *sync
-    image: ghcr.io/graphsense/graphsense-lib:v26.10.2
-    command: graphsense-cli -v sync run -e prod -c eth
-  sync-zec:                       # canary: a newer tag
-    <<: *sync
-    image: ghcr.io/graphsense/graphsense-lib:v26.11.0-rc.1
+    container_name: sync-zec
     command: graphsense-cli -v sync run -e prod -c zec
+    image: ghcr.io/graphsense/graphsense-lib:v2.20.0-rc.1   # canary
 ```
 
-The `max_parallel_*` limits count within one daemon, so with one network
-per daemon they limit nothing, and delta updates of different networks can
-overlap, as cron jobs that start at the same minute do. Without Redis, mount
-the same state directory into every daemon and into wherever you run `sync
-status`/`pause`/`resume`, or they each see only their own state.
+Give the containers the same network setup the cron containers had (e.g.
+`extra_hosts` for node hostnames). A service's own `environment` or `volumes`
+replaces the shared list instead of extending it, so repeat the shared
+entries there. `.graphsense.yaml` is mounted as a single file: an editor
+that saves by writing a new file and renaming it is not seen inside the
+container until it restarts.
 
-Several networks can also share a daemon: give them a `channel` and run
-`sync run --channel <name>`. Its jobs then share one memory limit, so size
-the container for what can run at once.
+The `max_parallel_*` limits count within one daemon, so with one network per
+daemon they limit nothing, and delta updates of different networks can
+overlap, as cron jobs that start at the same minute do. Several networks can
+also share a daemon: give them a `channel` and run `sync run --channel
+<name>`. Its jobs then share one memory limit, so size the container for
+what can run at once. A channel only groups networks onto a daemon; the
+release track is the image tag.
 
-Switch a network's version only while its delta update has no pending WAL
-record (written by another version, the record blocks the next run until
-replayed with `--force-wal-replay`), and go back to an older version only if
-the newer one's schema migrations are backward compatible. `sync status`
-shows the WAL of every network (`empty`, or the pending blocks and the
-version that wrote them), and `sync pause --wait` waits for the running cycle
-to finish and then shows that status, so a switch is:
+#### Moving a network from cron to the daemon
+
+1. Put its cron flags into the keyspace config and add it to
+   `sync.networks` (see above). `sync status` then lists it as "no daemon".
+2. Comment out its cron line and wait until no job of it is running.
+3. Check that `sync status` shows its WAL as `empty`. A record written by
+   another version blocks the first run (see below).
+4. Run one cycle by hand and watch it:
+   `docker compose run --rm sync-<net> graphsense-cli -v sync run -e prod --once -c <net>`.
+   Expect the reorg check to pass silently, an ingest into both sinks, a
+   delta update, and `finished: ok` for each.
+5. Add its service to the compose file and `docker compose up -d sync-<net>`.
+
+#### Stopping and switching images
+
+SIGTERM (`docker stop`, `docker compose up -d` with a new tag) stops the
+daemon from starting jobs; a running job finishes its current chunk or batch
+and exits, within `sync.stop_grace_seconds` (default 480) before it is
+killed. A second signal lists what is still running, a third kills the jobs.
+Killing is safe for the data (ingest writes `block` last, the delta update
+replays its WAL), but a killed job's Redis lock, which has no TTL, stays
+behind until `redis-cli DEL`.
+
+So switching a daemon to a new image, or back, is:
 
 ```bash
-graphsense-cli sync pause -e prod -c zec --reason "image switch" --for 30m --wait
-# WAL "empty": replace the container with the new image tag, then
-graphsense-cli sync resume -e prod -c zec
+# change the tag in compose.yaml, then
+docker compose up -d
 ```
+
+as long as the container's `stop_grace_period` is longer than
+`stop_grace_seconds`. Compose pulls the new image before it stops the old
+container. Two things to know:
+
+- A Delta Lake compaction cannot stop midway. If one is running (on the day
+  `auto_compact` names), it is killed after the grace period and its lock
+  stays behind; the data is safe.
+- The delta update refuses to replay a WAL record written by another
+  version (`--force-wal-replay` overrides it). A clean stop never leaves
+  one, but a killed one does. When unsure, stop first and check:
+
+  ```bash
+  graphsense-cli sync pause -e prod -c zec --reason "image switch" --for 30m --wait
+  # shows the network once no cycle runs; WAL "empty": change the tag, then
+  docker compose up -d sync-zec
+  graphsense-cli sync resume -e prod -c zec
+  ```
+
+  This is also how to switch away from a daemon older than the version that
+  introduced `stop_grace_seconds` (see CHANGELOG), which stopped jobs after
+  2 minutes and could leave a lock behind.
+
+Go back to an older version only if the newer one's schema migrations are
+backward compatible.
+
+#### Status and day-to-day commands
 
 ```bash
 graphsense-cli sync status -e prod
@@ -699,6 +781,24 @@ graphsense-cli sync pause -e prod -c zec --reason "node resync" --for 6h
 graphsense-cli sync resume -e prod -c zec
 graphsense-cli sync run -e prod --once -c zec   # one cycle, then exit
 ```
+
+```
+sync prod · 1 daemon
+  zec · daemon f4f1ddc88fb7 on 3a9c2e1d0b7f
+    dev build 817aec8 (2.19.0.dev55), up 25m
+
+zec · idle · next cycle in 6m
+  node         3,526,805  (target 3,526,705, backoff 100)
+  raw          3,526,705  0 behind target
+  transformed  3,526,705
+  WAL          empty
+  last         ok, 15:12 UTC (10m ago)
+```
+
+`sync status` reads the shared state, so it works from any container and
+any version, including a one-off `docker compose run --rm sync-<net> …`
+next to a running daemon. Its WAL line is `empty`, or the pending blocks and
+the version that wrote them, or `?` when the check failed.
 
 Before every ingest, the newest raw block hashes are compared with the
 node's. A mismatch means a reorg went deeper than the reorg backoff, and the

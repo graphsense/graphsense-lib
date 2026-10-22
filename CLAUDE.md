@@ -75,6 +75,25 @@ from the request model's `api_model_config(EXAMPLE)`, which
 `templates/api_doc_example.mustache`. Without a model example, a body snippet
 sends `Model()` and fails. Example data must be real on-chain data.
 
+## Sync daemon: stopping must release locks
+
+`graphsense-cli sync run` (`src/graphsenselib/sync/`) is deployed so that a
+plain `docker compose up -d` with a new image tag is a safe switch (README
+"Continuous Sync"). That rests on three things; keep them:
+
+- **SIGTERM unwinds, it does not kill.** `cli/main.py` installs
+  `utils/signals.install_sigterm_as_interrupt` (SIGTERM -> KeyboardInterrupt),
+  and leaving `graceful_ctlc_shutdown` restores the previous handler, never
+  `SIG_DFL`. Python's default SIGTERM skips every `finally`, and the Redis
+  lock has no TTL by design (`utils/locking.py`), so a job stopped outside its
+  graceful section used to leave the network blocked until `redis-cli DEL`.
+- **Grace order: compose `stop_grace_period` (10m) > `sync.stop_grace_seconds`
+  (480s) > a delta-update batch.** A batch killed mid-write leaves a WAL record,
+  and the next version refuses to replay another version's record.
+- **Pool workers ignore SIGTERM** (`db/parallel.py`); the job's main process
+  owns the stop. A Delta Lake compaction still cannot stop midway; if killed,
+  its lock stays behind (accepted, the data is safe).
+
 ## Delta updater must stay in tandem with the Spark pipeline (`spark/`)
 
 The delta updater (`src/graphsenselib/deltaupdate/`) incrementally produces the
