@@ -608,7 +608,7 @@ environments:
       zec:
         ingest_config:
           sinks: [cassandra, delta]
-          reorg_backoff_blocks: 24        # default 150; see CHANGELOG
+          reorg_backoff_blocks: 24        # default 100; see CHANGELOG
         delta_update_config:
           forward_fill_rates: true
           write_batch_size: 40

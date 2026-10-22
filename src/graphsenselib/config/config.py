@@ -44,8 +44,8 @@ reorg_backoff_blocks = {
     "trx": 20,
     "eth": 70,
     "btc": 3,
-    "bch": 15,
-    "zec": 150,
+    "bch": 10,  # BCHN finalizes blocks at depth 10
+    "zec": 100,  # zcashd and Zebra reject reorgs deeper than 99 blocks
     "ltc": 12,
 }
 

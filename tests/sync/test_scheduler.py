@@ -141,6 +141,22 @@ def test_ingest_slice_then_delta_update(setup):
     assert alerts == []
 
 
+@pytest.mark.parametrize("switch", ["keyspace", "sync"])
+def test_delta_update_switched_off(setup, switch):
+    env = make_env()
+    if switch == "keyspace":
+        env.keyspaces["zec"].disable_delta_updates = True
+    else:
+        env.sync.networks["zec"].delta_update = False
+    sched, probe, runner, alerts, clock = setup(env=env)
+    one_tick(sched)
+
+    assert [step for step, _ in runner.calls] == ["ingest"]
+    assert probe.transformed == 100
+    assert sched.store.read_status("zec")["last_result"] == "ok"
+    assert alerts == []
+
+
 def test_extra_args_and_rates_interval(setup):
     env = make_env(
         sync={

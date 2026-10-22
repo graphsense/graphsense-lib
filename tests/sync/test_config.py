@@ -21,7 +21,10 @@ def test_scheduler_owned_args_are_rejected(args):
 
 
 def test_reorg_backoff_override():
-    assert get_reorg_backoff_blocks("zec") == 150
+    # Defaults cover the deepest reorg the node accepts: zcashd/Zebra reject
+    # reorgs deeper than 99 blocks, BCHN finalizes at depth 10.
+    assert get_reorg_backoff_blocks("zec") == 100
+    assert get_reorg_backoff_blocks("bch") == 10
     assert get_reorg_backoff_blocks("zec", override=24) == 24
     with pytest.raises(ValidationError):
         IngestConfig(reorg_backoff_blocks=0)
