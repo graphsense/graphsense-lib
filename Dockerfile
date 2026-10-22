@@ -3,17 +3,24 @@
 # =============================================================================
 # Pinned external images, declared as named stages.
 #
-# Both are pinned rather than floating (uv was :latest, temurin an unpinned
-# tag): a digest move on either invalidates every layer below the COPY that
-# consumes it, which made prod re-pull hundreds of MB of otherwise unchanged
-# apt/Java/site-packages layers.
+# All are pinned rather than floating (uv was :latest, temurin and python
+# unpinned tags): a digest move on either invalidates every layer below the
+# COPY or FROM that consumes it, which made prod re-pull hundreds of MB of
+# otherwise unchanged apt/Java/site-packages layers. The python base moved
+# with every upstream rebuild of the tag (Debian security fixes, patch
+# releases), so an unrelated develop push re-shipped the whole ~800 MB image.
 #
 # They are stages instead of inline `COPY --from=ghcr.io/...` refs so each
 # pin exists exactly once AND Dependabot can bump it: the docker ecosystem
 # only parses FROM lines — image references inside COPY --from are still
 # ignored (dependabot-core#5103, PR #12988 open). With the pin on a FROM
 # line, the weekly docker updater opens a normal bump PR (tag for uv, digest
-# for temurin) and CI proves it before it reaches prod.
+# for temurin and python) and CI proves it before it reaches prod.
+#
+# The python base is the exception to "pin exists once": it is FROM of both
+# the builder and the runtime stage, pinned to the same digest on both lines.
+# Not a shared `AS python-base` stage, because Dependabot would then try to
+# resolve `FROM python-base` as an image. It bumps both lines in one PR.
 # =============================================================================
 FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
 FROM eclipse-temurin:11-jre-jammy@sha256:1adc4db6079f9a35c45f36b0907dd94232a0b9b409a4088a7fe0c77b14e99294 AS java11
@@ -23,7 +30,7 @@ FROM eclipse-temurin:11-jre-jammy@sha256:1adc4db6079f9a35c45f36b0907dd94232a0b9b
 # Carries gcc/g++/make/cmake/curl/binutils/rust/libpq-dev; none of it leaks
 # into the runtime image.
 # =============================================================================
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.13-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS builder
 COPY --from=uv /uv /uvx /bin/
 
 ENV UV_ONLY_BINARY=1
@@ -102,7 +109,7 @@ RUN make build
 # Stage 2: runtime — fresh slim base, only the wheels and runtime OS deps.
 # This is the image that ships.
 # =============================================================================
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530
 COPY --from=uv /uv /uvx /bin/
 
 LABEL org.opencontainers.image.title="graphsense-lib"
