@@ -677,7 +677,16 @@ the container for what can run at once.
 Switch a network's version only while its delta update has no pending WAL
 record (written by another version, the record blocks the next run until
 replayed with `--force-wal-replay`), and go back to an older version only if
-the newer one's schema migrations are backward compatible.
+the newer one's schema migrations are backward compatible. `sync status`
+shows the WAL of every network (`empty`, or the pending blocks and the
+version that wrote them), and `sync pause --wait` waits for the running cycle
+to finish and then shows that status, so a switch is:
+
+```bash
+graphsense-cli sync pause -e prod -c zec --reason "image switch" --for 30m --wait
+# WAL "empty": replace the container with the new image tag, then
+graphsense-cli sync resume -e prod -c zec
+```
 
 ```bash
 graphsense-cli sync status -e prod

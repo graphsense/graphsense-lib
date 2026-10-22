@@ -68,3 +68,85 @@ def test_pause_status_resume_without_redis(tmp_path):
         r = CliRunner().invoke(cli, base + ["resume", "-e", "dev", "-c", "zec"])
         assert "Resumed" in r.output
     assert (tmp_path / "state" / "dev").is_dir()
+
+
+class _FakeProbe:
+    header = None
+    error = None
+
+    def __init__(self, env, network, ks):
+        pass
+
+    def wal_pending(self):
+        if self.error is not None:
+            raise self.error
+        return self.header
+
+    def close(self):
+        pass
+
+
+def test_wal_state(monkeypatch):
+    from graphsenselib.sync import cli as sync_cli
+
+    monkeypatch.setattr("graphsenselib.sync.probe.ChainProbe", _FakeProbe)
+    assert sync_cli._wal_state("dev", "zec", object()) == "empty"
+    _FakeProbe.header = {"block_lo": 5, "block_hi": 9, "code_version": "2.18.0"}
+    assert sync_cli._wal_state("dev", "zec", object()) == "pending 5-9 (2.18.0)"
+    _FakeProbe.header, _FakeProbe.error = None, RuntimeError("no cassandra")
+    assert sync_cli._wal_state("dev", "zec", object()) == "?"
+    _FakeProbe.error = None
+    assert sync_cli._wal_state("dev", "zec", None) == ""
+
+
+def test_pause_wait_until_cycle_finished(tmp_path, monkeypatch):
+    import threading
+
+    from graphsenselib.sync.state import FileStateStore
+
+    cfg = tmp_path / "gs.yaml"
+    cfg.write_text(CONFIG.replace("CHANNEL", "stable"))
+    monkeypatch.setattr("graphsenselib.sync.cli.FILE_STATE_DIR", str(tmp_path / "st"))
+    monkeypatch.setattr("graphsenselib.sync.cli._WAIT_POLL_SECONDS", 0.05)
+    monkeypatch.setattr(
+        "graphsenselib.sync.cli._wal_state", lambda env, network, ks: "empty"
+    )
+    store = FileStateStore(str(tmp_path / "st" / "dev"))
+    store.announce_daemon("d1", {"channel": "stable", "running": ["zec"]})
+    # the daemon's cycle ends shortly after the pause
+    threading.Timer(
+        0.3, lambda: store.announce_daemon("d1", {"channel": "stable", "running": []})
+    ).start()
+
+    r = CliRunner().invoke(
+        cli,
+        ["--config-file", str(cfg), "sync", "pause", "-e", "dev", "-c", "zec"]
+        + ["--reason", "image switch", "--wait"],
+    )
+    assert r.exit_code == 0, r.output
+    assert "Waiting for the running zec cycle" in r.output
+    assert "No zec job running" in r.output
+    assert "empty" in r.output  # status table with the WAL column
+    assert store.get_pause("zec")["reason"] == "image switch"
+
+
+def test_pause_wait_stops_when_pause_is_lifted(tmp_path, monkeypatch):
+    import threading
+
+    from graphsenselib.sync.state import FileStateStore
+
+    cfg = tmp_path / "gs.yaml"
+    cfg.write_text(CONFIG.replace("CHANNEL", "stable"))
+    monkeypatch.setattr("graphsenselib.sync.cli.FILE_STATE_DIR", str(tmp_path / "st"))
+    monkeypatch.setattr("graphsenselib.sync.cli._WAIT_POLL_SECONDS", 0.05)
+    store = FileStateStore(str(tmp_path / "st" / "dev"))
+    store.announce_daemon("d1", {"channel": "stable", "running": ["zec"]})
+    threading.Timer(0.3, lambda: store.resume("zec")).start()
+
+    r = CliRunner().invoke(
+        cli,
+        ["--config-file", str(cfg), "sync", "pause", "-e", "dev", "-c", "zec"]
+        + ["--reason", "x", "--wait"],
+    )
+    assert r.exit_code == 0, r.output
+    assert "no longer paused" in r.output

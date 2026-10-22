@@ -109,6 +109,17 @@ class ChainProbe:
     def raw_block_timestamp(self, height: int) -> Optional[datetime]:
         return self.db().raw.get_block_timestamp(height)
 
+    def wal_pending(self) -> Optional[dict]:
+        """Header of a pending delta-update WAL record (run_id, code_version,
+        block_lo, block_hi, ...), or None, also when there is no WAL table.
+        Read only: never ensure_schema/recover from here."""
+        from ..deltaupdate.wal import WAL_TABLE_NAME, DeltaWal
+
+        tdb = self.db().transformed
+        if not tdb._db.has_table(tdb.get_keyspace(), WAL_TABLE_NAME):
+            return None
+        return DeltaWal(tdb, "sync-status", "n/a").pending_header()
+
     def reset(self):
         """Drop connections after an error; the next call reconnects."""
         self.close()

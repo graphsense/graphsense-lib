@@ -128,12 +128,19 @@ def run(ctx, env: str, channel: str, once: bool, only):
 @sync.command("status")
 @require_environment()
 def status(env: str):
-    """Show every configured network: owner, pause, heights, last result."""
+    """Show every configured network: owner, pause, heights, last result and
+    whether a delta-update WAL record is pending."""
+    _print_status(env, _store(env))
+
+
+def _print_status(env: str, store, only: Optional[str] = None):
     from rich.table import Table
 
-    store = _store(env)
-    sync_cfg = get_config().get_environment(env).sync
+    environment = get_config().get_environment(env)
+    sync_cfg = environment.sync
     networks = sorted(sync_cfg.networks) if sync_cfg else []
+    if only is not None:
+        networks = [n for n in networks if n == only]
 
     daemons = Table(title=f"sync daemons ({env})")
     for col in ("id", "channel", "host", "version", "up since", "running"):
@@ -158,6 +165,7 @@ def status(env: str):
         "raw",
         "behind",
         "transformed",
+        "WAL",
         "last result",
         "last success",
         "next cycle",
@@ -192,11 +200,39 @@ def status(env: str):
             _fmt_int(raw),
             behind,
             _fmt_int(st.get("transformed")),
+            _wal_state(env, network, environment.keyspaces.get(network)),
             _shorten(str(st.get("last_result", ""))),
             _fmt_ts(st.get("last_success_at")),
             _fmt_ts(st.get("next_cycle_at")),
         )
     console.print(table)
+
+
+def _wal_state(env: str, network: str, ks) -> str:
+    """'empty', 'pending <blocks> (<version>)', or '?' if the check failed."""
+    if ks is None:
+        return ""
+    from .probe import ChainProbe
+
+    probe = ChainProbe(env, network, ks)
+    try:
+        header = probe.wal_pending()
+    except Exception as e:
+        logger.warning(f"{network}: WAL check failed: {e}")
+        return "?"
+    finally:
+        probe.close()
+    if header is None:
+        return "empty"
+    return (
+        f"pending {header['block_lo']}-{header['block_hi']} ({header['code_version']})"
+    )
+
+
+def _running_somewhere(store, network: str) -> bool:
+    """A daemon is in the middle of a cycle of this network. Heartbeats expire
+    after DAEMON_TTL_SECONDS, so a dead daemon does not count for long."""
+    return any(network in info.get("running", []) for _, info in store.list_daemons())
 
 
 @sync.command("pause")
@@ -210,16 +246,38 @@ def status(env: str):
     help="Resume automatically after this long, e.g. 30m, 6h, 2d. "
     "Default: until `sync resume`.",
 )
-def pause(env: str, currency: str, reason: str, duration: Optional[str]):
+@click.option(
+    "--wait",
+    is_flag=True,
+    help="Wait until the running cycle (if any) has finished, then show the "
+    "network's status, WAL check included. Ctrl-C stops waiting; the pause stays.",
+)
+def pause(env: str, currency: str, reason: str, duration: Optional[str], wait: bool):
     """Stop starting new jobs for a network. A running job finishes first."""
     seconds = _parse_duration(duration) if duration else None
     by = os.environ.get("USER") or "unknown"
-    _store(env).pause(currency, reason, by=by, seconds=seconds)
+    store = _store(env)
+    store.pause(currency, reason, by=by, seconds=seconds)
     console.print(
         f"Paused {env}/{currency}"
         + (f" for {duration}" if duration else " until resumed")
         + ". A job already running finishes first."
     )
+    if not wait:
+        return
+    if _running_somewhere(store, currency):
+        console.print(f"Waiting for the running {currency} cycle to finish ...")
+        while _running_somewhere(store, currency):
+            if store.get_pause(currency) is None:
+                # expired (--for) or resumed meanwhile: cycles start again
+                console.print(f"{env}/{currency} is no longer paused, stopped waiting.")
+                return
+            time.sleep(_WAIT_POLL_SECONDS)
+    console.print(f"No {currency} job running.")
+    _print_status(env, store, only=currency)
+
+
+_WAIT_POLL_SECONDS = 2
 
 
 @sync.command("resume")
