@@ -630,6 +630,83 @@ class TestEdgeCaseRegressionSearch(EdgeCaseRegressionTestBase):
 
 
 # =============================================================================
+# Bech32 in all uppercase (BIP173, QR codes) vs base58 lookalikes
+# =============================================================================
+
+BTC_BECH32 = "bc1qx8hyag2nvjjkkhdgjrslwlykm86pflqngexaxn"
+LTC_BECH32 = "ltc1q000hma9ysnh7ref6crn45448vnw8vlwawlmxqe"
+# base58: starts with "LTC1" by chance (always "L", then random characters)
+LTC_BASE58_LOOKALIKE = "LTC1A4GhnLkKbpfkaDyXHTeShP2YksUVgY"
+
+
+class TestEdgeCaseRegressionBech32Case(EdgeCaseRegressionTestBase):
+    """Spellings whose results must not change: lowercase bech32, mixed case
+    (invalid bech32, finds nothing), a base58 address that starts like
+    bech32, and the address route, which already accepted uppercase bech32."""
+
+    @pytest.mark.regression
+    def test_search_btc_bech32_lowercase(self):
+        self.assert_call_equal(f"search?q={BTC_BECH32}&currency=btc")
+
+    @pytest.mark.regression
+    def test_search_ltc_bech32_lowercase_prefix(self):
+        self.assert_call_equal(f"search?q={LTC_BECH32[:10]}&limit=100&currency=ltc")
+
+    @pytest.mark.regression
+    def test_search_bech32_mixed_case(self):
+        self.assert_call_equal(f"search?q=bC1{BTC_BECH32[3:]}&currency=btc")
+
+    @pytest.mark.regression
+    def test_search_ltc_base58_lookalike_prefix(self):
+        # all uppercase with a bech32 prefix, yet the start of a base58 address
+        self.assert_call_equal("search?q=LTC1A4G&limit=100&currency=ltc")
+
+    @pytest.mark.regression
+    def test_address_btc_bech32_uppercase(self):
+        self.assert_call_equal(f"btc/addresses/{BTC_BECH32.upper()}")
+
+    @pytest.mark.regression
+    def test_address_ltc_bech32_uppercase(self):
+        self.assert_call_equal(f"ltc/addresses/{LTC_BECH32.upper()}")
+
+
+class TestUppercaseBech32Search:
+    """An all-uppercase bech32 query finds the address, which is stored in
+    lowercase, from the full address or its first characters; a base58
+    address that starts the same way is still found as typed.
+
+    Current-server invariant, not a baseline comparison: deployed prod finds
+    nothing for the uppercase form.
+    """
+
+    def _addresses(self, query, currency):
+        data, _ = get_data_from_endpoint(
+            CURRENT_SERVER, f"search?q={query}&limit=100&currency={currency}"
+        )
+        return [a for c in data["currencies"] for a in c["addresses"]]
+
+    @pytest.mark.regression
+    @pytest.mark.parametrize(
+        "query,currency,address",
+        [
+            (BTC_BECH32.upper(), "btc", BTC_BECH32),
+            (BTC_BECH32.upper()[:12], "btc", BTC_BECH32),
+            (LTC_BECH32.upper(), "ltc", LTC_BECH32),
+            (LTC_BECH32.upper()[:12], "ltc", LTC_BECH32),
+            ("LTC1A4G", "ltc", LTC_BASE58_LOOKALIKE),
+        ],
+    )
+    def test_finds(self, query, currency, address):
+        assert address in self._addresses(query, currency)
+
+    @pytest.mark.regression
+    def test_uppercase_finds_what_lowercase_finds(self):
+        # no base58 BTC address starts with "BC1", so the results are the same
+        prefix = BTC_BECH32[:12]
+        assert self._addresses(prefix.upper(), "btc") == self._addresses(prefix, "btc")
+
+
+# =============================================================================
 # Cross-chain related addresses (pubkey symmetry)
 # =============================================================================
 
