@@ -92,7 +92,7 @@ updates:
         patterns:
           - "*"
     # Two of the three pinned images must not move on their own:
-    #   * python — the project is `requires-python = ">=3.10, <3.14"`, the
+    #   * python — the project is `requires-python = ">=3.11, <3.14"`, the
     #     runtime stage prunes a hardcoded /usr/local/lib/python3.13 path, and
     #     psycopg2-binary/pyspark have no wheels beyond 3.13. A 3.14 bump fails
     #     the image build (PR #127); raise it deliberately together with

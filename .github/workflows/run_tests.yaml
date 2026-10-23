@@ -32,11 +32,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13"]
         include:
           # One leg is the "primary": it measures coverage and runs the
           # reduced-extras pass. Both check properties of the codebase, not of
-          # the interpreter, so doing them on all four legs cost wall-clock
+          # the interpreter, so doing them on all three legs cost wall-clock
           # (~18% for coverage, plus a second full suite run for the extras
           # pass) without testing anything the primary leg does not already.
           - python: "3.11"

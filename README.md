@@ -1055,7 +1055,7 @@ if parsed:
 
 ## Development
 
-**Important:** Requires Python >=3.10, <3.14 and [uv](https://docs.astral.sh/uv/) >=0.13
+**Important:** Requires Python >=3.11, <3.14 and [uv](https://docs.astral.sh/uv/) >=0.13
 (`required-version` in `pyproject.toml`; run `uv self update` if uv refuses to start).
 
 ### Setup Development Environment
@@ -1211,7 +1211,7 @@ Some components use OpenSSL hash functions that aren't available by default in O
 1. **Connection Refused**: Verify Cassandra is running and accessible
 2. **Schema Validation Errors**: Ensure database schema matches expected version
 3. **Import Errors**: Install with `[all]` option for complete feature set
-4. **Python Version**: Requires Python >=3.10, <3.13
+4. **Python Version**: Requires Python >=3.11, <3.14
 
 ### Getting Help
 
