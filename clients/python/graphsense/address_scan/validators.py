@@ -258,6 +258,83 @@ def _keccak256(data: bytes) -> bytes:
 # btc/ltc/zec/trx copied verbatim from utils/address.py (pure already).
 
 
+def base58_check_payload(s: str) -> "bytes | None":
+    """The payload (version + body, without checksum) of a Base58Check
+    string, or None if it is not one."""
+    try:
+        decoded = base58_check_decode(s)
+    except ValueError:
+        return None
+    if len(decoded) < 5:
+        return None
+    payload, checksum = decoded[:-4], decoded[-4:]
+    if hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4] != checksum:
+        return None
+    return payload
+
+
+def base58_version_ok(s: str, versions: dict) -> bool:
+    """True if ``s`` is Base58Check with one of ``versions`` (version bytes
+    -> allowed body lengths). A valid checksum alone says nothing: private
+    keys, extended keys and other chains' addresses have one too."""
+    payload = base58_check_payload(s)
+    if payload is None:
+        return False
+    for version, lengths in versions.items():
+        if payload.startswith(version) and len(payload) - len(version) in lengths:
+            return True
+    return False
+
+
+_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def bech32_data(s: str, expected_hrp: str) -> "tuple | None":
+    """(checksum spec, 5-bit data without checksum) of a bech32/bech32m
+    string with ``expected_hrp``, else None. Unlike ``bech32_validate`` no
+    segwit rules and no 90-character limit (Zcash addresses are longer)."""
+    if s != s.lower() and s != s.upper():
+        return None
+    s = s.lower()
+    pos = s.rfind("1")
+    if pos < 1 or pos + 7 > len(s) or s[:pos] != expected_hrp:
+        return None
+    data_part = s[pos + 1 :]
+    if any(c not in _BECH32_CHARSET for c in data_part):
+        return None
+    data = [_BECH32_CHARSET.find(c) for c in data_part]
+    spec = bech32_checksum_spec(expected_hrp, data)
+    if spec is None:
+        return None
+    return spec, data[:-6]
+
+
+# Base58Check version bytes -> length of the hash that follows.
+_BTC_BASE58_VERSIONS = {
+    b"\x00": {20},  # P2PKH
+    b"\x05": {20},  # P2SH
+    b"\x6f": {20},  # testnet P2PKH
+    b"\xc4": {20},  # testnet P2SH
+}
+_LTC_BASE58_VERSIONS = {
+    b"\x30": {20},  # L, P2PKH
+    b"\x32": {20},  # M, P2SH
+    b"\x05": {20},  # 3, P2SH (old, shared with BTC)
+    b"\x6f": {20},  # testnet P2PKH
+    b"\xc4": {20},  # testnet P2SH (old)
+    b"\x3a": {20},  # testnet P2SH
+}
+_ZEC_BASE58_VERSIONS = {
+    b"\x1c\xb8": {20},  # t1, P2PKH
+    b"\x1c\xbd": {20},  # t3, P2SH
+    b"\x1d\x25": {20},  # tm, testnet P2PKH
+    b"\x1c\xba": {20},  # t2, testnet P2SH
+    b"\x16\x9a": {64},  # zc, Sprout
+    b"\x16\xb6": {64},  # zt, testnet Sprout
+}
+_TRX_BASE58_VERSIONS = {b"\x41": {20}}
+
+
 def validate_btc_address(address: str) -> bool:
     if not address:
         return False
@@ -265,13 +342,7 @@ def validate_btc_address(address: str) -> bool:
         return bech32_validate(address, "bc")
     elif address.lower().startswith("tb1"):
         return bech32_validate(address, "tb")
-    elif address[0] in "13":
-        return base58_check_validate(address)
-    elif address[0] in "2mn":
-        return base58_check_validate(address)
-    elif address[0] in "59LKc":
-        return base58_check_validate(address)
-    return False
+    return base58_version_ok(address, _BTC_BASE58_VERSIONS)
 
 
 def validate_ltc_address(address: str) -> bool:
@@ -279,27 +350,25 @@ def validate_ltc_address(address: str) -> bool:
         return False
     if address.lower().startswith("ltc1"):
         return bech32_validate(address, "ltc")
-    elif address[0] in "L3M":
-        return base58_check_validate(address)
-    elif address[0] in "2mn":
-        return base58_check_validate(address)
-    return False
+    return base58_version_ok(address, _LTC_BASE58_VERSIONS)
 
 
 def validate_zec_address(address: str) -> bool:
     if not address:
         return False
-    if address.startswith("t1") or address.startswith("t3"):
-        return base58_check_validate(address)
-    elif address.startswith("tm"):
-        return base58_check_validate(address)
-    elif address.startswith("zc") and len(address) == 95:
-        return base58_check_validate(address)
-    elif (address.startswith("zs") or address.startswith("ztestsapling")) and len(
-        address
-    ) in [78, 88]:
-        return base58_check_validate(address)
-    return False
+    lowered = address.lower()
+    for hrp in ("zs", "ztestsapling"):
+        if lowered.startswith(hrp + "1"):
+            decoded = bech32_data(address, hrp)
+            if decoded is None or decoded[0] != "bech32":
+                return False
+            body = bech32_convertbits(decoded[1], 5, 8, False)
+            return body is not None and len(body) == 43
+    for hrp in ("u", "utest"):
+        if lowered.startswith(hrp + "1"):
+            decoded = bech32_data(address, hrp)
+            return decoded is not None and decoded[0] == "bech32m"
+    return base58_version_ok(address, _ZEC_BASE58_VERSIONS)
 
 
 def validate_trx_address(address: str) -> bool:
@@ -307,7 +376,7 @@ def validate_trx_address(address: str) -> bool:
         return False
     if not address.startswith("T") or len(address) != 34:
         return False
-    return base58_check_validate(address)
+    return base58_version_ok(address, _TRX_BASE58_VERSIONS)
 
 
 def validate_eth_address(address: str) -> bool:

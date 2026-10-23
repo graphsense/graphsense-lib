@@ -33,6 +33,11 @@ VALID = [
     "0x52908400098527886E0F7030069857D2E4169EE7",  # eth all-upper
     "rMHQtBt4suHhw77cLCPX9d2MVhf9JUQ8JZ",  # xrp
     "rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh",  # xrp
+    "zs1xum6qs4t6tar3369rl9qj9ptaemgs6mh9eht4y8zcxg2t3ls9738zdaa2e68vcrevyatsmxfudd",  # zec sapling
+    # valid Base58Check, but no address
+    "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ",  # WIF
+    "KwdMAjGmerYanjeui5SHS7JkmpZvVipYvB2LJGU1ZxJwYvP98617",  # WIF compressed
+    "xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3",  # extended key
 ]
 
 

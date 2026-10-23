@@ -384,7 +384,11 @@ def test_context_obj_with_date_is_serialized(tagpack_context_date_obj):
 
 
 def test_verify_addresses(tagpack):
-    assert tagpack.verify_addresses() is None
+    findings = tagpack.verify_addresses()
+    assert [(f.network, f.address) for f in findings] == [
+        ("BTC", "123Bitcoin45"),
+        ("ETH", "123Bitcoin66"),
+    ]
 
 
 def test_valid_addresses(tagpack, caplog):
@@ -422,7 +426,7 @@ def test_invalid_addresses(tagpack, caplog):
         record.message for record in caplog.records if record.levelname == "WARNING"
     ]
     assert len(log_messages) == 1
-    assert "possible invalid address" in log_messages[0]
+    assert "invalid address(es)" in log_messages[0]
     assert "BTC" in log_messages[0]
     assert "ETH" in log_messages[0]
 
@@ -435,7 +439,7 @@ def test_verify_addresses_with_missing_uri_does_not_fail(tagpack, caplog):
         record.message for record in caplog.records if record.levelname == "WARNING"
     ]
     assert len(log_messages) == 1
-    assert "possible invalid address" in log_messages[0]
+    assert "invalid address(es)" in log_messages[0]
 
 
 def test_verify_addresses_uses_shortened_source_name(tagpack, caplog):

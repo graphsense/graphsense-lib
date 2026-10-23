@@ -13,7 +13,6 @@ from collections import UserDict, defaultdict
 from datetime import date, datetime
 from typing import Optional, Tuple
 
-from graphsenselib.config import supported_base_currencies
 import giturlparse as gup
 import yaml
 from git import Repo
@@ -35,7 +34,15 @@ from graphsenselib.tagpack.utils import (
     normalize_tag_address,
     try_parse_date,
 )
-from graphsenselib.utils.address import validate_address
+from graphsenselib.tagpack.address_check import (
+    ADDRESS_VALIDATION_SKIP,
+    UNDECODED_ESCAPE,
+    AddressFinding,
+    address_hint,
+    address_line_numbers,
+    autofill_hints,
+)
+from graphsenselib.utils.address import is_verifiable_network, validate_address
 from graphsenselib.tagpack.cmd_utils import get_user_choice
 import logging
 
@@ -449,6 +456,12 @@ def text_problem(text: str) -> Optional[str]:
             "is mis-encoded (UTF-8 bytes read as Latin-1/cp1252); "
             f"the intended text is probably {fixed!r}"
         )
+    m = UNDECODED_ESCAPE.search(text)
+    if m:
+        return (
+            f"contains the undecoded escape sequence {m.group(0)!r} "
+            "(the escape as text instead of the character it stands for)"
+        )
     bad = sorted(
         {
             c
@@ -499,6 +512,12 @@ def check_text_field(
                 walk(k, f"{where} key {k!r}")
                 walk(item, f"{where} key {k!r}")
 
+    if field_name == "context" and isinstance(value, str):
+        # a JSON string: its escapes are JSON's, check the decoded values
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
     walk(value, "")
 
 
@@ -686,8 +705,6 @@ class TagPack(object):
         # the yaml parser does not deal with string quoted dates.
         # so '2022-10-1' is not interpreted as a date. This line fixes this.
         apply_to_dict_field(self.contents, "lastmod", try_parse_date, fail=False)
-
-    verifiable_currencies = supported_base_currencies
 
     @staticmethod
     def _db_unique_key_for_tag(tag):
@@ -972,6 +989,12 @@ class TagPack(object):
             if field != "tags":  # checked per tag below, with the tag named
                 check_text_field(field, value, "header", text_warnings)
 
+            if field == "address_validation" and value != ADDRESS_VALIDATION_SKIP:
+                raise ValidationError(
+                    f"Header field address_validation must be "
+                    f"'{ADDRESS_VALIDATION_SKIP}'"
+                )
+
             if field == "is_public":
                 logger.warning(
                     "YAML field 'is_public' is DEPRECATED and will be ignored. "
@@ -1025,6 +1048,12 @@ class TagPack(object):
                     raise ValidationError(e4.format(field, tag))
 
                 check_text_field(field, value, tag, text_warnings)
+
+                if field == "address_validation" and value != ADDRESS_VALIDATION_SKIP:
+                    raise ValidationError(
+                        f"Field address_validation must be "
+                        f"'{ADDRESS_VALIDATION_SKIP}' in {tag}"
+                    )
 
                 # check types and taxomomy use
                 try:
@@ -1097,63 +1126,110 @@ class TagPack(object):
             logger.warning(msg)
         return True
 
-    def verify_addresses(self):
-        """
-        Verify valid blockchain addresses. In
-        general, this is done by decoding the address (e.g. to base58) and
-        calculating a checksum using the first bytes of the decoded value,
-        which should match with the last bytes of the decoded value.
-        """
+    def verify_addresses(self, with_hints: bool = False) -> list:
+        """Check every address with the validator of its network (checksum,
+        version byte, length) and log one summary per pack.
 
+        Tags with ``address_validation: skip`` are left out: sources kept
+        verbatim on purpose (sanctions lists with ID numbers, dumps).
+
+        Returns:
+            list[AddressFinding]: invalid addresses and addresses with
+            whitespace. Every finding has a hint if ``with_hints``, else only
+            the logged samples have one (hints try other validators, too slow
+            for 100k invalid addresses that nobody reads).
+        """
         unsupported = defaultdict(set)
-        invalid = defaultdict(list)  # cupper -> [address, ...]
-        whitespace_addrs = []
+        findings = []
+        whitespace = []
+        skipped = 0
+        valid = set()
         for tag in self.get_unique_tags():
-            currency = tag.all_fields.get("currency", "").lower()
-            cupper = currency.upper()
             address = tag.all_fields.get("address")
-            if address is not None:
-                if len(address) != len(address.strip()):
-                    whitespace_addrs.append(address)
-                elif currency in self.verifiable_currencies:
-                    v = validate_address(currency, address)
-                    if not v:
-                        invalid[cupper].append(address)
+            if address is None:
+                continue
+            if tag.all_fields.get("address_validation") == ADDRESS_VALIDATION_SKIP:
+                skipped += 1
+                continue
+            network = str(tag.all_fields.get("network", "")).lower()
+            if len(address) != len(address.strip()):
+                finding = AddressFinding(
+                    self._source_file(), 0, network.upper(), address
+                )
+                finding.hint = "leading or trailing whitespace"
+                whitespace.append(finding)
+            elif is_verifiable_network(network):
+                if validate_address(network, address):
+                    valid.add(address)
                 else:
-                    unsupported[cupper].add(address)
+                    finding = AddressFinding(
+                        self._source_file(), 0, network.upper(), address
+                    )
+                    finding.context = tag.all_fields.get("context")
+                    findings.append(finding)
+            else:
+                unsupported[network.upper()].add(address)
 
         _SAMPLE_SIZE = 3
+        autofill = autofill_hints([f.address for f in findings], valid)
+        for i, f in enumerate(findings):
+            if with_hints or i < _SAMPLE_SIZE:
+                f.hint = autofill.get(f.address) or address_hint(
+                    f.network.lower(), f.address, f.context
+                )
+        if (findings or whitespace) and with_hints:
+            lines = address_line_numbers(
+                self._source_file(), {f.address for f in findings + whitespace}
+            )
+            for f in findings + whitespace:
+                f.line = lines.get(f.address, 0)
 
         def _fmt_summary(items, repr_items=False):
             total = len(items)
-            sample = list(items)[:_SAMPLE_SIZE]
-            samples = ", ".join(repr(a) if repr_items else a for a in sample)
+            sample = []
+            for f in items[:_SAMPLE_SIZE]:
+                a = repr(f.address) if repr_items else f.address
+                sample.append(f"{a} ({f.hint})" if f.hint and not repr_items else a)
+            samples = ", ".join(sample)
             extra = f" (+{total - _SAMPLE_SIZE} more)" if total > _SAMPLE_SIZE else ""
             return total, samples, extra
 
         src_prefix = self._source_prefix()
 
-        if whitespace_addrs:
-            total, samples, extra = _fmt_summary(whitespace_addrs, repr_items=True)
+        if whitespace:
+            total, samples, extra = _fmt_summary(whitespace, repr_items=True)
             logger.warning(
                 f"{src_prefix}{total} address(es) contain whitespace: {samples}{extra}"
             )
 
-        if invalid:
-            all_invalid = [a for addrs in invalid.values() for a in addrs]
-            currencies = ", ".join(sorted(invalid.keys()))
-            total, samples, extra = _fmt_summary(all_invalid)
+        if findings:
+            networks = ", ".join(sorted({f.network for f in findings}))
+            total, samples, extra = _fmt_summary(findings)
             logger.warning(
-                f"{src_prefix}{total} possible invalid address(es) [{currencies}]: {samples}{extra}"
+                f"{src_prefix}{total} invalid address(es) [{networks}]: "
+                f"{samples}{extra}"
+            )
+
+        if skipped:
+            logger.info(
+                f"{src_prefix}{skipped} address(es) not verified "
+                f"(address_validation: {ADDRESS_VALIDATION_SKIP})"
             )
 
         if unsupported:
             total_unsupported = sum(len(v) for v in unsupported.values())
-            currencies = ", ".join(sorted(unsupported.keys()))
-            logger.warning(
-                f"{src_prefix}Address verification skipped for {total_unsupported} address(es) "
-                f"in unsupported currencies [{currencies}]"
+            networks = ", ".join(sorted(unsupported.keys()))
+            logger.info(
+                f"{src_prefix}Address verification skipped for {total_unsupported} "
+                f"address(es) in unsupported networks [{networks}]"
             )
+
+        return whitespace + findings
+
+    def _source_file(self) -> str:
+        if isinstance(self.uri, (str, os.PathLike)):
+            return os.fspath(self.uri)
+        return ""
 
     def add_actors(
         self, find_actor_candidates, only_categories=None, user_choice_cache={}
