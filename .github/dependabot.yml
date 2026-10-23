@@ -140,6 +140,10 @@ updates:
 
   # Workflow actions are pinned to commit SHAs (supply-chain hardening);
   # without this they would silently rot at whatever SHA they were pinned to.
+  # Dependabot keeps a ref's precision: `@v7` is only ever bumped to another
+  # major-only tag. astral-sh/setup-uv stopped publishing those with v8, so
+  # `@v7` sat three majors behind with no PR. Pin actions by SHA with a
+  # `# vX.Y.Z` comment (as the docker/* actions are) so every release is seen.
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "develop"

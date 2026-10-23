@@ -47,7 +47,7 @@ jobs:
 
         echo "Client release versions aligned (tag=$TAG_VERSION, api=$API_VERSION, client=$CLIENT_VERSION)"
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       with:
         version: "latest"
     - name: Install requirements
