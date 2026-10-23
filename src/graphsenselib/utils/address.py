@@ -914,6 +914,33 @@ def validate_sol_address(address: str) -> bool:
         return False
 
 
+def validate_algo_address(address: str) -> bool:
+    """Validate an Algorand address: base32 (no padding) of a 32-byte public
+    key and a 4-byte checksum, the last 4 bytes of its SHA-512/256."""
+    import base64
+
+    if not address or len(address) != 58:
+        return False
+    try:
+        raw = base64.b32decode(address + "======")
+    except ValueError:
+        return False
+    # the last character carries 2 padding bits: only one spelling is valid
+    if base64.b32encode(raw).decode().rstrip("=") != address:
+        return False
+    key, checksum = raw[:32], raw[32:]
+    return hashlib.new("sha512_256", key).digest()[-4:] == checksum
+
+
+_EOSIO_NAME = re.compile(r"[a-z1-5.]{0,11}[a-z1-5]|[a-z1-5.]{12}[a-j1-5]")
+
+
+def validate_eosio_address(address: str) -> bool:
+    """Validate an EOSIO account name: up to 12 characters of a-z, 1-5 and
+    '.', not ending in '.', and a 13th from a-j and 1-5. No checksum."""
+    return bool(address) and _EOSIO_NAME.fullmatch(address) is not None
+
+
 # EVM chains share Ethereum's address format.
 EVM_NETWORKS = frozenset(
     {"eth", "etc", "bsc", "arb", "avax", "base", "pol", "matic", "op", "zkf", "kcc"}
@@ -926,7 +953,7 @@ def validate_address(currency: str, address: str) -> bool:
 
     Args:
         currency: Currency code or network (btc, bch, ltc, zec, eth, trx,
-            xrp, sol, or an EVM network such as bsc)
+            xrp, sol, algo, eosio, or an EVM network such as bsc)
         address: Address to validate
 
     Returns:
@@ -954,6 +981,8 @@ _VALIDATORS = {
     "trx": validate_trx_address,
     "xrp": validate_xrp_address,
     "sol": validate_sol_address,
+    "algo": validate_algo_address,
+    "eosio": validate_eosio_address,
     **{n: validate_eth_address for n in EVM_NETWORKS},
 }
 

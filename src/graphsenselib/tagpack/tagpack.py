@@ -41,6 +41,7 @@ from graphsenselib.tagpack.address_check import (
     address_hint,
     address_line_numbers,
     autofill_hints,
+    validate_token_address,
 )
 from graphsenselib.utils.address import is_verifiable_network, validate_address
 from graphsenselib.tagpack.cmd_utils import get_user_choice
@@ -1158,8 +1159,16 @@ class TagPack(object):
                 )
                 finding.hint = "leading or trailing whitespace"
                 whitespace.append(finding)
-            elif is_verifiable_network(network):
-                if validate_address(network, address):
+            else:
+                if is_verifiable_network(network):
+                    ok = validate_address(network, address)
+                else:
+                    # a token (network defaults to the currency): valid if
+                    # valid on any chain the token lives on
+                    ok = validate_token_address(network, address)
+                if ok is None:
+                    unsupported[network.upper()].add(address)
+                elif ok:
                     valid.add(address)
                 else:
                     finding = AddressFinding(
@@ -1167,8 +1176,6 @@ class TagPack(object):
                     )
                     finding.context = tag.all_fields.get("context")
                     findings.append(finding)
-            else:
-                unsupported[network.upper()].add(address)
 
         _SAMPLE_SIZE = 3
         autofill = autofill_hints([f.address for f in findings], valid)

@@ -1,4 +1,6 @@
 # flake8: noqa: F501
+import base64
+import hashlib
 import random
 from functools import reduce
 import pytest
@@ -626,6 +628,20 @@ class TestAddressValidation:
         assert not validate_address(
             "sol", "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWW0"
         )
+
+    def test_validate_algo_and_eosio(self):
+        key = hashlib.sha256(b"k").digest()
+        raw = key + hashlib.new("sha512_256", key).digest()[-4:]
+        algo = base64.b32encode(raw).decode().rstrip("=")
+        assert validate_address("algo", algo)
+        assert not validate_address("algo", algo.lower())
+        # the last character's 2 padding bits must be zero
+        assert not validate_address("algo", algo[:-1] + "B")
+        assert not validate_address("algo", algo[:20] + algo[21:] + "A")
+        for name in ("eosio", "tethertether", "a.b", "abcdefghijklj"):
+            assert validate_address("eosio", name)
+        for name in ("abc.", "ABC", "abcdefghijklz", "abcdefghijklmn", "a6"):
+            assert not validate_address("eosio", name)
 
     def test_validate_address_unsupported_currency(self):
         """Test validation with unsupported currency"""

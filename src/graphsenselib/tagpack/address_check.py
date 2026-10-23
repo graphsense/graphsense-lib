@@ -11,10 +11,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from graphsenselib.tagpack.constants import suggest_networks_from_currency
 from graphsenselib.utils.address import (
     EVM_NETWORKS,
     address_checksum_invalid,
     base58_check_payload,
+    is_verifiable_network,
     validate_address,
 )
 
@@ -104,6 +106,36 @@ def _other_networks(network: str, address: str) -> list:
     return [n.upper() for n in found]
 
 
+def token_chains(network: str) -> list:
+    """The chains (lower case) a token such as USDT lives on, if ``network``
+    is a token rather than a chain (network defaults to the currency)."""
+    if is_verifiable_network(network):
+        return []
+    return [c.lower() for c in suggest_networks_from_currency(network.upper())]
+
+
+def validate_token_address(network: str, address: str) -> Optional[bool]:
+    """True if ``address`` is valid on one of the chains of the token
+    ``network``, False if on none, None if that cannot be told (a chain
+    without a validator, or ``network`` is no known token)."""
+    chains = token_chains(network)
+    if not chains:
+        return None
+    if any(_try_validate(c, address) for c in chains):
+        return True
+    return False if all(is_verifiable_network(c) for c in chains) else None
+
+
+def _likely_chain(address: str, chains: list) -> str:
+    if address[:2] in ("0x", "0X"):
+        evm = [c for c in chains if c in EVM_NETWORKS]
+        if evm:
+            return evm[0]
+    if address.startswith("T") and "trx" in chains:
+        return "trx"
+    return chains[0]
+
+
 def _tron_from_hex(hexbody: str) -> str:
     import base58
 
@@ -114,6 +146,15 @@ def address_hint(network: str, address: str, context=None) -> str:
     """A short, actionable reason why ``address`` is not a valid address of
     ``network`` (lower case). Assumes ``validate_address`` already said no."""
     net = network.upper()
+
+    chains = token_chains(network)
+    if chains:
+        chain = _likely_chain(address, chains)
+        names = ", ".join(c.upper() for c in chains)
+        return (
+            f"{net} is a token; not valid on any of its chains ({names}); "
+            f"as {chain.upper()}: {address_hint(chain, address, context)}"
+        )
 
     m = UNDECODED_ESCAPE.search(address)
     if m:

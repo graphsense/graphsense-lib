@@ -11,6 +11,7 @@ from graphsenselib.tagpack.address_check import (
     address_hint,
     address_line_numbers,
     autofill_hints,
+    validate_token_address,
 )
 from graphsenselib.tagpack.tagpack import check_text_field
 
@@ -78,6 +79,29 @@ WIF = base58.b58encode_check(b"\x80" + bytes(range(1, 33)) + b"\x01").decode()
 )
 def test_address_hint(network, address, context, expected):
     assert expected in address_hint(network, address, context)
+
+
+@pytest.mark.parametrize(
+    "network, address, expected",
+    [
+        ("usdt", ETH, True),
+        ("usdt", TRX, True),
+        ("usdt", "tethertether", True),  # EOSIO account
+        ("usdt", BTC, False),
+        ("usdc", "0xAAA9402664f1a41F40EBbC52c9993eb66AeB3666", False),
+        ("kcs", ETH, True),
+        ("dai", ETH, None),  # no known chains
+        ("btc", BTC, None),  # a chain, not a token
+    ],
+)
+def test_validate_token_address(network, address, expected):
+    assert validate_token_address(network, address) is expected
+
+
+def test_token_hint_names_the_likely_chain():
+    hint = address_hint("usdt", TRX[:5] + "x" + TRX[6:])
+    assert hint.startswith("USDT is a token; not valid on any of its chains (ETH,")
+    assert hint.endswith("as TRX: checksum mismatch, probably a typo")
 
 
 def test_autofill_run_names_the_valid_address():
