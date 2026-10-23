@@ -80,6 +80,9 @@ NETWORK_SUGGESTIONS = {
         "KCC",
         "ALGO",
         "EOSIO",
+        # Omni Layer: USDT's first chain (2014-2023), a protocol on top of
+        # Bitcoin, so its addresses are Bitcoin addresses. Kept for older
+        # tags; it also makes any valid BTC address valid under USDT.
         "BTC",
     ],
     "USDC": [
