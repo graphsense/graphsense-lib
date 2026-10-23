@@ -932,6 +932,40 @@ def validate_algo_address(address: str) -> bool:
     return hashlib.new("sha512_256", key).digest()[-4:] == checksum
 
 
+def _crc16_xmodem(data: bytes) -> int:
+    crc = 0
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else crc << 1
+            crc &= 0xFFFF
+    return crc
+
+
+_TON_RAW = re.compile(r"(0|-1):[0-9a-fA-F]{64}")
+
+
+def validate_ton_address(address: str) -> bool:
+    """Validate a TON address: raw (``0:<64 hex>``) or user-friendly, 48
+    characters of base64 (url-safe or standard) over a flag byte, the
+    workchain, a 32-byte hash and a CRC16-XMODEM of the 34 bytes before."""
+    import base64
+
+    if not address:
+        return False
+    if _TON_RAW.fullmatch(address):
+        return True
+    if len(address) != 48:
+        return False
+    try:
+        raw = base64.urlsafe_b64decode(address.replace("+", "-").replace("/", "_"))
+    except ValueError:
+        return False
+    if len(raw) != 36 or raw[0] & 0x7F not in (0x11, 0x51) or raw[1] not in (0, 255):
+        return False
+    return _crc16_xmodem(raw[:34]) == int.from_bytes(raw[34:], "big")
+
+
 _EOSIO_NAME = re.compile(r"[a-z1-5.]{0,11}[a-z1-5]|[a-z1-5.]{12}[a-j1-5]")
 
 
@@ -953,7 +987,7 @@ def validate_address(currency: str, address: str) -> bool:
 
     Args:
         currency: Currency code or network (btc, bch, ltc, zec, eth, trx,
-            xrp, sol, algo, eosio, or an EVM network such as bsc)
+            xrp, sol, algo, eosio, ton, or an EVM network such as bsc)
         address: Address to validate
 
     Returns:
@@ -983,6 +1017,7 @@ _VALIDATORS = {
     "sol": validate_sol_address,
     "algo": validate_algo_address,
     "eosio": validate_eosio_address,
+    "ton": validate_ton_address,
     **{n: validate_eth_address for n in EVM_NETWORKS},
 }
 

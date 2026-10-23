@@ -13,7 +13,9 @@ from graphsenselib.tagpack.address_check import (
     autofill_hints,
     validate_token_address,
 )
+from graphsenselib.tagpack.constants import NETWORK_SUGGESTIONS
 from graphsenselib.tagpack.tagpack import check_text_field
+from graphsenselib.utils.address import is_verifiable_network
 
 pytest.importorskip("yaml_include")
 pytest.importorskip("rapidfuzz")
@@ -87,15 +89,26 @@ def test_address_hint(network, address, context, expected):
         ("usdt", ETH, True),
         ("usdt", TRX, True),
         ("usdt", "tethertether", True),  # EOSIO account
-        ("usdt", BTC, False),
+        ("usdt", BTC, True),  # Omni USDT lives on BTC addresses
+        ("usdt", "LiM295pXpydyt4ahLxEYJeevpLtm2e6LSv", False),  # LTC
+        ("usdt", "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N", True),  # TON
+        ("dai", ETH, True),
+        ("weth", TRX, False),
         ("usdc", "0xAAA9402664f1a41F40EBbC52c9993eb66AeB3666", False),
         ("kcs", ETH, True),
-        ("dai", ETH, None),  # no known chains
+        ("wbtc", ETH, None),  # no known chains
         ("btc", BTC, None),  # a chain, not a token
     ],
 )
 def test_validate_token_address(network, address, expected):
     assert validate_token_address(network, address) is expected
+
+
+def test_every_chain_of_a_token_has_a_validator():
+    # otherwise no address of the token can be called invalid
+    for token, chains in NETWORK_SUGGESTIONS.items():
+        missing = [c for c in chains if not is_verifiable_network(c)]
+        assert not missing, f"{token}: no validator for {missing}"
 
 
 def test_token_hint_names_the_likely_chain():

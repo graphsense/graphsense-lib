@@ -629,6 +629,23 @@ class TestAddressValidation:
             "sol", "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWW0"
         )
 
+    def test_validate_ton(self):
+        valid = [
+            "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N",  # bounceable
+            "UQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqEBI",  # non-bounceable
+            "0:83dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+        ]
+        for a in valid:
+            assert validate_address("ton", a), a
+        invalid = [
+            "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2M",  # checksum
+            "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2",  # truncated
+            "1:83dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",
+        ]
+        for a in invalid:
+            assert not validate_address("ton", a), a
+
     def test_validate_algo_and_eosio(self):
         key = hashlib.sha256(b"k").digest()
         raw = key + hashlib.new("sha512_256", key).digest()[-4:]
