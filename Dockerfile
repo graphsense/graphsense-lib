@@ -22,8 +22,8 @@
 # Not a shared `AS python-base` stage, because Dependabot would then try to
 # resolve `FROM python-base` as an image. It bumps both lines in one PR.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
-FROM eclipse-temurin:11-jre-jammy@sha256:1adc4db6079f9a35c45f36b0907dd94232a0b9b409a4088a7fe0c77b14e99294 AS java11
+FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
+FROM eclipse-temurin:11-jre-jammy@sha256:ee9a1cf7847cb4b1f8176f4e96167f89a1148497500b75032575cb43dc69b42d AS java11
 
 # =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
