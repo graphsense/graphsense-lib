@@ -27,6 +27,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **`/capabilities` lists the optional services of the deployment** in a new `services` field (Python client: `Capabilities.services`, model `ServiceInfo`): `name`, `available`, `version`, `api` (contract version) and `beta`. Address notifications appear there when enabled, read from the service's `GET /meta` (cached for a minute; `available: false` when it does not answer). A service absent from the list is not offered, and unknown names must be ignored. Without optional services the field is an empty list.
 
 #### Fixed
+- **`/search` finds a bech32 address written in all uppercase** (`BC1Q…`, `LTC1Q…`, as QR codes show it), also from its first characters, and answers with the stored lowercase form. The address routes already accepted that form; search found nothing. Such a query is also still searched as typed, because a base58 address can start the same way by chance (LTC `L` + `TC1…`).
 - **A network served by an external backend may be written in upper case** (`/BNB/...`), as core networks may (`/ETH/...`). It went to the local routes and failed with 404 `Network bnb not supported` or 400 `Unknown currency in config`; it is now served like `/bnb/...`.
 
 ### Library

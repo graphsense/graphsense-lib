@@ -39,7 +39,11 @@ from graphsenselib.db.state import (
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
-from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
+from graphsenselib.utils.address import (
+    address_to_user_format,
+    cannonicalize_address,
+    lowercase_uppercase_bech32,
+)
 from graphsenselib.utils.constants import (
     is_fresh_cluster_id,
     is_representable_entity_id,
@@ -2833,6 +2837,25 @@ class Cassandra:
             postfix = None
             expression = parts[0]
 
+        # Bech32 is stored in lowercase, and an all-uppercase bech32 query
+        # (BIP173, QR codes) means that address. But a base58 address can start
+        # the same way by chance (LTC: always "L", then random characters, so
+        # "LTC1..."), so such a query is searched as typed and in lowercase.
+        lowered = lowercase_uppercase_bech32(currency, expression)
+        if lowered == expression:
+            return await self._list_matching_addresses_for(
+                currency, expression, postfix, limit
+            )
+        as_typed, as_lowered = await asyncio.gather(
+            self._list_matching_addresses_for(currency, expression, postfix, limit),
+            self._list_matching_addresses_for(currency, lowered, postfix, limit),
+        )
+        rows = as_typed + as_lowered
+        return rows[:limit] if limit is not None else rows
+
+    async def _list_matching_addresses_for(
+        self, currency, expression, postfix, limit: Optional[int]
+    ):
         prefix_lengths = self.get_prefix_lengths(currency)
         expression_orginal = expression
 

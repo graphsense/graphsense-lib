@@ -338,6 +338,17 @@ _UPPERCASE_BECH32_PREFIXES = {
 _TRX_HEX_ADDRESS = re.compile(r"41[0-9a-fA-F]{40}")
 
 
+def lowercase_uppercase_bech32(currency, address: str) -> str:
+    """BIP173 allows a bech32 address in all uppercase too (QR codes use it),
+    but the database stores the lowercase form. Mixed case is invalid bech32
+    and stays as it is. Also works on the start of an address (search input)."""
+    if address.isupper() and address.startswith(
+        _UPPERCASE_BECH32_PREFIXES.get(currency, ())
+    ):
+        return address.lower()
+    return address
+
+
 def _trx_address_to_bytes(address: str) -> bytes:
     """User-supplied TRX address (base58 ``T…`` or hex ``41…``) to its stored
     bytes, verifying the base58 checksum (which also rejects a truncated or
@@ -354,11 +365,7 @@ def cannonicalize_address(currency, address: str):
     if currency == "trx":
         return _trx_address_to_bytes(address)
     elif currency in _UPPERCASE_BECH32_PREFIXES and isinstance(address, str):
-        if address.isupper() and address.startswith(
-            _UPPERCASE_BECH32_PREFIXES[currency]
-        ):
-            return address.lower()
-        return address
+        return lowercase_uppercase_bech32(currency, address)
     elif currency == "bch":
         return try_bch_address_to_legacy(address)
     elif currency == "eth":

@@ -2,7 +2,11 @@
 
 import pytest
 
-from graphsenselib.utils.address import cannonicalize_address, validate_bch_address
+from graphsenselib.utils.address import (
+    cannonicalize_address,
+    lowercase_uppercase_bech32,
+    validate_bch_address,
+)
 from graphsenselib.utils.bch import (
     _CHARSET,
     _PREFIX_VALUES,
@@ -120,6 +124,22 @@ def test_uppercase_bech32_is_lowercased():
     assert cannonicalize_address("btc", BTC_BECH32) == BTC_BECH32
     ltc = "ltc1qg82tdk8ufl6k0g5a3hqkqrr9ma9p9yn8hzw7an"
     assert cannonicalize_address("ltc", ltc.upper()) == ltc
+
+
+@pytest.mark.parametrize(
+    "currency,typed,expected",
+    [
+        ("btc", BTC_BECH32.upper(), BTC_BECH32),
+        # search input is often only the start of an address
+        ("btc", BTC_BECH32.upper()[:10], BTC_BECH32[:10]),
+        ("ltc", "LTC1QG82TDK8U", "ltc1qg82tdk8u"),
+        ("btc", "Bc1qxy2kgdyg", "Bc1qxy2kgdyg"),  # mixed: untouched
+        ("ltc", BTC_BECH32.upper(), BTC_BECH32.upper()),  # not an ltc prefix
+        ("zec", "T1HSC1LR8YKN", "T1HSC1LR8YKN"),  # base58 never folded
+    ],
+)
+def test_lowercase_uppercase_bech32(currency, typed, expected):
+    assert lowercase_uppercase_bech32(currency, typed) == expected
 
 
 @pytest.mark.parametrize(
