@@ -13,9 +13,11 @@ from typing import Optional
 
 from graphsenselib.tagpack.constants import suggest_networks_from_currency
 from graphsenselib.utils.address import (
+    BECH32_MIXED_CASE_HINT,
     EVM_NETWORKS,
     address_checksum_invalid,
     base58_check_payload,
+    bech32_mixed_case,
     is_verifiable_network,
     validate_address,
 )
@@ -245,6 +247,8 @@ def address_hint(network: str, address: str, context=None) -> str:
         and len(address) == 34
         and _BASE58_CHARS.fullmatch(address)
     )
+    if bech32_mixed_case(network, address):
+        return BECH32_MIXED_CASE_HINT
     if address_checksum_invalid(network, address) or (tron_shaped and not payload):
         return "checksum mismatch, probably a typo"
 

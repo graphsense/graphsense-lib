@@ -149,6 +149,8 @@ def test_lowercase_uppercase_bech32(currency, typed, expected):
         ("btc", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"),
         ("btc", "Bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"),  # mixed: untouched
         ("ltc", "LMHEXuJGoYUmRuVnx4p1UzhDQV3sUafjDk"),
+        # starts with "LTC1" by chance, but mixed case: never folded
+        ("ltc", "LTC1A4GhnLkKbpfkaDyXHTeShP2YksUVgY"),
         ("zec", "t1Hsc1LR8yKnbbe3twRp88p6vFfC5t7DLbs"),
         ("zec", "T1HSC1LR8YKNBBE3TWRP88P6VFFC5T7DLBS"),  # base58 never folded
     ],

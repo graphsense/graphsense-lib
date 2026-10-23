@@ -39,7 +39,11 @@ from graphsenselib.tagstore.db.database import (
     get_db_engine_async,
 )
 from graphsenselib.utils import resolve_env_vars
-from graphsenselib.utils.address import address_checksum_invalid
+from graphsenselib.utils.address import (
+    BECH32_MIXED_CASE_HINT,
+    address_checksum_invalid,
+    bech32_mixed_case,
+)
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -894,9 +898,14 @@ def _register_exception_handlers(app: FastAPI):
             and not exc.no_external_txs
             and address_checksum_invalid(exc.network, exc.address)
         ):
+            reason = (
+                BECH32_MIXED_CASE_HINT
+                if bech32_mixed_case(exc.network, exc.address)
+                else "checksum mismatch, probably a typo"
+            )
             msg = (
                 f"The address provided does not look like a {exc.network.upper()}"
-                f" address: {exc.address} (checksum mismatch, probably a typo)"
+                f" address: {exc.address} ({reason})"
             )
             logger.warning(
                 f"BadUserInputException: {msg} | {_get_request_context(request)}"

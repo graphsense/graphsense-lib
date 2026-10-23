@@ -672,12 +672,35 @@ def address_checksum_invalid(network: str, address) -> bool:
         return False
     network = network.lower()
     lowered = address.lower()
+    base58_shaped = network in _BASE58CHECK_NETWORKS and all(
+        c in _BASE58_ALPHABET for c in address
+    )
+    # A valid base58 address is no typo, also one that starts like bech32 by
+    # chance (LTC: always "L", then random characters, so "LTC1...").
+    if base58_shaped and base58_check_validate(address):
+        return False
     for hrp in _BECH32_HRPS.get(network, ()):
         if lowered.startswith(hrp + "1"):
             return not _bech32_checksum_ok(address)
-    if network in _BASE58CHECK_NETWORKS and all(c in _BASE58_ALPHABET for c in address):
-        return not base58_check_validate(address)
-    return False
+    return base58_shaped
+
+
+BECH32_MIXED_CASE_HINT = (
+    "upper and lower case mixed; a bech32 address is all lowercase or all uppercase"
+)
+
+
+def bech32_mixed_case(network: str, address) -> bool:
+    """True when ``address`` mixes upper and lower case but in lowercase is a
+    valid bech32 address of ``network``: only the case is wrong (BIP173
+    allows all lowercase or all uppercase). A base58 address that starts
+    like bech32 by chance is never one: in lowercase its checksum fails."""
+    if not isinstance(address, str) or address in (address.lower(), address.upper()):
+        return False
+    lowered = address.lower()
+    return any(
+        lowered.startswith(hrp + "1") for hrp in _BECH32_HRPS.get(network.lower(), ())
+    ) and _bech32_checksum_ok(lowered)
 
 
 def base58_check_payload(s: str) -> Optional[bytes]:
