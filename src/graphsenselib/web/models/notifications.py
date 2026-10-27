@@ -129,6 +129,10 @@ class SubscriptionCreate(_Strict):
     # unset keeps the current one, and with none the portal uses the
     # account's Keycloak language.
     locale: str | None = Field(default=None, max_length=16, pattern=LOCALE_PATTERN)
+    # Created together with the subscriptions of this group (the `group` of
+    # one of them), e.g. the same address on another network. Unset: a group
+    # of its own. Kept for grouping them into one alert later.
+    group: int | None = Field(default=None, ge=1, le=MAX_ID)
 
     _check_timezone = field_validator("timezone")(_known_timezone)
     _check_label = field_validator("label")(_no_control_chars)
@@ -181,6 +185,9 @@ class Subscription(BaseModel):
     # those the filters let through), as seen by the poller. None until about
     # an hour after the subscription was created.
     transactions_per_day: int | None = None
+    # Subscriptions created together share it (SubscriptionCreate.group).
+    # None from older services.
+    group: int | None = None
 
 
 class SubscriptionPage(BaseModel):

@@ -24,6 +24,7 @@ Use one changelog file, but separate entries by track in each release window.
   - Subscriptions carry `transactions_per_day` (optional): how busy the address is, as the service counts it.
   - `notifications.service_token` (and `service_token_header`, default `X-Service-Token`): sent with every forwarded call so the service trusts the identity headers only from gs-rest (its `identity.service_token`). Note for deployments: gs-rest versions before this one refuse the unknown key, so set it only together with this version.
   - Create and PATCH take an optional `locale` (the dashboard's language, e.g. `de`), like `timezone`: mails are written in it.
+  - Create takes an optional `group` (a subscription's `group`, also new in the answer): subscriptions created together, e.g. the same address on several networks, for grouping them into one alert later.
 - **`/capabilities` lists the optional services of the deployment** in a new `services` field (Python client: `Capabilities.services`, model `ServiceInfo`): `name`, `available`, `version`, `api` (contract version) and `beta`. Address notifications appear there when enabled, read from the service's `GET /meta` (cached for a minute; `available: false` when it does not answer). A service absent from the list is not offered, and unknown names must be ignored. Without optional services the field is an empty list.
 
 #### Changed

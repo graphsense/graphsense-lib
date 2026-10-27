@@ -323,6 +323,23 @@ def test_locale_is_forwarded_and_checked():
     assert r.status_code == 422 and len(seen) == 2
 
 
+def test_group_is_forwarded_and_answered():
+    client, seen = make_client(
+        answer=lambda request: httpx.Response(201, json={**SUBSCRIPTION, "group": 12})
+    )
+    r = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "group": 12},
+    )
+    assert body_of(seen[0])["group"] == 12
+    assert r.json()["group"] == 12
+    r = client.post(
+        "/notifications/subscriptions",
+        json={"network": "btc", "address": GENESIS, "group": 0},
+    )
+    assert r.status_code == 422 and len(seen) == 1
+
+
 def test_timezone_on_update_is_forwarded():
     client, seen = make_client()
     client.patch("/notifications/subscriptions/7", json={"timezone": "Europe/Vienna"})
