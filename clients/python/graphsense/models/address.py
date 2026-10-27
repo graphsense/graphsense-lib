@@ -31,7 +31,7 @@ class Address(BaseModel):
     """ # noqa: E501
     currency: StrictStr
     address: StrictStr
-    entity: StrictInt = Field(description="Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.")
+    entity: Optional[StrictInt] = Field(default=None, description="Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.")
     fresh_cluster_id: Optional[StrictInt] = None
     balance: Values
     total_received: Values

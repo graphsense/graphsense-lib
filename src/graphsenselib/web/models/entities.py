@@ -44,6 +44,9 @@ class Entity(APIModel):
     """
 
     model_config = api_model_config(ENTITY_EXAMPLE)
+    # `entity` is still sent, but no longer required in the spec, so clients
+    # can stop depending on it before it goes.
+    schema_optional = ("entity",)
 
     currency: str
     entity: int = Field(
