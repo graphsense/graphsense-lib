@@ -169,6 +169,7 @@ def test_get_capabilities_lists_enabled_services(client):
                 "version": "26.10.0rc1",
                 "api": 1,
                 "limits": {"instant_mail_interval_minutes": 5},
+                "networks": ["btc", "eth"],
             },
         )
 
@@ -189,5 +190,6 @@ def test_get_capabilities_lists_enabled_services(client):
             "api": 1,
             "beta": True,
             "limits": {"instant_mail_interval_minutes": 5},
+            "networks": ["btc", "eth"],
         }
     ]

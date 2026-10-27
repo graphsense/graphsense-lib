@@ -77,6 +77,7 @@ SERVICE_INFO_EXAMPLE = {
     "api": 1,
     "beta": True,
     "limits": {"instant_mail_interval_minutes": 5, "subscriptions_per_user": 100},
+    "networks": ["btc", "eth"],
 }
 
 
@@ -107,6 +108,12 @@ class ServiceInfo(APIModel):
         "service reports them, e.g. instant_mail_interval_minutes (at most one "
         "instant email per user in that time) or subscriptions_per_user. "
         "Unknown names must be ignored.",
+    )
+    networks: Optional[list[str]] = Field(
+        default=None,
+        description="Networks the service can watch (lowercase), as it reports "
+        "them; gated ones included, access is checked per user. Clients offer "
+        "only these.",
     )
 
 

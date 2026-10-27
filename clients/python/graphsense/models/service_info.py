@@ -30,7 +30,8 @@ class ServiceInfo(BaseModel):
     api: Optional[StrictInt] = Field(default=None, description="Contract version of its routes; rises only on a breaking change.")
     beta: Optional[StrictBool] = Field(default=False, description="Its routes may still change.")
     limits: Optional[Dict[str, StrictInt]] = Field(default=None, description="Configured limits a client can show, by name, as the service reports them, e.g. instant_mail_interval_minutes (at most one instant email per user in that time) or subscriptions_per_user. Unknown names must be ignored.")
-    __properties: ClassVar[List[str]] = ["name", "available", "version", "api", "beta", "limits"]
+    networks: Optional[List[StrictStr]] = Field(default=None, description="Networks the service can watch (lowercase), as it reports them; gated ones included, access is checked per user. Clients offer only these.")
+    __properties: ClassVar[List[str]] = ["name", "available", "version", "api", "beta", "limits", "networks"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -89,7 +90,8 @@ class ServiceInfo(BaseModel):
             "version": obj.get("version"),
             "api": obj.get("api"),
             "beta": obj.get("beta") if obj.get("beta") is not None else False,
-            "limits": obj.get("limits")
+            "limits": obj.get("limits"),
+            "networks": obj.get("networks")
         })
         return _obj
 

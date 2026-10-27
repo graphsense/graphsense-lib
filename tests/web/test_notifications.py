@@ -107,6 +107,7 @@ def make_client(answer=None, include_in_schema=False, enabled=True, service_toke
                     "built_at": None,
                     "api": 1,
                     "limits": {"instant_mail_interval_minutes": 5, "future": "x"},
+                    "networks": ["btc", "ETH", 7],
                 },
             )
         if path == "/feed/unread_count":
@@ -636,6 +637,8 @@ async def test_service_info_from_meta():
         "beta": True,
         # Non-integer values are dropped.
         "limits": {"instant_mail_interval_minutes": 5},
+        # Lowercased; non-strings dropped.
+        "networks": ["btc", "eth"],
     }
     assert (seen[0].method, seen[0].url.path) == ("GET", "/meta")
     # No identity goes to /meta.
@@ -652,18 +655,20 @@ async def test_service_info_when_the_service_is_down():
     info = await notifications_service_info(client.app)
     assert info.available is False
     assert info.version is None and info.api is None and info.limits is None
+    assert info.networks is None
     assert info.beta is True
 
 
 async def test_service_info_ignores_a_malformed_meta():
     client, _ = make_client(
         answer=lambda r: httpx.Response(
-            200, json={"version": 7, "api": True, "limits": [5]}
+            200, json={"version": 7, "api": True, "limits": [5], "networks": "btc"}
         )
     )
     info = await notifications_service_info(client.app)
     assert info.available is True
     assert info.version is None and info.api is None and info.limits is None
+    assert info.networks is None
 
 
 async def test_no_service_info_when_disabled():

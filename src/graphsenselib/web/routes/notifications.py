@@ -209,6 +209,11 @@ async def notifications_service_info(app: FastAPI) -> Optional[ServiceInfo]:
         }
     else:
         limits = None
+    networks = meta.get("networks") if meta else None
+    if isinstance(networks, list):
+        networks = [n.lower() for n in networks if isinstance(n, str)]
+    else:
+        networks = None
     return ServiceInfo(
         name=TAG,
         available=meta is not None,
@@ -216,6 +221,7 @@ async def notifications_service_info(app: FastAPI) -> Optional[ServiceInfo]:
         api=api if isinstance(api, int) and not isinstance(api, bool) else None,
         beta=True,
         limits=limits or None,
+        networks=networks,
     )
 
 

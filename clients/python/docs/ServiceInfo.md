@@ -12,6 +12,7 @@ Name | Type | Description | Notes
 **api** | **int** | Contract version of its routes; rises only on a breaking change. | [optional] 
 **beta** | **bool** | Its routes may still change. | [optional] [default to False]
 **limits** | **Dict[str, int]** | Configured limits a client can show, by name, as the service reports them, e.g. instant_mail_interval_minutes (at most one instant email per user in that time) or subscriptions_per_user. Unknown names must be ignored. | [optional] 
+**networks** | **List[str]** | Networks the service can watch (lowercase), as it reports them; gated ones included, access is checked per user. Clients offer only these. | [optional] 
 
 ## Example
 
