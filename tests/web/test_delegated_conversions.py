@@ -1,6 +1,7 @@
 """Conversions of an eth tx with a bridge graphsense-lib cannot pair (CCTP),
 merged with the pairing an external backend answers
-(middleware/external_backends.py, rule 6).
+(middleware/external_backends.py, rule 6), and proxied conversions answers
+that name an eth leg (rule 1).
 
 These run without containers: the real txs route and TxsService over a fake
 database, the middleware in front, and an httpx MockTransport for the backend.
@@ -25,6 +26,8 @@ from graphsenselib.web.config import CurrencyRolesConfig, GSRestConfig
 from graphsenselib.web.middleware import external_backends
 from graphsenselib.web.middleware.external_backends import (
     DECLINED_HEADER,
+    SERVED_BY_HEADER,
+    SERVED_BY_VALUE,
     ExternalBackendMiddleware,
 )
 from graphsenselib.web.routes import txs
@@ -421,6 +424,129 @@ def test_an_unreachable_or_hung_backend_is_left_out_for_a_while(error, monkeypat
     now[0] += 31
     client.get(CONVERSIONS)
     assert len(seen) == 2
+
+
+# ---------------------------------------------------------------------------
+# rule 1: a proxied conversions answer naming an eth leg Cassandra lacks
+# ---------------------------------------------------------------------------
+
+ARB_CONVERSIONS = f"/arb/txs/{ARB_MINT}/conversions"
+
+
+def arb_client(rows, indexed=(CCTP_BURN,), status=200, content=None):
+    """arb served by the backend, which answers `rows` for a conversions
+    request; Cassandra has the eth txs `indexed`."""
+
+    def answer(request):
+        if not request.url.path.endswith("/conversions"):
+            return httpx.Response(200, json={"backend_path": request.url.path})
+        if content is not None:
+            return httpx.Response(status, content=content)
+        return httpx.Response(status, json=rows)
+
+    return make_client(
+        networks={"arb": {"url": BACKEND_URL}},
+        delegated_conversions={},
+        backend_answer=answer,
+        indexed=indexed,
+    )
+
+
+def eth_tx(tx_hash):
+    return bytes.fromhex(tx_hash.removeprefix("0x"))
+
+
+@pytest.mark.parametrize(
+    "rows, indexed, looked_up",
+    [
+        ([BRIDGE_ROW], (CCTP_BURN,), [CCTP_BURN]),
+        # one lookup per eth tx, however its legs write it
+        (
+            [
+                BRIDGE_ROW,
+                {**BRIDGE_ROW, "from_asset_transfer": f"0X{CCTP_BURN[2:].upper()}_T1"},
+            ],
+            (CCTP_BURN,),
+            [CCTP_BURN],
+        ),
+        (
+            [BRIDGE_ROW, {**BRIDGE_ROW, "from_asset_transfer": f"{OTHER_ETH_TX}_T1"}],
+            (CCTP_BURN, OTHER_ETH_TX),
+            [CCTP_BURN, OTHER_ETH_TX],
+        ),
+        ([{**SWAP_ROW, "from_network": "arb", "to_network": "arb"}], (), []),
+        ([{**BRIDGE_ROW, "from_asset_transfer": ""}], (), []),
+        (["junk", 1, None], (), []),
+    ],
+    ids=["indexed", "written twice", "two txs", "no eth leg", "empty", "no rows"],
+)
+def test_an_answer_whose_eth_legs_are_indexed_passes_through(rows, indexed, looked_up):
+    client, seen, db = arb_client(rows, indexed=indexed)
+    response = client.get(ARB_CONVERSIONS)
+    assert response.status_code == 200
+    # byte for byte what the backend sent
+    assert response.content == httpx.Response(200, json=rows).content
+    assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
+    assert [c.args for c in db.get_tx_by_hash.await_args_list] == [
+        ("eth", eth_tx(tx)) for tx in looked_up
+    ]
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        BRIDGE_ROW,
+        {
+            **BRIDGE_ROW,
+            "from_network": "arb",
+            "from_asset_transfer": f"{ARB_MINT[2:]}_T8",
+            "to_network": "eth",
+            "to_asset_transfer": f"{OTHER_ETH_TX[2:]}_T3",
+        },
+        {**BRIDGE_ROW, "from_asset_transfer": "not-a-hash_T1"},
+    ],
+    ids=["from side", "to side", "no tx hash"],
+)
+def test_an_answer_naming_an_eth_leg_cassandra_lacks_is_a_501(row):
+    """Cassandra lags the chain tip: the dashboard could not load that leg,
+    and the bridge would go missing from the graph. The whole answer is
+    refused rather than served in part."""
+    client, _, _ = arb_client([row], indexed=())
+    response = client.get(ARB_CONVERSIONS)
+    assert response.status_code == 501
+    assert response.json()["code"] == "NOT_IMPLEMENTED"
+    assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
+
+
+def test_a_failed_lookup_is_a_501_too():
+    client, _, db = arb_client([BRIDGE_ROW])
+    db.get_tx_by_hash.side_effect = RuntimeError("cassandra down")
+    with records_of_the_middleware() as records:
+        response = client.get(ARB_CONVERSIONS)
+    assert response.status_code == 501
+    assert any(
+        r.levelno == logging.WARNING and "cassandra down" in r.getMessage()
+        for r in records
+    )
+
+
+@pytest.mark.parametrize(
+    "path, status, content",
+    [
+        (ARB_CONVERSIONS, 501, b'{"detail": "cannot pair it"}'),
+        (ARB_CONVERSIONS, 200, b"not json"),
+        (f"/arb/txs/{ARB_MINT}", 200, None),
+    ],
+    ids=["error answer", "not json", "other route"],
+)
+def test_any_other_proxied_answer_reads_nothing(path, status, content):
+    client, _, db = arb_client([BRIDGE_ROW], status=status, content=content)
+    response = client.get(path)
+    assert response.status_code == status
+    if content is not None:
+        assert response.content == content
+    db.get_tx_by_hash.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
