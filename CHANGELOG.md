@@ -17,6 +17,9 @@ Use one changelog file, but separate entries by track in each release window.
 #### Changed
 - **A non-JSON error answer from the notifications service** (e.g. a proxy's HTML error page) is no longer passed to the client; the client gets the status and its reason phrase, and the body is logged.
 
+#### Fixed
+- **An external backend's unreadable answer no longer turns a merged answer into a 500.** A 200 whose body was not JSON, or a body that could not be decoded, made `/stats`, `/capabilities`, `/search` or a twin list fail. The backend is now left out and named in `X-Ikn-Backends-Declined`, as when it answers an error. When a backend says it cannot answer (a 404 for `/capabilities`, a 404 or 501 for twins), that is now logged at INFO with the backend's `detail`, so a backend that refuses every such question is visible in the log.
+
 ### Library
 
 #### Added

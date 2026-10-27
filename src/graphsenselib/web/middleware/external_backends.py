@@ -141,7 +141,7 @@ import json
 import logging
 import re
 import time
-from typing import Dict, List, Optional, Set
+from typing import Collection, Dict, List, Optional, Set
 
 import httpx
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -373,7 +373,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 base_url,
                 path + query,
                 declined=declined,
-                tolerate_404=(path == "/capabilities"),
+                # an older backend has no /capabilities (rule 4)
+                tolerated={404} if path == "/capabilities" else (),
             )
             if backend_doc is None:
                 continue
@@ -431,8 +432,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 base_url,
                 path + query,
                 declined=declined,
-                tolerate_404=True,
-                tolerate_501=True,
+                # it does not know the address, or declines the question
+                tolerated={404, 501},
             )
             if backend_doc is None:
                 continue
@@ -624,12 +625,19 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         base_url: str,
         path_and_query: str,
         declined: Optional[List[str]] = None,
-        tolerate_404: bool = False,
-        tolerate_501: bool = False,
+        tolerated: Collection[int] = (),
+        timeout: Optional[float] = None,
     ) -> Optional[dict]:
-        """One merge fan-out call. Returns None when the backend declines or
-        fails: a 429, no answer within merge_timeout_s, no connection, or any
-        other status than 200 (apart from a tolerated 404/501).
+        """One merge fan-out call. Returns None when the backend declines,
+        fails or cannot answer: a 429, no answer within `timeout` (default
+        merge_timeout_s), no connection, a 200 whose body is not JSON, or any
+        other status than 200.
+
+        A status in `tolerated` is the backend saying it cannot answer this
+        question (it does not know the address, say). That is no failure: the
+        backend contributes nothing, and the status is logged at INFO with
+        the backend's ``detail``, so that a backend which refuses every such
+        question (e.g. for a network it does not serve) is visible.
 
         A 429 is why this takes the request at all: relaying the caller's
         identity means the backend paces per caller rather than lumping
@@ -655,18 +663,22 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         consumer = self._consumer_of(request)
         if consumer:
             headers["X-Consumer-Username"] = consumer
-        # The one exception this module handles: a backend that cannot be
-        # reached or does not answer in time is a partial answer, exactly
-        # like a declined one (module docstring), not a 500 for every network.
+        # A backend that cannot be reached or does not answer in time is a
+        # partial answer, exactly like a declined one (module docstring), not
+        # a 500 for every network.
         try:
             response = await self.client.get(
                 base_url.rstrip("/") + path_and_query,
                 headers=headers,
-                timeout=self.config.merge_timeout_s,
+                timeout=self.config.merge_timeout_s if timeout is None else timeout,
             )
         except httpx.TransportError as exc:
             self._merge_failed(declined, base_url, path_and_query, repr(exc))
             self._skip(base_url)
+            return None
+        except httpx.DecodingError as exc:
+            # an answer whose body cannot be read counts as an error answer
+            self._merge_failed(declined, base_url, path_and_query, repr(exc))
             return None
         if response.status_code == 429:
             if declined is not None and base_url not in declined:
@@ -681,19 +693,29 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
             self._backend_answered(base_url)
             return None
-        if tolerate_404 and response.status_code == 404:
+        if response.status_code in tolerated:
             self._backend_answered(base_url)
-            return None
-        if tolerate_501 and response.status_code == 501:
-            self._backend_answered(base_url)
+            logger.info(
+                "external backend %s cannot answer %s (%s)",
+                base_url,
+                path_and_query,
+                _status_and_detail(response),
+            )
             return None
         if response.status_code != 200:
             self._merge_failed(
                 declined, base_url, path_and_query, f"HTTP {response.status_code}"
             )
             return None
+        try:
+            doc = response.json()
+        except ValueError:
+            self._merge_failed(
+                declined, base_url, path_and_query, "HTTP 200 without a JSON body"
+            )
+            return None
         self._backend_answered(base_url)
-        return response.json()
+        return doc
 
     def _merge_failed(
         self,
@@ -807,6 +829,19 @@ def _declined_header(declined: List[str]) -> dict:
     An empty header would assert "nothing declined" on every response, which is
     a claim this middleware cannot make about a backend it never called."""
     return {DECLINED_HEADER: ", ".join(declined)} if declined else {}
+
+
+def _status_and_detail(response: httpx.Response) -> str:
+    """A backend's answer for the log: its status, and the ``detail`` of its
+    JSON body when it has one."""
+    try:
+        doc = response.json()
+    except ValueError:
+        doc = None
+    detail = doc.get("detail") if isinstance(doc, dict) else None
+    if detail is None:
+        return f"HTTP {response.status_code}"
+    return f"HTTP {response.status_code}: {detail}"
 
 
 def _strip_legacy_capabilities(entry: dict) -> dict:
