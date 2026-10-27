@@ -1,7 +1,9 @@
 import asyncio
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
+from graphsenselib.defi.bridging.delegated import UnresolvedBridge
 from graphsenselib.defi.conversions import get_conversions_from_db
 from graphsenselib.defi.bridging.thorchain import UTXO_NETWORKS
 from graphsenselib.errors import (
@@ -139,6 +141,15 @@ class DatabaseProtocol(Protocol):
     async def get_address(
         self, currency: str, address: str
     ) -> Optional[Dict[str, Any]]: ...
+
+
+@dataclass(frozen=True)
+class TxConversions:
+    """The conversions of a tx (TxsService.get_conversions), and its bridge
+    events graphsense-lib cannot pair (defi/bridging/delegated.py)."""
+
+    conversions: Tuple[ExternalConversion, ...] = ()
+    unresolved_bridges: Tuple[UnresolvedBridge, ...] = ()
 
 
 class TxsService:
@@ -598,8 +609,11 @@ class TxsService:
         identifier: str,
         included_bridges: Tuple[str, ...] = (),
         cow_protocol_swaps: bool = True,
-    ) -> List[ExternalConversion]:
-        """Extract swap/bridge information from a single transaction hash."""
+    ) -> TxConversions:
+        """Extract swap/bridge information from a single transaction hash.
+
+        The conversions are filtered to the identifier's sub-tx suffix; the
+        unresolved bridges are those of the whole tx, whatever the suffix."""
         # UTXO networks are supported for THORChain bridging (via OP_RETURN memo)
         supports_conversion_extraction = is_eth_like(currency) or (
             currency.lower() in UTXO_NETWORKS and "thorchain" in included_bridges
@@ -608,7 +622,7 @@ class TxsService:
             # currently we only support swap/bridge extraction for EVM-like networks and UTXO
             # networks with thorchain bridging, so if it's not that, return empty list (instead of raising)
             # since this is an optional endpoint and we don't want to break anything by raising errors for unsupported networks
-            return []
+            return TxConversions()
             # raise BadUserInputException(
             #     f"Swap extraction is only supported for EVM-like networks, not {currency}"
             # )
@@ -632,13 +646,14 @@ class TxsService:
         if not tx:
             raise TransactionNotFoundException(currency, tx_hash)
 
-        conversions_gslib = await get_conversions_from_db(
+        detected = await get_conversions_from_db(
             currency,
             self.db,
             tx,
             included_bridges=included_bridges,
             cow_protocol_swaps=cow_protocol_swaps,
         )
+        conversions_gslib = detected.conversions
 
         # A sub-tx identifier pointing to the root trace of the tx (trace_address == "")
         # is semantically equivalent to the whole tx, so treat it as such.
@@ -677,4 +692,4 @@ class TxsService:
             else:
                 raise ValueError(f"Unknown conversion type: {type(conversion)}")
 
-        return conversions
+        return TxConversions(tuple(conversions), detected.unresolved_bridges)
