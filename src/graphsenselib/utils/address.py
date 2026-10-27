@@ -338,6 +338,17 @@ _UPPERCASE_BECH32_PREFIXES = {
 _TRX_HEX_ADDRESS = re.compile(r"41[0-9a-fA-F]{40}")
 
 
+def lowercase_uppercase_bech32(currency, address: str) -> str:
+    """BIP173 allows a bech32 address in all uppercase too (QR codes use it),
+    but the database stores the lowercase form. Mixed case is invalid bech32
+    and stays as it is. Also works on the start of an address (search input)."""
+    if address.isupper() and address.startswith(
+        _UPPERCASE_BECH32_PREFIXES.get(currency, ())
+    ):
+        return address.lower()
+    return address
+
+
 def _trx_address_to_bytes(address: str) -> bytes:
     """User-supplied TRX address (base58 ``T…`` or hex ``41…``) to its stored
     bytes, verifying the base58 checksum (which also rejects a truncated or
@@ -354,11 +365,7 @@ def cannonicalize_address(currency, address: str):
     if currency == "trx":
         return _trx_address_to_bytes(address)
     elif currency in _UPPERCASE_BECH32_PREFIXES and isinstance(address, str):
-        if address.isupper() and address.startswith(
-            _UPPERCASE_BECH32_PREFIXES[currency]
-        ):
-            return address.lower()
-        return address
+        return lowercase_uppercase_bech32(currency, address)
     elif currency == "bch":
         return try_bch_address_to_legacy(address)
     elif currency == "eth":
@@ -665,12 +672,35 @@ def address_checksum_invalid(network: str, address) -> bool:
         return False
     network = network.lower()
     lowered = address.lower()
+    base58_shaped = network in _BASE58CHECK_NETWORKS and all(
+        c in _BASE58_ALPHABET for c in address
+    )
+    # A valid base58 address is no typo, also one that starts like bech32 by
+    # chance (LTC: always "L", then random characters, so "LTC1...").
+    if base58_shaped and base58_check_validate(address):
+        return False
     for hrp in _BECH32_HRPS.get(network, ()):
         if lowered.startswith(hrp + "1"):
             return not _bech32_checksum_ok(address)
-    if network in _BASE58CHECK_NETWORKS and all(c in _BASE58_ALPHABET for c in address):
-        return not base58_check_validate(address)
-    return False
+    return base58_shaped
+
+
+BECH32_MIXED_CASE_HINT = (
+    "upper and lower case mixed; a bech32 address is all lowercase or all uppercase"
+)
+
+
+def bech32_mixed_case(network: str, address) -> bool:
+    """True when ``address`` mixes upper and lower case but in lowercase is a
+    valid bech32 address of ``network``: only the case is wrong (BIP173
+    allows all lowercase or all uppercase). A base58 address that starts
+    like bech32 by chance is never one: in lowercase its checksum fails."""
+    if not isinstance(address, str) or address in (address.lower(), address.upper()):
+        return False
+    lowered = address.lower()
+    return any(
+        lowered.startswith(hrp + "1") for hrp in _BECH32_HRPS.get(network.lower(), ())
+    ) and _bech32_checksum_ok(lowered)
 
 
 def base58_check_payload(s: str) -> Optional[bytes]:

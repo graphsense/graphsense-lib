@@ -5,10 +5,13 @@ import hashlib
 import base58
 import pytest
 
-from graphsenselib.utils.address import address_checksum_invalid
+from graphsenselib.utils.address import address_checksum_invalid, bech32_mixed_case
 
 BTC_LEGACY = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"  # genesis
 BTC_BECH32 = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+LTC_BECH32 = "ltc1q000hma9ysnh7ref6crn45448vnw8vlwawlmxqe"
+# base58: starts with "LTC1" by chance (always "L", then random characters)
+LTC_BASE58_LOOKALIKE = "LTC1A4GhnLkKbpfkaDyXHTeShP2YksUVgY"
 
 
 def _b58check(payload: bytes) -> str:
@@ -41,6 +44,7 @@ def _flip_last(s: str) -> str:
         ("btc", "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"),
         ("bch", BTC_LEGACY),
         ("ltc", _b58check(bytes([0x30]) + bytes(20))),
+        ("ltc", LTC_BASE58_LOOKALIKE),
         ("zec", _b58check(bytes([0x1C, 0xB8]) + bytes(20))),
     ],
 )
@@ -86,3 +90,20 @@ def test_unrecognised_input_is_left_alone(network, address):
 
 def test_network_is_case_insensitive():
     assert address_checksum_invalid("BTC", _flip_last(BTC_LEGACY))
+
+
+@pytest.mark.parametrize(
+    "network, address, expected",
+    [
+        ("btc", "Bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", True),
+        ("ltc", "Ltc1q000hma9ysnh7ref6crn45448vnw8vlwawlmxqe", True),
+        ("btc", BTC_BECH32, False),
+        ("btc", BTC_BECH32.upper(), False),
+        ("btc", "Bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlj", False),  # also a typo
+        ("ltc", LTC_BASE58_LOOKALIKE, False),
+        ("ltc", "Bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", False),  # not ltc
+    ],
+)
+def test_bech32_mixed_case(network, address, expected):
+    """Only the case is wrong: in lowercase it is a valid bech32 address."""
+    assert bech32_mixed_case(network, address) is expected

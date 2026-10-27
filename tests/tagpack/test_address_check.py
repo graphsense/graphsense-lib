@@ -75,6 +75,12 @@ WIF = base58.b58encode_check(b"\x80" + bytes(range(1, 33)) + b"\x01").decode()
         ),
         ("btc", WIF, None, "private key (WIF)"),
         ("btc", BTC[:-1] + "b", None, "checksum mismatch"),
+        (
+            "btc",
+            "Bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+            None,
+            "upper and lower case mixed",
+        ),
         ("trx", TRX[:5] + "x" + TRX[6:], None, "checksum mismatch"),
         ("btc", "definitely-not-an-address", None, "not a valid BTC address"),
     ],
