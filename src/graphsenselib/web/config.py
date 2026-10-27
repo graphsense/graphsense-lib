@@ -153,6 +153,22 @@ class ExternalBackendsConfig(BaseSettings):
         "(pubkey) also lists the address's twins on the externally served "
         "networks, asked from the backends; false keeps the local answer alone",
     )
+    delegated_conversions: Dict[str, ExternalBackendConfig] = Field(
+        default_factory=dict,
+        description="Rule 6: locally served networks, keyed by the lowercase "
+        "network code (e.g. eth), whose GET /{network}/txs/{tx}/conversions "
+        "also lists the bridges this backend pairs. Only a tx with a bridge "
+        "event graphsense-lib recognizes but cannot pair (Circle CCTP, "
+        "defi/bridging/delegated.py) asks the backend, which must answer "
+        "GET /{network}/txs/{tx}/conversions for that network. Without its "
+        "answer the local answer is served alone. Empty: nothing is added.",
+    )
+    delegated_conversions_timeout_s: float = Field(
+        default=15.0,
+        description="HTTP timeout of a delegated_conversions call, after "
+        "which the local answer is served alone. Long enough that a backend "
+        "still pairing a transfer is not taken for a hung one.",
+    )
     consumer_header: str = Field(
         default="X-Username",
         description="Incoming header carrying the gateway-asserted user "

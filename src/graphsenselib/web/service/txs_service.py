@@ -69,13 +69,16 @@ async def list_matching_txs(ctx, currency, expression):
 
 
 async def get_tx_conversions(ctx, currency, tx_hash):
+    """The tx's conversions as API rows, and its unresolved bridges (bridge
+    events graphsense-lib cannot pair, defi/bridging/delegated.py)."""
     result = await ctx.services.txs_service.get_conversions(
         currency,
         tx_hash,
         included_bridges=ctx.config.included_bridges,
         cow_protocol_swaps=ctx.config.cow_protocol_swaps,
     )
-    return [to_api_external_conversion(conv) for conv in result.conversions]
+    rows = [to_api_external_conversion(conv) for conv in result.conversions]
+    return rows, result.unresolved_bridges
 
 
 async def list_tx_flows(
