@@ -140,7 +140,6 @@ Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
 *AddressesApi* | [**get_address**](docs/AddressesApi.md#get_address) | **GET** /{currency}/addresses/{address} | Get an address
 *AddressesApi* | [**get_address_cluster**](docs/AddressesApi.md#get_address_cluster) | **GET** /{currency}/addresses/{address}/cluster | Get the cluster for an address
-*AddressesApi* | [**get_address_entity**](docs/AddressesApi.md#get_address_entity) | **GET** /{currency}/addresses/{address}/entity | Get the entity for an address
 *AddressesApi* | [**get_tag_summary_by_address**](docs/AddressesApi.md#get_tag_summary_by_address) | **GET** /{currency}/addresses/{address}/tag_summary | Get address attribution tag summary
 *AddressesApi* | [**list_address_links**](docs/AddressesApi.md#list_address_links) | **GET** /{currency}/addresses/{address}/links | List transactions between two addresses
 *AddressesApi* | [**list_address_neighbors**](docs/AddressesApi.md#list_address_neighbors) | **GET** /{currency}/addresses/{address}/neighbors | List neighboring addresses
@@ -159,13 +158,6 @@ Class | Method | HTTP request | Description
 *ClustersApi* | [**list_cluster_neighbors**](docs/ClustersApi.md#list_cluster_neighbors) | **GET** /{currency}/clusters/{cluster}/neighbors | List neighboring clusters
 *ClustersApi* | [**list_cluster_txs**](docs/ClustersApi.md#list_cluster_txs) | **GET** /{currency}/clusters/{cluster}/txs | List cluster transactions
 *ClustersApi* | [**search_cluster_neighbors**](docs/ClustersApi.md#search_cluster_neighbors) | **GET** /{currency}/clusters/{cluster}/search | Search cluster neighborhood
-*EntitiesApi* | [**get_entity**](docs/EntitiesApi.md#get_entity) | **GET** /{currency}/entities/{entity} | Get entity details
-*EntitiesApi* | [**list_address_tags_by_entity**](docs/EntitiesApi.md#list_address_tags_by_entity) | **GET** /{currency}/entities/{entity}/tags | List entity address tags
-*EntitiesApi* | [**list_entity_addresses**](docs/EntitiesApi.md#list_entity_addresses) | **GET** /{currency}/entities/{entity}/addresses | List entity addresses
-*EntitiesApi* | [**list_entity_links**](docs/EntitiesApi.md#list_entity_links) | **GET** /{currency}/entities/{entity}/links | List transactions between entities
-*EntitiesApi* | [**list_entity_neighbors**](docs/EntitiesApi.md#list_entity_neighbors) | **GET** /{currency}/entities/{entity}/neighbors | List neighboring entities
-*EntitiesApi* | [**list_entity_txs**](docs/EntitiesApi.md#list_entity_txs) | **GET** /{currency}/entities/{entity}/txs | List entity transactions
-*EntitiesApi* | [**search_entity_neighbors**](docs/EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search entity neighborhood
 *GeneralApi* | [**get_capabilities**](docs/GeneralApi.md#get_capabilities) | **GET** /capabilities | Get per-network feature availability
 *GeneralApi* | [**get_statistics**](docs/GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 *GeneralApi* | [**search**](docs/GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
@@ -213,7 +205,6 @@ Class | Method | HTTP request | Description
  - [CurrencyStats](docs/CurrencyStats.md)
  - [DirectChangeHeuristic](docs/DirectChangeHeuristic.md)
  - [Entity](docs/Entity.md)
- - [EntityAddresses](docs/EntityAddresses.md)
  - [ExternalConversion](docs/ExternalConversion.md)
  - [GraphAddressNetworkSummary](docs/GraphAddressNetworkSummary.md)
  - [GraphAddressOverall](docs/GraphAddressOverall.md)
@@ -248,7 +239,6 @@ Class | Method | HTTP request | Description
  - [NeighborAddresses](docs/NeighborAddresses.md)
  - [NeighborCluster](docs/NeighborCluster.md)
  - [NeighborClusters](docs/NeighborClusters.md)
- - [NeighborEntities](docs/NeighborEntities.md)
  - [NeighborEntity](docs/NeighborEntity.md)
  - [NetworkCapabilities](docs/NetworkCapabilities.md)
  - [OneTimeChangeHeuristic](docs/OneTimeChangeHeuristic.md)

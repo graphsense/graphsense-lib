@@ -123,7 +123,6 @@ consolidated_tools:
   - name: lookup_address
     replaces:
       - get_address
-      - get_address_entity
       - get_address_cluster
       - get_tag_summary_by_address
       - list_related_addresses
@@ -131,9 +130,7 @@ consolidated_tools:
 
   - name: lookup_cluster
     replaces:
-      - get_entity
       - get_cluster
-      - list_address_tags_by_entity
       - list_address_tags_by_cluster
     module: graphsenselib.mcp.tools.consolidated:register_lookup_cluster
 

@@ -47,8 +47,9 @@ tasks_in_flight_factor = 4
 min_tasks_in_flight = 64
 
 # `clusters` is listed before `entities` so new cluster-named operations resolve
-# against clusters_service first. `entities_service` is still present as a
-# back-compat shim re-exporting the same functions under their legacy names.
+# against clusters_service first. `entities_service` is a back-compat shim
+# re-exporting the same functions under their legacy names; it outlives the
+# removed `/entities/...` routes because the bulk names were never sunset.
 apis = ["addresses", "clusters", "entities", "blocks", "txs", "rates", "tags"]
 
 error_field = "_error"

@@ -298,7 +298,7 @@ class TestEdgeCaseRegressionLinks(EdgeCaseRegressionTestBase):
     def test_links_eth_entity_316592288(self):
         """ETH entity links (was 60-70s, now 2s)."""
         self.assert_call_equal(
-            "eth/entities/316592288/links?neighbor=31455019&pagesize=100"
+            "eth/clusters/316592288/links?neighbor=31455019&pagesize=100"
         )
 
     @pytest.mark.regression
@@ -312,34 +312,34 @@ class TestEdgeCaseRegressionLinks(EdgeCaseRegressionTestBase):
     def test_links_eth_entity_225414228(self):
         """ETH entity links neighbor 229413023."""
         self.assert_call_equal(
-            "eth/entities/225414228/links?neighbor=229413023&pagesize=100"
+            "eth/clusters/225414228/links?neighbor=229413023&pagesize=100"
         )
 
     @pytest.mark.regression
     def test_links_eth_entity_276182118(self):
         """ETH entity links (was 45s, now 3.5s)."""
         self.assert_call_equal(
-            "eth/entities/276182118/links?neighbor=81071666&pagesize=100"
+            "eth/clusters/276182118/links?neighbor=81071666&pagesize=100"
         )
 
     @pytest.mark.regression
     def test_links_eth_entity_huge_addresses(self):
         """ETH entity links between 2 huge addresses."""
         self.assert_call_equal(
-            "eth/entities/225414228/links?neighbor=31455019&pagesize=100"
+            "eth/clusters/225414228/links?neighbor=31455019&pagesize=100"
         )
 
     @pytest.mark.regression
     def test_links_btc_entity_2647118(self):
         """BTC entity links."""
         self.assert_call_equal(
-            "btc/entities/2647118/links?neighbor=109578&pagesize=100"
+            "btc/clusters/2647118/links?neighbor=109578&pagesize=100"
         )
 
     @pytest.mark.regression
     def test_links_btc_entity_cutoff(self):
         """BTC entity links cutoff test (pagesize=1)."""
-        self.assert_call_equal("btc/entities/2647118/links?neighbor=109578&pagesize=1")
+        self.assert_call_equal("btc/clusters/2647118/links?neighbor=109578&pagesize=1")
 
     @pytest.mark.regression
     def test_links_btc_address_with_order(self):
@@ -813,7 +813,7 @@ class TestOutOfRangeEntityIds:
 
     @pytest.mark.regression
     def test_out_of_range_entity_is_404(self):
-        url = urljoin(CURRENT_SERVER + "/", f"eth/entities/{self.DEAD_ZONE_ID}")
+        url = urljoin(CURRENT_SERVER + "/", f"eth/clusters/{self.DEAD_ZONE_ID}")
         response = requests.get(url, headers=headers_for(CURRENT_SERVER, True))
         assert response.status_code == 404
 
@@ -917,7 +917,7 @@ class TestEdgeCaseRegressionTagSummary:
         )
 
         entity, _ = get_data_from_endpoint(
-            CURRENT_SERVER, f"btc/entities/{address['fresh_cluster_id']}"
+            CURRENT_SERVER, f"btc/clusters/{address['fresh_cluster_id']}"
         )
         assert (entity.get("best_address_tag") or {}).get("actor") == "kraken", (
             "premise broken: fresh cluster no longer carries the kraken tag"

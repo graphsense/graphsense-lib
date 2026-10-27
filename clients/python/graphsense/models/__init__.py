@@ -34,7 +34,6 @@ from graphsense.models.consensus_entry import ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats
 from graphsense.models.direct_change_heuristic import DirectChangeHeuristic
 from graphsense.models.entity import Entity
-from graphsense.models.entity_addresses import EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion
 from graphsense.models.graph_address_network_summary import GraphAddressNetworkSummary
 from graphsense.models.graph_address_overall import GraphAddressOverall
@@ -69,7 +68,6 @@ from graphsense.models.neighbor_address import NeighborAddress
 from graphsense.models.neighbor_addresses import NeighborAddresses
 from graphsense.models.neighbor_cluster import NeighborCluster
 from graphsense.models.neighbor_clusters import NeighborClusters
-from graphsense.models.neighbor_entities import NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity
 from graphsense.models.network_capabilities import NetworkCapabilities
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic

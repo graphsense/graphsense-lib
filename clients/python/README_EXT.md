@@ -31,7 +31,7 @@ Full reference:
 - **Commonly-paired calls in parallel.** Tags, cluster, and tag-summary fan
   out via a small thread pool instead of serial round-trips.
 - **Non-deprecated paths only.** The cluster lookup uses
-  `ClustersApi.get_cluster`, not the deprecated `get_address_entity`.
+  `ClustersApi.get_cluster`.
 - **Survives regeneration.** Lives under `graphsense/ext/` which is
   pinned in `.openapi-generator-ignore`. `.raw` is introspective, so new
   generated API groups show up automatically.

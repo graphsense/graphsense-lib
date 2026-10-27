@@ -26,6 +26,11 @@ Use one changelog file, but separate entries by track in each release window.
   - Create and PATCH take an optional `locale` (the dashboard's language, e.g. `de`), like `timezone`: mails are written in it.
 - **`/capabilities` lists the optional services of the deployment** in a new `services` field (Python client: `Capabilities.services`, model `ServiceInfo`): `name`, `available`, `version`, `api` (contract version) and `beta`. Address notifications appear there when enabled, read from the service's `GET /meta` (cached for a minute; `available: false` when it does not answer). A service absent from the list is not offered, and unknown names must be ignored. Without optional services the field is an empty list.
 
+#### Removed
+- **The `/{currency}/entities/...` routes and `/{currency}/addresses/{address}/entity`**, deprecated since webapi-2.11.0 and sunset on 2026-10-31. They now answer 404. Use the `/{currency}/clusters/...` routes and `/{currency}/addresses/{address}/cluster`, which return the same data. Python client: `EntitiesApi`, `AddressesApi.get_address_entity` and the `EntityAddresses`/`NeighborEntities` models are gone (`ClustersApi`, `ClusterAddresses`, `NeighborClusters`); `graphsense raw entities` with them. Using a removed name (including `from graphsense import EntitiesApi`, the old module paths and `gs.raw.entities`) raises an error that names its replacement, listing the `ClustersApi` method for each old one.
+  - **Not removed: the entity-named bulk operations** (`get_entity`, `get_address_entity`, `list_entity_txs`, `list_entity_neighbors`, `list_entity_links`, `list_entity_addresses`, …) on `/bulk.{csv,json}/{operation}`. They were never part of the sunset (no `Deprecation`/`Sunset` header announced them), and they are still in use (`get_address_entity` by the case-management dashboard plugin).
+  - The deprecated `entity` field on `Address`, `Cluster`, `NeighborEntity` and `AddressTag` stays as well: it had no sunset date, and the dashboard's neighbor decoder still requires it.
+
 #### Fixed
 - **A network served by an external backend may be written in upper case** (`/BNB/...`), as core networks may (`/ETH/...`). It went to the local routes and failed with 404 `Network bnb not supported` or 400 `Unknown currency in config`; it is now served like `/bnb/...`.
 

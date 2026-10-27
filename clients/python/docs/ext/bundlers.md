@@ -14,9 +14,8 @@ so its result can feed cluster id lookups when needed.
 | `with_tag_summary=True` | `AddressesApi.get_tag_summary_by_address(...)`   | `tag_summary` |
 | `with_cluster=True` | `ClustersApi.get_cluster(currency, <base.cluster>)`  | `cluster`     |
 
-Note: the cluster bundle uses the **non-deprecated** `ClustersApi.get_cluster`
-route, keyed off the primary Address's `cluster` field — *not* the deprecated
-`AddressesApi.get_address_entity`.
+Note: the cluster bundle uses `ClustersApi.get_cluster`, keyed off the primary
+Address's `cluster` field.
 
 ## `lookup_cluster`
 

@@ -181,9 +181,9 @@ class TestObfuscateTagpackUriByRule:
     "path,headers,query",
     [
         # Only 'tags-private' is recognized, not bare 'private'
-        ("/btc/entities/123", {GROUPS_HEADER_NAME: "tags-private"}, ""),
-        ("/btc/entities/123/neighbors", {}, "include_labels=true"),
-        ("/btc/entities/123/neighbors", {}, "INCLUDE_LABELS=TRUE"),
+        ("/btc/clusters/123", {GROUPS_HEADER_NAME: "tags-private"}, ""),
+        ("/btc/clusters/123/neighbors", {}, "include_labels=true"),
+        ("/btc/clusters/123/neighbors", {}, "INCLUDE_LABELS=TRUE"),
         ("/search", {}, ""),
         ("/btc/addresses/bulk", {}, ""),
         ("/tags", {}, ""),
@@ -199,9 +199,9 @@ def test_before_request_skips(path, headers, query):
 @pytest.mark.parametrize(
     "path",
     [
-        "/btc/entities/123",
+        "/btc/clusters/123",
         "/btc/addresses/abc123/neighbors",
-        "/btc/entities/123/neighbors",
+        "/btc/clusters/123/neighbors",
         "/btc/addresses/abc123/tags",
     ],
 )
@@ -221,7 +221,7 @@ def test_before_request_force_enable_applies_for_all_requests():
 
 
 def test_before_request_force_disable_never_applies():
-    req = make_request("/btc/entities/123")
+    req = make_request("/btc/clusters/123")
     context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}}
     assert ObfuscateTags.before_request(context, req) is None
 
@@ -232,14 +232,14 @@ def test_before_request_force_disable_never_applies():
 class TestBeforeResponseEntity:
     def test_obfuscates_private_tag(self):
         entity = make_entity(tag=make_tag(is_public=False, label="Private"))
-        req = make_request("/btc/entities/123")
+        req = make_request("/btc/clusters/123")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response({}, req, entity)
         assert entity.best_address_tag.label == ""
 
     def test_preserves_public_tag(self):
         entity = make_entity(tag=make_tag(is_public=True, label="Public"))
-        req = make_request("/btc/entities/123")
+        req = make_request("/btc/clusters/123")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response({}, req, entity)
         assert entity.best_address_tag.label == "Public"
@@ -247,7 +247,7 @@ class TestBeforeResponseEntity:
     def test_obfuscates_actors_with_private_tag(self):
         actors = [LabeledItemRef(id="a1", label="Actor1")]
         entity = make_entity(tag=make_tag(is_public=False), actors=actors)
-        req = make_request("/btc/entities/123")
+        req = make_request("/btc/clusters/123")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response({}, req, entity)
         assert entity.actors[0].id == "" and entity.actors[0].label == ""
@@ -294,7 +294,7 @@ class TestBeforeResponseNeighborEntities:
             ],
             next_page=None,
         )
-        req = make_request("/btc/entities/123/neighbors")
+        req = make_request("/btc/clusters/123/neighbors")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response({}, req, neighbors)
         assert neighbors.neighbors[0].entity.best_address_tag.label == ""
@@ -341,7 +341,7 @@ class TestBeforeResponseRelationsOnlyNeighbors:
             ],
             next_page=None,
         )
-        req = make_request("/btc/entities/123/neighbors")
+        req = make_request("/btc/clusters/123/neighbors")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response({}, req, neighbors)
         assert neighbors.neighbors[0].entity == 123
@@ -373,14 +373,14 @@ class TestBeforeResponseRelationsOnlyNeighbors:
 )  # tags-private group skips obfuscation (unless FORCE_OBFUSCATE is enabled)
 def test_before_response_skips_with_no_obfuscation_group(group):
     entity = make_entity(tag=make_tag(is_public=False, label="Private"))
-    req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: group})
+    req = make_request("/btc/clusters/123", {GROUPS_HEADER_NAME: group})
     ObfuscateTags.before_response({}, req, entity)
     assert entity.best_address_tag.label == "Private"
 
 
 def test_before_response_obfuscates_when_force_enable_mode_is_set():
     entity = make_entity(tag=make_tag(is_public=False, label="Private"))
-    req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: "tags-private"})
+    req = make_request("/btc/clusters/123", {GROUPS_HEADER_NAME: "tags-private"})
     context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_ENABLE}}
     ObfuscateTags.before_response(context, req, entity)
     assert entity.best_address_tag.label == ""  # Obfuscated despite tags-private group
@@ -388,7 +388,7 @@ def test_before_response_obfuscates_when_force_enable_mode_is_set():
 
 def test_before_response_skips_when_force_disable_mode_is_set():
     entity = make_entity(tag=make_tag(is_public=False, label="Private"))
-    req = make_request("/btc/entities/123")
+    req = make_request("/btc/clusters/123")
     req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
     context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}}
     ObfuscateTags.before_response(context, req, entity)
@@ -396,19 +396,19 @@ def test_before_response_skips_when_force_disable_mode_is_set():
 
 
 def test_should_obfuscate_private_tags_uses_plugin_marker():
-    req = make_request("/btc/entities/123")
+    req = make_request("/btc/clusters/123")
     req.state.plugin_state = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
     assert should_obfuscate_private_tags(req) is True
 
 
 def test_should_obfuscate_private_tags_false_without_marker():
-    req = make_request("/btc/entities/123")
+    req = make_request("/btc/clusters/123")
     req.state.plugin_state = {}
     assert should_obfuscate_private_tags(req) is False
 
 
 def test_should_obfuscate_private_tags_uses_request_header_fallback():
-    req = make_request("/btc/entities/123")
+    req = make_request("/btc/clusters/123")
     req.state.plugin_state = {}
     req.headers = Headers({GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP})
     assert should_obfuscate_private_tags(req) is True
@@ -445,7 +445,7 @@ async def test_setup_plugins_loads_builtin_obfuscate_config_from_gsrest_key():
 class TestTagpackUriRule:
     def test_applies_rule_to_matching_uri(self):
         entity = make_entity(tag=make_tag(is_public=True, uri="internal/tp.yaml"))
-        req = make_request("/btc/entities/123")
+        req = make_request("/btc/clusters/123")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response(
             {"config": {"obfuscate_tagpack_uri_rule": r"internal/.*"}}, req, entity
@@ -455,7 +455,7 @@ class TestTagpackUriRule:
 
     def test_preserves_non_matching_uri(self):
         entity = make_entity(tag=make_tag(is_public=True, uri="public/tp.yaml"))
-        req = make_request("/btc/entities/123")
+        req = make_request("/btc/clusters/123")
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response(
             {"config": {"obfuscate_tagpack_uri_rule": r"internal/.*"}}, req, entity
@@ -537,7 +537,7 @@ class TestAttributionPassthroughForObfuscatedConsumers:
             next_page=None,
         )
         ObfuscateTags.before_response(
-            {}, _obfuscated_request("/btc/entities/123/addresses"), addresses
+            {}, _obfuscated_request("/btc/clusters/123/addresses"), addresses
         )
         assert addresses.addresses[0].actors[0].id == "a1"
 
@@ -564,7 +564,7 @@ class TestAttributionPassthroughForObfuscatedConsumers:
             paths=[],
         )
         ObfuscateTags.before_response(
-            {}, _obfuscated_request("/btc/entities/123/search"), neighbor
+            {}, _obfuscated_request("/btc/clusters/123/search"), neighbor
         )
         # the entity best tag keeps its publicity gate ...
         assert neighbor.neighbor.entity.best_address_tag.label == ""

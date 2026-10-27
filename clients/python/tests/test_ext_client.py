@@ -74,12 +74,15 @@ def test_host_resolution_precedence(monkeypatch):
 def test_raw_exposes_non_deprecated_groups_only(gs: GraphSense):
     assert "addresses" in gs.raw.groups()
     assert "clusters" in gs.raw.groups()
-    assert "entities" not in gs.raw.groups()  # deprecated by default
+    assert "entities" not in gs.raw.groups()  # removed with its routes
 
 
-def test_raw_can_show_deprecated_when_opted_in(api_client: ApiClient):
+def test_raw_can_show_deprecated_when_opted_in(api_client: ApiClient, monkeypatch):
+    # No API class is wholly deprecated at the moment; pretend one is.
+    monkeypatch.setattr("graphsense.ext.client._DEPRECATED_APIS", {"TokensApi"})
+    assert "tokens" not in GraphSense(api_client=api_client).raw.groups()
     gs_dep = GraphSense(api_client=api_client, show_deprecated=True)
-    assert "entities" in gs_dep.raw.groups()
+    assert "tokens" in gs_dep.raw.groups()
 
 
 def test_raw_picks_up_new_api_classes(api_client: ApiClient, monkeypatch):

@@ -3,9 +3,14 @@
 The web service layer was renamed from `entities_service` to `clusters_service`
 as part of the deprecation of `entity`/`entities` terminology in favor of
 `cluster`/`clusters`. This module re-exports the renamed functions under their
-old names AND their old `entity=` keyword argument so legacy callers (e.g. the
-deprecated `routes/entities.py`, bulk requests with `entity` body keys) keep
-working during the deprecation window.
+old names AND their old `entity=` keyword argument.
+
+The `/entities/...` HTTP routes are gone (sunset 2026-10-31); this module now
+only serves the bulk endpoint, which resolves operation names against it
+(`routes/bulk.py`). The bulk names were never part of that sunset (no
+Deprecation/Sunset header ever announced them) and API users still call them
+(e.g. `list_entity_neighbors` in the API tutorial notebooks), so removing them
+needs its own announced sunset first.
 """
 
 from graphsenselib.web.service import clusters_service as _cs

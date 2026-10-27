@@ -76,7 +76,6 @@ stripped:
 | `tags`           | `TagsApi`          |
 | `tokens`         | `TokensApi`        |
 | `txs`            | `TxsApi`           |
-| `entities` *     | `EntitiesApi` (deprecated; only visible with `show_deprecated=True`) |
 
 Because `.raw` is built by introspection, every future API class added by
 the generator appears automatically — no code changes here.

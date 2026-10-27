@@ -38,6 +38,9 @@ All hand-written code lives under paths listed in `.openapi-generator-ignore`:
   see "Vendored `gs_files`" below.
 - `graphsense/address_scan/*` — **vendored** from
   `src/graphsenselib/convert/address_scan/`; see "Vendored `address_scan`" below.
+- `graphsense/removed.py` — error messages for removed API classes, models
+  and methods (e.g. `EntitiesApi` -> `ClustersApi`); imported last by the
+  generated `__init__.py` via `compat/patch_compat.py`.
 - `tests/*` — regression tests.
 - `docs/ext/*`, `docs/cli/*` — hand-written docs.
 - `README_CLI.md`, `README_EXT.md`, `CLAUDE.md` (this file).
@@ -118,8 +121,10 @@ sync script **rewrites** those two imports:
 
 ## Deprecated endpoints
 
-`EntitiesApi` (and related `entity`-prefixed fields) are deprecated; use
-`ClustersApi` / `cluster` instead. The ext layer hides deprecated API groups
+`EntitiesApi` is gone (routes sunset 2026-10-31); using it, its models or
+`AddressesApi.get_address_entity` raises an error naming the replacement
+(`graphsense/removed.py`). The `entity`-prefixed fields are still deprecated,
+use `cluster` instead. The ext layer hides deprecated API groups
 from `GraphSense.raw` by default (opt-in with `show_deprecated=True` or
 `GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` env var). A response carrying an RFC 8594 `Deprecation`
 header triggers a one-shot stderr warning — see `graphsense/ext/deprecation.py`.

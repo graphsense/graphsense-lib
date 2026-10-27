@@ -1,8 +1,7 @@
 """Cluster API routes.
 
-These endpoints replace the deprecated `/entities/...` routes. Both sets are
-served in parallel during the deprecation window and share the same service
-layer (`graphsenselib.web.service.clusters_service`).
+These endpoints replaced the `/entities/...` routes, which were removed after
+their sunset on 2026-10-31.
 """
 
 import logging
