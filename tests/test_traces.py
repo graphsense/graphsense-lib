@@ -100,6 +100,37 @@ def test_parse_raw_trace_create():
     assert trace["output"] == "0x6060"
 
 
+def test_parse_raw_trace_create_reverted_erigon_38():
+    # Erigon >= 3.8 reports a reverted create like a reverted call.
+    raw = {
+        "action": {
+            "from": "0xaaa",
+            "value": "0x0",
+            "gas": "0x10000",
+            "init": "0x6060",
+        },
+        "result": {
+            "gasUsed": "0x5000",
+            "output": "0x08c379a0",
+        },
+        "error": "Reverted",
+        "subtraces": 0,
+        "traceAddress": [0],
+        "transactionHash": "0xdeadbeef",
+        "transactionPosition": 1,
+        "type": "create",
+    }
+
+    trace = parse_raw_trace(raw, 100)
+
+    assert trace["trace_type"] == "create"
+    assert trace["from_address"] == "0xaaa"
+    assert trace["to_address"] is None
+    assert trace["gas_used"] == 0x5000
+    assert trace["output"] == "0x08c379a0"
+    assert trace["error"] == "Reverted"
+
+
 def test_parse_raw_trace_suicide():
     raw = {
         "action": {
