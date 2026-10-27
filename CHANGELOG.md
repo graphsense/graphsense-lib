@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.18.2] - 2026-10-27
+
+### Library
+
+#### Fixed
+- **ETH ingest works against Erigon 3.8.** Erigon 3.8 reports a reverted contract creation as `{gasUsed, output}`, the way it reports a reverted call, instead of `{address, code, gasUsed}`. Ingest stopped with `Unknown RPC fields ['output'] in trace.result (create)`. The revert data is now stored in `output`, as before. `to_address` stays empty, because the contract was never deployed (older Erigon versions filled in the address it would have had). Derived tables are unaffected, since they only use successful traces.
+
 ## [2.18.1] - 2026-10-15
 
 ### Web API + Python client
