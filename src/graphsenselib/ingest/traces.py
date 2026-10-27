@@ -55,7 +55,9 @@ _ACTION_BLACKLIST = {
 
 _RESULT_KEYS = {
     "call": frozenset({"gasUsed", "output"}),
-    "create": frozenset({"address", "code", "gasUsed"}),
+    # Erigon >= 3.8 reports a reverted create as {gasUsed, output} (no
+    # address, revert data in output) instead of {address, code, gasUsed}.
+    "create": frozenset({"address", "code", "gasUsed", "output"}),
     "suicide": frozenset(),
     "reward": frozenset(),
 }
@@ -140,7 +142,7 @@ def parse_raw_trace(json_trace, block_number):
         trace["gas"] = hex_to_dec(action.get("gas"))
         trace["input"] = action.get("init")
         trace["gas_used"] = hex_to_dec(result.get("gasUsed"))
-        trace["output"] = result.get("code")
+        trace["output"] = result["code"] if "code" in result else result.get("output")
         trace["creation_method"] = action.get("creationMethod")
     elif trace_type == "suicide":
         trace["from_address"] = _to_normalized_address(action.get("address"))

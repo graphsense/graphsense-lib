@@ -75,6 +75,13 @@ Use one changelog file, but separate entries by track in each release window.
 - **The gRPC retry policy (TRX ingest) asks for the 5 attempts gRPC allows, not 9.** gRPC caps `maxAttempts` at 5 and logged `clamped retryPolicy.maxAttempts at 5` on every channel; the 9 attempts and the `grpc.max_retry_attempts` option never had an effect, so the documented ~5-minute window for a node restart was really 3+6+12+24 s at most. The backoff now starts at 20 s and is capped at 120 s, so the four waits can add up to 260 s again (gRPC draws each one between 0 and its cap, so about half on average); the exporters' own per-block retries still come on top.
 - **`delta-update --forward-fill-rates` no longer warns every hour about today's missing exchange rate.** Ingest fetches rates only up to yesterday, so blocks of the current UTC day are always forward-filled; that is now logged at INFO. It still warns when a block of an earlier day had to be filled (or its timestamp is unknown), which means a day's rate is really missing. What gets filled is unchanged.
 
+## [2.18.2] - 2026-10-27
+
+### Library
+
+#### Fixed
+- **ETH ingest works against Erigon 3.8.** Erigon 3.8 reports a reverted contract creation as `{gasUsed, output}`, the way it reports a reverted call, instead of `{address, code, gasUsed}`. Ingest stopped with `Unknown RPC fields ['output'] in trace.result (create)`. The revert data is now stored in `output`, as before. `to_address` stays empty, because the contract was never deployed (older Erigon versions filled in the address it would have had). Derived tables are unaffected, since they only use successful traces.
+
 ## [2.18.1] - 2026-10-15
 
 ### Web API + Python client
