@@ -23,7 +23,13 @@ from graphsenselib.db.asynchronous.services.heuristics_service import (
     calculate_heuristics,
 )
 from graphsenselib.db.asynchronous.services.models import TxAccount, Values
-from graphsenselib.db.asynchronous.services.txs_service import TxsService
+from graphsenselib.db.asynchronous.services.txs_service import (
+    TxConversions,
+    TxsService,
+)
+from graphsenselib.defi import ExternalSwap
+from graphsenselib.defi.bridging.delegated import UnresolvedBridge
+from tests.defi.test_delegated_bridges import FIXTURE, db_rows, without_cctp_events
 
 
 def summary_get(summary: dict, address: str) -> bool:
@@ -1057,3 +1063,78 @@ class TestGetAssetFlowsWithinTxPagination:
 
         values = [t.value.value for t in first.txs + second.txs + third.txs]
         assert len(set(values)) == 60  # every flow reachable, none duplicated
+
+
+# an eth V2 CCTP burn to arb; its DepositForBurn is log 698
+CCTP_BURN = FIXTURE["v2_burn"]["tx_hash"]
+
+
+class TestConversionsWithUnresolvedBridges:
+    """get_conversions of an eth tx reports, next to its conversions, the
+    bridge events graphsense-lib cannot pair (CCTP), for an external backend
+    to pair. They are reported for the whole tx whatever sub-tx suffix was
+    asked: the backend scopes its pairing to the suffix itself. The local rows
+    are filtered by the suffix exactly as before."""
+
+    @staticmethod
+    def make_service(log_rows):
+        tx = {
+            "tx_hash": bytes.fromhex(CCTP_BURN[2:]),
+            "block_id": FIXTURE["v2_burn"]["block_id"],
+            "input": None,
+        }
+        db = MagicMock()
+        db.get_tx_by_hash = AsyncMock(return_value=tx)
+        db.fetch_transaction_logs = AsyncMock(return_value=log_rows)
+        # the tx's root call, the one trace an _I0 names
+        root = {
+            "trace_index": 0,
+            "trace_address": "",
+            "call_type": "call",
+            "from_address": b"\x0a" * 20,
+            "to_address": b"\x0b" * 20,
+            "value": 0,
+        }
+        db.fetch_transaction_traces = AsyncMock(return_value=[root])
+        db.get_token_configuration = MagicMock(return_value={})
+        svc = TxsService(db=db, rates_service=make_rates_service(), logger=MagicMock())
+        return svc, db
+
+    @pytest.mark.parametrize("suffix", ["", "_T698", "_T5", "_I0", "_I3"])
+    async def test_the_unresolved_bridge_is_reported_for_any_suffix(self, suffix):
+        svc, db = self.make_service(db_rows("v2_burn"))
+        result = await svc.get_conversions("eth", CCTP_BURN + suffix)
+        assert result.unresolved_bridges == (
+            UnresolvedBridge("cctp", "eth", CCTP_BURN, 698),
+        )
+        db.fetch_transaction_logs.assert_awaited_once()
+
+    @pytest.mark.parametrize("suffix, kept", [("", 1), ("_T690", 1), ("_T5", 0)])
+    async def test_the_local_rows_are_filtered_by_the_suffix(self, suffix, kept):
+        swap = ExternalSwap(
+            fromAddress="0x" + "11" * 20,
+            toAddress="0x" + "11" * 20,
+            fromAsset="native",
+            toAsset="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            fromAmount=10**18,
+            toAmount=2_000_000_000,
+            fromPayment=f"{CCTP_BURN}_I0",
+            toPayment=f"{CCTP_BURN}_T690",
+        )
+        svc, _ = self.make_service(db_rows("v2_burn"))
+        with patch(
+            "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[swap]
+        ):
+            result = await svc.get_conversions("eth", CCTP_BURN + suffix)
+        assert len(result.conversions) == kept
+        assert len(result.unresolved_bridges) == 1
+
+    async def test_any_other_tx_reports_none(self):
+        svc, _ = self.make_service(db_rows("v2_burn", without_cctp_events("v2_burn")))
+        result = await svc.get_conversions("eth", CCTP_BURN)
+        assert result.unresolved_bridges == ()
+
+    async def test_a_network_without_conversions_reports_nothing(self):
+        svc, db = self.make_service(db_rows("v2_burn"))
+        assert await svc.get_conversions("btc", "ab" * 32) == TxConversions()
+        db.get_tx_by_hash.assert_not_awaited()

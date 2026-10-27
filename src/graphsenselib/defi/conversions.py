@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Union, Any, Tuple
 
 from graphsenselib.defi.bridging.thorchain import (
@@ -17,6 +18,7 @@ from graphsenselib.defi.bridging.symbiosis import (
     get_bridges_from_symbiosis_decoded_logs,
 )
 from graphsenselib.datatypes.abi import decode_logs_dict
+from graphsenselib.defi.bridging.delegated import UnresolvedBridge, unresolved_bridges
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
 from graphsenselib.db.asynchronous.cassandra import Cassandra
@@ -26,6 +28,16 @@ from graphsenselib.defi.models import Trace
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DetectedConversions:
+    """What get_conversions_from_db finds in a tx: the swaps and bridges it
+    detects, and the bridge events it recognizes but cannot pair
+    (defi/bridging/delegated.py)."""
+
+    conversions: Tuple[Union[ExternalSwap, Bridge], ...] = ()
+    unresolved_bridges: Tuple[UnresolvedBridge, ...] = ()
 
 
 async def is_direct_vault_deposit(
@@ -100,7 +112,7 @@ async def get_conversions_from_db(
     visualize: bool = False,
     included_bridges: Tuple[str, ...] = (),
     cow_protocol_swaps: bool = True,
-) -> List[Union[ExternalSwap, Bridge]]:
+) -> DetectedConversions:
     """
     Extract all conversion information (swaps and bridges) from decoded logs.
 
@@ -109,8 +121,10 @@ async def get_conversions_from_db(
     to their settlements; False ignores both.
 
     Returns:
-        List of dictionaries with 'type' key ('swap' or 'bridge') and 'data' key containing
-        the conversion information. Empty list if no conversions detected.
+        The swaps and bridges detected, and the bridge events among the tx's
+        logs that graphsense-lib cannot pair. Those are reported whatever
+        included_bridges says; an external backend may pair them. Both are
+        empty if nothing is detected.
     """
 
     # Check for UTXO THORChain transactions FIRST (before fetching logs)
@@ -129,7 +143,7 @@ async def get_conversions_from_db(
                     db, network, tx
                 ):
                     bridges.append(bridge)
-                return bridges
+                return DetectedConversions(tuple(bridges))
             elif is_thorchain_utxo_receive(tx):
                 logger.debug(f"UTXO THORChain receive detected for tx {tx_hash}")
                 bridges = []
@@ -137,8 +151,8 @@ async def get_conversions_from_db(
                     db, network, tx
                 ):
                     bridges.append(bridge)
-                return bridges
-        return []
+                return DetectedConversions(tuple(bridges))
+        return DetectedConversions()
 
     # For EVM networks, fetch logs and traces. Both scans read the same
     # tx's block partition independently of each other, so run them
@@ -148,7 +162,33 @@ async def get_conversions_from_db(
         db.fetch_transaction_traces(network, tx),
     )
     tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
+    conversions = await _conversions_from_logs(
+        network,
+        db,
+        tx,
+        tx_logs_raw,
+        tx_traces,
+        visualize=visualize,
+        included_bridges=included_bridges,
+        cow_protocol_swaps=cow_protocol_swaps,
+    )
+    return DetectedConversions(
+        tuple(conversions), unresolved_bridges(network, tx_logs_raw or ())
+    )
 
+
+async def _conversions_from_logs(
+    network: str,
+    db: Cassandra,
+    tx: Dict[str, Any],
+    tx_logs_raw: List[Dict[str, Any]],
+    tx_traces: List[Trace],
+    visualize: bool,
+    included_bridges: Tuple[str, ...],
+    cow_protocol_swaps: bool,
+) -> List[Union[ExternalSwap, Bridge]]:
+    """The swaps and bridges of an EVM tx, detected from its raw logs and
+    normalized traces (get_conversions_from_db)."""
     # Check for direct vault deposits (no logs, memo in input data)
     # This must be checked before the early return for no logs
     if (not tx_logs_raw or len(tx_logs_raw) == 0) and "thorchain" in included_bridges:
