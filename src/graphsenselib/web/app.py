@@ -1116,11 +1116,16 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
     No-op unless `external_backends.enabled` is set with at least one
-    network — the app is then byte-identical to one without the feature.
-    The shared httpx client lives on app.state so teardown can close it.
+    network or delegated_conversions entry — the app is then byte-identical
+    to one without the feature. The shared httpx client lives on app.state
+    so teardown can close it.
     """
     eb_config = config.external_backends
-    if eb_config is None or not eb_config.enabled or not eb_config.networks:
+    if (
+        eb_config is None
+        or not eb_config.enabled
+        or not (eb_config.networks or eb_config.delegated_conversions)
+    ):
         return
     client = httpx.AsyncClient(timeout=httpx.Timeout(eb_config.timeout_s))
     app.state.external_backends_client = client
@@ -1139,7 +1144,7 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     # startup log rather than by re-reading the config.
     logger.info(
         "External backends enabled for networks: %s (fan-out: %s; caller identity: %s)",
-        ", ".join(sorted(eb_config.networks)),
+        ", ".join(sorted(eb_config.networks)) or "none",
         f"skipped for currencies without a {roles_config.currency_role_prefix}* role"
         if gated
         else "not role-gated, every caller fans out",
@@ -1147,6 +1152,11 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
         if eb_config.consumer_header
         else "NOT relayed, so the backend paces every caller as one",
     )
+    if eb_config.delegated_conversions:
+        logger.info(
+            "External backends pair the bridges in conversions on: %s",
+            ", ".join(sorted(eb_config.delegated_conversions)),
+        )
 
 
 # Response headers the dashboard reads, named because the "*" wildcard does not
