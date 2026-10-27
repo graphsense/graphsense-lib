@@ -332,7 +332,7 @@ def _get_tags_by_subjectid_stmt(
         .where(Confidence.id == Tag.confidence_id)
         .offset(offset)
         .limit(page_size)
-        .order_by(desc(Confidence.level))
+        .order_by(desc(Confidence.level), Tag.id)
     )
 
     if network is not None:
@@ -355,7 +355,7 @@ def _get_tags_by_subjectids_stmt(
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(desc(Confidence.level))
+        .order_by(desc(Confidence.level), Tag.id)
     )
 
     if network is not None:
@@ -541,7 +541,7 @@ def _get_tags_by_actorid_stmt(
         .where(Confidence.id == Tag.confidence_id)
         .offset(offset)
         .limit(page_size)
-        .order_by(desc(Confidence.level))
+        .order_by(desc(Confidence.level), Tag.id)
     )
     if network is not None:
         q = q.where(Tag.network == network)
@@ -575,7 +575,7 @@ def _get_tags_by_clusterid_stmt(
     if exclude_identifiers is not None:
         q = q.where(Tag.identifier.not_in(exclude_identifiers))
 
-    return q.offset(offset).limit(page_size).order_by(desc(Confidence.level))
+    return q.offset(offset).limit(page_size).order_by(desc(Confidence.level), Tag.id)
 
 
 def _get_tags_by_label_stmt(
