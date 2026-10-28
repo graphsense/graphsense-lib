@@ -155,6 +155,9 @@ class SyncScheduler:
         self._delta_slots = _Slots()
         self._compaction_slots = _Slots()
         self._config_error_reported = False
+        # What is missing from the config (the sync section, -c networks),
+        # warned about once until it appears, not on every tick.
+        self._missing: set = set()
         self._once = False
         self._signals = 0
 
@@ -222,6 +225,8 @@ class SyncScheduler:
                 self.tick()
                 for f in [rt.future for rt in self._runtime.values() if rt.future]:
                     failed |= bool(f.result())
+                if self._missing:
+                    return 2
             else:
                 while not self._stop.is_set():
                     self.tick()
@@ -268,9 +273,20 @@ class SyncScheduler:
             self._reload_requested.clear()
             logger.info("Reloading config (SIGHUP)")
         env = self._environment_now()
-        if env is None or env.sync is None:
-            if env is not None:
-                logger.warning(f"No sync section in environment {self.env}")
+        if env is None:
+            return
+        missing = set()
+        if env.sync is None:
+            missing.add(f"the sync section of environment {self.env}")
+        elif self.only:
+            missing |= {
+                f"sync.networks.{n} (environment {self.env})"
+                for n in self.only - set(env.sync.networks)
+            }
+        for what in sorted(missing - self._missing):
+            logger.warning(f"Not configured, nothing to run: {what}")
+        self._missing = missing
+        if env.sync is None:
             return
         sync = env.sync
         self._delta_slots.resize(sync.max_parallel_delta_updates)

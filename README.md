@@ -637,8 +637,9 @@ environments:
 ```
 
 A network is only run by the daemon if it has an entry under
-`sync.networks`: without one, `sync run -c <net>` does nothing and still
-exits 0. Entries without a daemon are harmless; `sync status` lists them as
+`sync.networks`: without one, `sync run -c <net>` warns once and runs nothing
+until the entry appears (the config is re-read on change); with `--once` it
+exits 2. Entries without a daemon are harmless; `sync status` lists them as
 "no daemon", which makes it safe to prepare the config for every network
 while the cron jobs still run (older versions only warn about the keys they
 do not know).

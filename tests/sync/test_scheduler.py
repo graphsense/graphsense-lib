@@ -417,3 +417,33 @@ def test_stop_grace_follows_config(setup):
     sched._load_environment = lambda: env
     sched.tick()
     assert runner.stop_grace_seconds == 300
+
+
+def test_unconfigured_network_warned_once_and_once_exits_2(setup, caplog):
+    sched, probe, runner, alerts, clock = setup()
+    sched.only = {"btc"}  # sync run -c btc, but only zec is configured
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            sched.tick()
+    warnings = [r for r in caplog.records if "Not configured" in r.message]
+    assert len(warnings) == 1 and "sync.networks.btc" in warnings[0].message
+    assert runner.calls == []
+
+    sched, *_ = setup()
+    sched.only = {"btc"}
+    result = []
+    # off the main thread, so run() leaves pytest's signal handlers alone
+    t = threading.Thread(target=lambda: result.append(sched.run(once=True)))
+    t.start()
+    t.join()
+    assert result == [2]
+
+
+def test_missing_sync_section_warned_once(setup, caplog):
+    env = make_env()
+    env.sync = None
+    sched, *_ = setup(env=env)
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            sched.tick()
+    assert sum("Not configured" in r.message for r in caplog.records) == 1
