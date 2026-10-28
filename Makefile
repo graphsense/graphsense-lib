@@ -15,7 +15,7 @@ gs_tagstore_db_url ?= 'postgresql+asyncpg://${POSTGRES_USER_TAGSTORE}:${POSTGRES
 
 all: format lint test build
 
-tag-version:
+tag-version: check-api-bump
 	@set -e; \
 	git diff --exit-code; \
 	git diff --staged --exit-code; \
@@ -39,6 +39,28 @@ tag-version:
 		echo "Created tags:$$created_tags"; \
 	else \
 		echo "No new tags created; both tags already exist"; \
+	fi
+
+# An image reports the API version of the commit it was built from, so a
+# library tag must not ship a changed OpenAPI spec under the last webapi
+# version (v2.19.0-rc.1 did). The generated client code stands in for the
+# spec: CI keeps it in sync, and it does not change for web/ refactors.
+# Version strings are ignored; ALLOW_STALE_API=1 skips the check.
+ALLOW_STALE_API ?= 0
+check-api-bump:
+	@set -e; \
+	[ "$(ALLOW_STALE_API)" = 1 ] && exit 0; \
+	last=$$(git describe --tags --abbrev=0 --match 'webapi-v*' HEAD 2>/dev/null) || exit 0; \
+	api_ver=$$(grep -oP '__api_version__ = "\K[^"]+' src/graphsenselib/web/version.py); \
+	[ "$$api_ver" != "$${last#webapi-v}" ] && exit 0; \
+	changed=$$(git diff "$$last" HEAD -- clients/python/graphsense/api clients/python/graphsense/models \
+		| grep -E '^[+-][^+-]' | grep -vcE '__version__|version of the OpenAPI document' || true); \
+	if [ "$$changed" -gt 0 ]; then \
+		echo "The OpenAPI spec changed since $$last ($$changed lines in the generated client),"; \
+		echo "but the API version is still $$api_ver. Bump it first:"; \
+		echo "  set WEBAPISEM in the Makefile, then make update-api-version && make run-codegen"; \
+		echo "If the change needs no new API version: make tag-version ALLOW_STALE_API=1"; \
+		exit 1; \
 	fi
 
 dev: install-dev
@@ -287,4 +309,4 @@ serve-docker:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test test-fast install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-spark-packages check-spark-packages sync-client-version update-client-version check-client-version show-versions mcp-validate-curation
+.PHONY: all check-api-bump test test-fast install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-spark-packages check-spark-packages sync-client-version update-client-version check-client-version show-versions mcp-validate-curation
