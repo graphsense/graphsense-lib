@@ -46,6 +46,9 @@ def _flip_last(s: str) -> str:
         ("ltc", _b58check(bytes([0x30]) + bytes(20))),
         ("ltc", LTC_BASE58_LOOKALIKE),
         ("zec", _b58check(bytes([0x1C, 0xB8]) + bytes(20))),
+        # bare cashaddr made of base58 characters only (~8% of them): it
+        # fails the base58 checksum but is a valid bch address
+        ("bch", "qzet8ax43kpv5cux6tykuaswsxdctjfycvnn7c6v6u"),
     ],
 )
 def test_valid_checksums_are_not_typos(network, address):

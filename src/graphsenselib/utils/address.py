@@ -671,6 +671,10 @@ def address_checksum_invalid(network: str, address) -> bool:
     if address.startswith("nonstandard"):
         return False
     network = network.lower()
+    # A valid address in any of the network's formats is no typo, also when
+    # it happens to be base58-shaped (bare cashaddr, zs1/u1 without "0"/"l").
+    if network in _BASE58CHECK_NETWORKS and validate_address(network, address):
+        return False
     lowered = address.lower()
     base58_shaped = network in _BASE58CHECK_NETWORKS and all(
         c in _BASE58_ALPHABET for c in address
