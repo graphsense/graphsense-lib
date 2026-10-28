@@ -83,6 +83,13 @@ WIF = base58.b58encode_check(b"\x80" + bytes(range(1, 33)) + b"\x01").decode()
         ),
         ("trx", TRX[:5] + "x" + TRX[6:], None, "checksum mismatch"),
         ("btc", "definitely-not-an-address", None, "not a valid BTC address"),
+        # ZIP-320 test vector: TEX encoding of a t1 P2PKH hash
+        (
+            "zec",
+            "tex1s2rt77ggv6q989lr49rkgzmh5slsksa9khdgte",
+            None,
+            "the chain has it as t1VmmGiyjVNeCjxDZzg7vZmd99WyzVby9yC",
+        ),
     ],
 )
 def test_address_hint(network, address, context, expected):

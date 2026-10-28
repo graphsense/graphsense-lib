@@ -17,6 +17,8 @@ from graphsenselib.utils.address import (
     EVM_NETWORKS,
     address_checksum_invalid,
     base58_check_payload,
+    bech32_convertbits,
+    bech32_data,
     bech32_mixed_case,
     is_verifiable_network,
     validate_address,
@@ -138,6 +140,24 @@ def _likely_chain(address: str, chains: list) -> str:
     return chains[0]
 
 
+def _zec_t1_from_tex(address: str) -> Optional[str]:
+    """The t1 address behind a ZIP-320 TEX address (bech32m over the same
+    20-byte P2PKH hash), else None. The chain only has the t1 form."""
+    import base58
+
+    lowered = address.lower()
+    for hrp, version in (("tex", b"\x1c\xb8"), ("textest", b"\x1d\x25")):
+        if lowered.startswith(hrp + "1"):
+            decoded = bech32_data(address, hrp)
+            if decoded is None or decoded[0] != "bech32m":
+                return None
+            body = bech32_convertbits(decoded[1], 5, 8, False)
+            if body is None or len(body) != 20:
+                return None
+            return base58.b58encode_check(version + bytes(body)).decode()
+    return None
+
+
 def _tron_from_hex(hexbody: str) -> str:
     import base58
 
@@ -183,6 +203,11 @@ def address_hint(network: str, address: str, context=None) -> str:
         return "a private key (WIF), not an address; remove it, it is a leak"
 
     evm_shaped = _EVM_ADDRESS.fullmatch(address) is not None
+
+    if network == "zec":
+        t1 = _zec_t1_from_tex(address)
+        if t1:
+            return f"ZIP-320 TEX address; the chain has it as {t1}"
 
     if network == "trx":
         m = _TRON_HEX.fullmatch(address)
