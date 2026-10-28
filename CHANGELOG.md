@@ -12,6 +12,8 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-10-28
+
 `graphsense-cli sync run` replaces the per-network cron jobs with one continuously running sync daemon; the REST API gains address notifications (off by default) and drops the sunset `/entities` routes.
 
 ### Upgrade notes
