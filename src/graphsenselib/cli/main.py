@@ -162,12 +162,13 @@ def cli(ctx, verbosity: int, config_file: str):
     # if we have a config, we can set up the slack notification context. Not
     # for jobs of the sync daemon: it retries them and reports failures itself,
     # rate-limited (see sync/jobs.py).
-    if config is not None and not os.environ.get(SYNC_JOB_ENV_VAR):
-        ctx.with_resource(
-            ClickSlackErrorNotificationContext(
-                config.get_slack_exception_notification_hook_urls()
+    if config is not None:
+        if not os.environ.get(SYNC_JOB_ENV_VAR):
+            ctx.with_resource(
+                ClickSlackErrorNotificationContext(
+                    config.get_slack_exception_notification_hook_urls()
+                )
             )
-        )
         logger.info(
             f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
         )
