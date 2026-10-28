@@ -1,7 +1,7 @@
-"""Conversions of an eth tx with a bridge graphsense-lib cannot pair (CCTP),
-merged with the pairing an external backend answers
-(middleware/external_backends.py, rule 6), and proxied conversions answers
-that name an eth leg (rule 1).
+"""Conversions of an eth tx with a bridge graphsense-lib finds only half of
+(CCTP): the half bridge, or the pairing an external backend answers in its
+place (middleware/external_backends.py, rule 6); and proxied conversions
+answers that name an eth leg (rule 1).
 
 These run without containers: the real txs route and TxsService over a fake
 database, the middleware in front, and an httpx MockTransport for the backend.
@@ -32,7 +32,12 @@ from graphsenselib.web.middleware.external_backends import (
 )
 from graphsenselib.web.routes import txs
 
-from tests.defi.test_delegated_bridges import FIXTURE, db_rows, without_cctp_events
+from tests.defi.test_delegated_bridges import (
+    FIXTURE,
+    HALF_BRIDGES,
+    db_rows,
+    without_cctp_events,
+)
 
 BACKEND_URL = "https://backend.test"
 USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
@@ -104,6 +109,32 @@ LOCAL_ROW = {
 }
 
 
+def half_row(part):
+    """A fixture tx's half bridge as the route answers it: no token is
+    configured, so no asset is supported."""
+    bridge = HALF_BRIDGES[part]
+    return {
+        "conversion_type": "bridge_tx",
+        "from_address": bridge.fromAddress,
+        "to_address": bridge.toAddress,
+        "from_asset": bridge.fromAsset,
+        "to_asset": bridge.toAsset,
+        "from_amount": hex(bridge.fromAmount),
+        "to_amount": hex(bridge.toAmount),
+        "from_asset_transfer": bridge.fromPayment,
+        "to_asset_transfer": bridge.toPayment,
+        "from_network": bridge.fromNetwork,
+        "to_network": bridge.toNetwork,
+        "from_is_supported_asset": False,
+        "to_is_supported_asset": False,
+    }
+
+
+# the burn's half bridge: its eth leg is the one BRIDGE_ROW names
+HALF_ROW = half_row("v2_burn")
+assert HALF_ROW["from_asset_transfer"] == BRIDGE_ROW["from_asset_transfer"]
+
+
 @pytest.fixture(autouse=True)
 def local_swap():
     with patch(
@@ -164,6 +195,7 @@ def make_client(
     gated=None,
     timeout_s=None,
     with_middleware=True,
+    included_bridges=("cctp",),
 ):
     """The txs routes over a fake database behind the middleware, and a
     recording mock backend. `backend_answer` is an httpx.Response or a function
@@ -182,7 +214,11 @@ def make_client(
     if timeout_s is not None:
         backends["delegated_conversions_timeout_s"] = timeout_s
     config = GSRestConfig.from_dict(
-        {"database": {"nodes": ["localhost"]}, "external_backends": backends}
+        {
+            "database": {"nodes": ["localhost"]},
+            "external_backends": backends,
+            "included_bridges": list(included_bridges),
+        }
     )
     db = fake_db(db_rows("v2_burn") if log_rows is None else log_rows, indexed)
     app.state.config = config
@@ -215,16 +251,16 @@ def make_client(
 
 
 # ---------------------------------------------------------------------------
-# without a backend for the network the answer is the local one
+# without a backend for the network the half bridge is the answer
 # ---------------------------------------------------------------------------
 
 
-def test_without_the_middleware_a_cctp_tx_gets_the_local_answer():
-    """graphsense-lib alone: the route marks the tx, and nothing reads it."""
+def test_without_the_middleware_a_cctp_tx_gets_its_half_bridge():
+    """graphsense-lib alone."""
     client, _, _ = make_client(with_middleware=False)
     response = client.get(CONVERSIONS)
     assert response.status_code == 200
-    assert response.json() == [LOCAL_ROW]
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
 
 
 @pytest.mark.parametrize("delegated_conversions", [{}, {"trx": {"url": BACKEND_URL}}])
@@ -233,6 +269,12 @@ def test_without_a_backend_for_eth_nothing_is_asked(delegated_conversions):
         delegated_conversions=delegated_conversions,
         networks={"arb": {"url": BACKEND_URL}},
     )
+    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, HALF_ROW]
+    assert seen == []
+
+
+def test_without_cctp_in_included_bridges_nothing_is_reported_or_asked():
+    client, seen, _ = make_client(included_bridges=("thorchain",))
     assert client.get(CONVERSIONS).json() == [LOCAL_ROW]
     assert seen == []
 
@@ -259,9 +301,10 @@ def test_any_other_eth_tx_is_passed_through_and_reads_what_it_read_before():
     "part, side",
     [("v1_burn", "from"), ("v2_burn", "from"), ("v1_mint", "to"), ("v2_mint", "to")],
 )
-def test_a_cctp_tx_gains_the_bridge_the_backend_pairs(part, side):
+def test_the_bridge_the_backend_pairs_takes_the_half_bridges_place(part, side):
     tx = FIXTURE[part]["tx_hash"]
-    bridge = {**BRIDGE_ROW, f"{side}_asset_transfer": f"{tx[2:]}_T1"}
+    leg = half_row(part)[f"{side}_asset_transfer"]
+    bridge = {**BRIDGE_ROW, f"{side}_asset_transfer": leg}
     answer = httpx.Response(200, json=[{**bridge, **FIAT}, SWAP_ROW])
     client, seen, _ = make_client(
         log_rows=db_rows(part), indexed=(tx,), backend_answer=answer
@@ -291,16 +334,41 @@ def test_a_cctp_tx_gains_the_bridge_the_backend_pairs(part, side):
     ],
     ids=["swap", "bridge of another tx"],
 )
-def test_no_row_but_a_bridge_of_the_tx_is_added(row):
+def test_no_row_but_a_bridge_of_the_tx_is_taken(row):
     client, seen, _ = make_client(backend_answer=httpx.Response(200, json=[row]))
-    assert client.get(CONVERSIONS).json() == [LOCAL_ROW]
+    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, HALF_ROW]
     assert len(seen) == 1
 
 
-def test_a_local_row_naming_a_transfer_of_an_added_bridge_is_dropped():
-    """The backend's bridge takes its place; transfers are compared in lower
-    case and without 0x."""
-    bridge = {**BRIDGE_ROW, "from_asset_transfer": f"{CCTP_BURN[2:].upper()}_T690"}
+@pytest.mark.parametrize(
+    "transfer",
+    [f"0X{CCTP_BURN[2:].upper()}_T694", f"{CCTP_BURN[2:]}_T1", CCTP_BURN[2:]],
+    ids=["its leg", "another transfer", "the tx"],
+)
+def test_the_paired_bridges_take_the_half_bridges_place(transfer):
+    """However the backend names the tx's leg: it pairs all of a tx's bridges
+    or none."""
+    bridge = {**BRIDGE_ROW, "from_asset_transfer": transfer}
+    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
+    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, bridge]
+
+
+def test_the_paired_bridges_replace_every_half_bridge_of_the_tx():
+    """A backend answers all of a tx's bridges or none (the CCTP adapter 501s
+    when one cannot be paired), so a paired answer stands for the whole tx."""
+    logs = FIXTURE["v2_burn"]["logs"]
+    again = [{**log, "log_index": log["log_index"] + 100} for log in logs]
+    client, _, _ = make_client(
+        log_rows=db_rows("v2_burn", logs + again),
+        backend_answer=httpx.Response(200, json=[BRIDGE_ROW]),
+    )
+    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, BRIDGE_ROW]
+
+
+def test_a_local_row_naming_a_leg_of_a_paired_bridge_is_dropped():
+    """It is that bridge too; transfers are compared in lower case and
+    without 0x."""
+    bridge = {**BRIDGE_ROW, "from_asset_transfer": f"0X{CCTP_BURN[2:].upper()}_T690"}
     client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
     assert client.get(CONVERSIONS).json() == [bridge]
 
@@ -309,7 +377,6 @@ def test_a_local_row_naming_a_transfer_of_an_added_bridge_is_dropped():
     "network, identifier",
     [
         ("eth", f"{CCTP_BURN}_T694"),
-        ("eth", f"{CCTP_BURN}_I0"),
         ("ETH", CCTP_BURN),
         # the local lookup ignores whitespace in a hash (bytes.fromhex), so a
         # control character gets this far; httpx refuses it unencoded
@@ -327,6 +394,12 @@ def test_the_identifier_reaches_the_backend_as_it_was_asked(network, identifier)
         seen[0].url.raw_path
         == f"/eth/txs/{identifier}/conversions?only_bridges=true".encode()
     )
+
+
+def test_a_sub_tx_of_no_half_bridge_asks_nothing():
+    client, seen, _ = make_client()
+    assert client.get(f"/eth/txs/{CCTP_BURN}_T5/conversions").json() == []
+    assert seen == []
 
 
 @pytest.mark.parametrize("timeout_s, expected", [(None, 15.0), (4.0, 4.0)])
@@ -348,9 +421,9 @@ GATED = {"arb", "pol", "bnb"}
 @pytest.mark.parametrize(
     "headers, roles_config, asked, answer",
     [
-        ({"X-Ikn-Currency-Opt-Out": "all-light"}, None, False, [LOCAL_ROW]),
-        ({"X-User-Roles": "currency-eth"}, ROLES, False, [LOCAL_ROW]),
-        ({"X-User-Roles": "currency-bnb"}, ROLES, True, [LOCAL_ROW]),
+        ({"X-Ikn-Currency-Opt-Out": "all-light"}, None, False, [LOCAL_ROW, HALF_ROW]),
+        ({"X-User-Roles": "currency-eth"}, ROLES, False, [LOCAL_ROW, HALF_ROW]),
+        ({"X-User-Roles": "currency-bnb"}, ROLES, True, [LOCAL_ROW, HALF_ROW]),
         ({"X-User-Roles": "currency-arb"}, ROLES, True, [LOCAL_ROW, BRIDGE_ROW]),
         (
             {},
@@ -369,19 +442,19 @@ def test_the_opt_out_and_the_currency_roles(headers, roles_config, asked, answer
 
 
 # ---------------------------------------------------------------------------
-# without the backend's pairing the local answer stands
+# without the backend's pairing the half bridge is the answer
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("status", [400, 404, 422, 501])
-def test_a_backend_that_cannot_answer_the_tx_leaves_the_local_answer(status):
+def test_a_backend_that_cannot_answer_the_tx_leaves_the_half_bridge(status):
     """An answer about this tx (e.g. 501, not minted yet) from an up backend:
     nothing is declined, nothing alerts, and the log says why."""
     answer = httpx.Response(status, json={"detail": "cannot pair it"})
     client, _, _ = make_client(backend_answer=answer)
     with records_of_the_middleware() as records:
         response = client.get(CONVERSIONS)
-    assert response.json() == [LOCAL_ROW]
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
     assert DECLINED_HEADER not in response.headers
     (record,) = records
     assert record.levelno == logging.INFO
@@ -399,12 +472,12 @@ def test_a_backend_that_cannot_answer_the_tx_leaves_the_local_answer(status):
     ],
     ids=["error", "429", "not json", "invalid row", "not a list"],
 )
-def test_a_failed_backend_leaves_the_local_answer_and_is_named(answer, level):
+def test_a_failed_backend_leaves_the_half_bridge_and_is_named(answer, level):
     client, _, _ = make_client(backend_answer=answer)
     with records_of_the_middleware() as records:
         response = client.get(CONVERSIONS)
     assert response.status_code == 200
-    assert response.json() == [LOCAL_ROW]
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
     assert [r.levelno for r in records] == [level]
 
@@ -419,7 +492,7 @@ def test_an_unreachable_or_hung_backend_is_left_out_for_a_while(error, monkeypat
     with records_of_the_middleware() as records:
         answers = [client.get(CONVERSIONS), client.get(CONVERSIONS)]
     for response in answers:
-        assert response.json() == [LOCAL_ROW]
+        assert response.json() == [LOCAL_ROW, HALF_ROW]
         assert response.headers[DECLINED_HEADER] == BACKEND_URL
     # asked once in its skip window, and one alert saying what it takes out
     assert len(seen) == 1
@@ -558,14 +631,33 @@ def test_any_other_proxied_answer_reads_nothing(path, status, content):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_delegated_conversions_alone_install_the_middleware(enabled, caplog):
-    """A deployment may merge eth conversions without serving a network
-    externally; the startup log names the networks."""
+PAIRS_ON_ETH = "External backends pair the bridges in conversions on: eth"
+PAIRS_NOTHING = (
+    "delegated_conversions pairs nothing: included_bridges names none of cctp, "
+    "so no half bridge is found to pair"
+)
+
+
+@pytest.mark.parametrize(
+    "enabled, included_bridges, logged",
+    [
+        (True, ["cctp"], [PAIRS_ON_ETH]),
+        (True, ["thorchain"], [PAIRS_ON_ETH, PAIRS_NOTHING]),
+        (False, ["cctp"], []),
+    ],
+    ids=["cctp", "no cctp", "disabled"],
+)
+def test_delegated_conversions_alone_install_the_middleware(
+    enabled, included_bridges, logged, caplog
+):
+    """A deployment may pair eth conversions without serving a network
+    externally; the startup log names the networks, and warns when no half
+    bridge is reported to pair."""
     with caplog.at_level(logging.INFO, logger="graphsenselib.web.app"):
         app = create_app_from_dict(
             {
                 "database": {"nodes": ["localhost"]},
+                "included_bridges": included_bridges,
                 "external_backends": {
                     "enabled": enabled,
                     "delegated_conversions": {"eth": {"url": BACKEND_URL}},
@@ -574,9 +666,8 @@ def test_delegated_conversions_alone_install_the_middleware(enabled, caplog):
         )
     installed = any(m.cls is ExternalBackendMiddleware for m in app.user_middleware)
     assert installed == enabled
-    logged = [r.getMessage() for r in caplog.records if "pair" in r.getMessage()]
-    assert logged == (
-        ["External backends pair the bridges in conversions on: eth"] if enabled else []
+    assert [r.getMessage() for r in caplog.records if "pair" in r.getMessage()] == (
+        logged
     )
 
 

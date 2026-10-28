@@ -3,10 +3,14 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 import graphsenselib.defi.conversions as conversions_mod
-from graphsenselib.defi.bridging.delegated import UnresolvedBridge
 from graphsenselib.defi.models import Trace
 
-from .test_delegated_bridges import FIXTURE, db_rows, without_cctp_events
+from .test_delegated_bridges import (
+    FIXTURE,
+    HALF_BRIDGES,
+    db_rows,
+    without_cctp_events,
+)
 
 
 class TestGetConversionsFromDbGather:
@@ -102,13 +106,10 @@ class TestGetConversionsFromDbGather:
         assert result == conversions_mod.DetectedConversions()
 
 
-class TestUnresolvedBridges:
-    """A tx's bridge events graphsense-lib cannot pair (CCTP) come back with
-    its conversions. They are found in the logs already loaded, so detecting
-    them adds no read, and included_bridges does not decide whether they are
-    reported: whoever acts on them is configured elsewhere."""
-
-    CCTP_BURN = UnresolvedBridge("cctp", "eth", FIXTURE["v2_burn"]["tx_hash"], 698)
+class TestHalfBridges:
+    """A tx's bridges graphsense-lib finds only half of (CCTP) come back with
+    its conversions when included_bridges names them. They are found in the
+    logs already loaded, so finding them adds no read."""
 
     @staticmethod
     def fake_db(rows):
@@ -125,13 +126,20 @@ class TestUnresolvedBridges:
             "input": None,
         }
 
-    @pytest.mark.parametrize("included_bridges", [(), ("thorchain",), ("cctp",)])
-    async def test_a_cctp_tx_reports_its_unresolved_bridge(self, included_bridges):
+    async def test_a_cctp_tx_reports_its_half_bridge(self):
+        db = self.fake_db(db_rows("v2_burn"))
+        result = await conversions_mod.get_conversions_from_db(
+            "eth", db, self.tx_of("v2_burn"), included_bridges=("cctp",)
+        )
+        assert result.half_bridges == (HALF_BRIDGES["v2_burn"],)
+
+    @pytest.mark.parametrize("included_bridges", [(), ("thorchain",)])
+    async def test_not_unless_cctp_is_an_included_bridge(self, included_bridges):
         db = self.fake_db(db_rows("v2_burn"))
         result = await conversions_mod.get_conversions_from_db(
             "eth", db, self.tx_of("v2_burn"), included_bridges=included_bridges
         )
-        assert result.unresolved_bridges == (self.CCTP_BURN,)
+        assert result.half_bridges == ()
 
     @pytest.mark.parametrize(
         "rows",
@@ -141,7 +149,9 @@ class TestUnresolvedBridges:
     async def test_detection_reads_nothing_beyond_the_logs_and_traces(self, rows):
         db = self.fake_db(rows)
         tx = self.tx_of("v2_burn")
-        await conversions_mod.get_conversions_from_db("eth", db, tx)
+        await conversions_mod.get_conversions_from_db(
+            "eth", db, tx, included_bridges=("cctp",)
+        )
         assert db.mock_calls == [
             call.fetch_transaction_logs("eth", tx),
             call.fetch_transaction_traces("eth", tx),
@@ -150,15 +160,18 @@ class TestUnresolvedBridges:
     async def test_any_other_tx_reports_none(self):
         rows = db_rows("v2_burn", without_cctp_events("v2_burn"))
         result = await conversions_mod.get_conversions_from_db(
-            "eth", self.fake_db(rows), self.tx_of("v2_burn")
+            "eth", self.fake_db(rows), self.tx_of("v2_burn"), included_bridges=("cctp",)
         )
-        assert result.unresolved_bridges == ()
+        assert result.half_bridges == ()
 
     async def test_logs_that_decode_to_nothing_still_report_it(self):
         with patch.object(conversions_mod, "decode_logs_dict", return_value=[]):
             result = await conversions_mod.get_conversions_from_db(
-                "eth", self.fake_db(db_rows("v2_burn")), self.tx_of("v2_burn")
+                "eth",
+                self.fake_db(db_rows("v2_burn")),
+                self.tx_of("v2_burn"),
+                included_bridges=("cctp",),
             )
         assert result == conversions_mod.DetectedConversions(
-            conversions=(), unresolved_bridges=(self.CCTP_BURN,)
+            conversions=(), half_bridges=(HALF_BRIDGES["v2_burn"],)
         )

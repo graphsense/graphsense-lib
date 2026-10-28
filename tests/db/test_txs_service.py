@@ -22,13 +22,16 @@ from graphsenselib.db.asynchronous.services.heuristics_service import (
     _one_time_change_heuristic,
     calculate_heuristics,
 )
-from graphsenselib.db.asynchronous.services.models import TxAccount, Values
+from graphsenselib.db.asynchronous.services.models import (
+    ExternalConversion,
+    TxAccount,
+    Values,
+)
 from graphsenselib.db.asynchronous.services.txs_service import (
     TxConversions,
     TxsService,
 )
 from graphsenselib.defi import ExternalSwap
-from graphsenselib.defi.bridging.delegated import UnresolvedBridge
 from tests.defi.test_delegated_bridges import FIXTURE, db_rows, without_cctp_events
 
 
@@ -1065,16 +1068,16 @@ class TestGetAssetFlowsWithinTxPagination:
         assert len(set(values)) == 60  # every flow reachable, none duplicated
 
 
-# an eth V2 CCTP burn to arb; its DepositForBurn is log 698
+# an eth V2 CCTP burn to arb; its DepositForBurn is log 698, its eth leg the
+# Transfer at log 694
 CCTP_BURN = FIXTURE["v2_burn"]["tx_hash"]
+CCTP = ("cctp",)
 
 
-class TestConversionsWithUnresolvedBridges:
+class TestConversionsWithHalfBridges:
     """get_conversions of an eth tx reports, next to its conversions, the
-    bridge events graphsense-lib cannot pair (CCTP), for an external backend
-    to pair. They are reported for the whole tx whatever sub-tx suffix was
-    asked: the backend scopes its pairing to the suffix itself. The local rows
-    are filtered by the suffix exactly as before."""
+    bridges graphsense-lib finds only half of (CCTP) as rows, for an external
+    backend to complete. Both are filtered by the sub-tx suffix."""
 
     @staticmethod
     def make_service(log_rows):
@@ -1100,14 +1103,37 @@ class TestConversionsWithUnresolvedBridges:
         svc = TxsService(db=db, rates_service=make_rates_service(), logger=MagicMock())
         return svc, db
 
-    @pytest.mark.parametrize("suffix", ["", "_T698", "_T5", "_I0", "_I3"])
-    async def test_the_unresolved_bridge_is_reported_for_any_suffix(self, suffix):
-        svc, db = self.make_service(db_rows("v2_burn"))
-        result = await svc.get_conversions("eth", CCTP_BURN + suffix)
-        assert result.unresolved_bridges == (
-            UnresolvedBridge("cctp", "eth", CCTP_BURN, 698),
+    async def test_the_half_bridge_is_a_row(self):
+        svc, _ = self.make_service(db_rows("v2_burn"))
+        result = await svc.get_conversions("eth", CCTP_BURN, included_bridges=CCTP)
+        assert result.half_bridges == (
+            ExternalConversion(
+                conversion_type="bridge",
+                from_address="0x9e9852ba17ab249fd668cdc8f5f11cbcdff306d4",
+                to_address="0x7ae6b9a6d79627099b0c46bf3363b8ac400277cc",
+                from_asset="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+                to_asset="unknown",
+                from_amount=hex(86_114_739),
+                to_amount="0x0",
+                from_asset_transfer=f"{CCTP_BURN[2:]}_T694",
+                to_asset_transfer="pending",
+                from_network="eth",
+                to_network="arb",
+                from_is_supported_asset=False,
+                to_is_supported_asset=False,
+            ),
         )
-        db.fetch_transaction_logs.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        "suffix, reported", [("", 1), ("_T694", 1), ("_I0", 1), ("_T5", 0), ("_I3", 0)]
+    )
+    async def test_the_half_bridge_is_filtered_by_the_suffix(self, suffix, reported):
+        """_I0 is the tx's root call, which stands for the whole tx."""
+        svc, _ = self.make_service(db_rows("v2_burn"))
+        result = await svc.get_conversions(
+            "eth", CCTP_BURN + suffix, included_bridges=CCTP
+        )
+        assert len(result.half_bridges) == reported
 
     @pytest.mark.parametrize("suffix, kept", [("", 1), ("_T690", 1), ("_T5", 0)])
     async def test_the_local_rows_are_filtered_by_the_suffix(self, suffix, kept):
@@ -1125,14 +1151,20 @@ class TestConversionsWithUnresolvedBridges:
         with patch(
             "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[swap]
         ):
-            result = await svc.get_conversions("eth", CCTP_BURN + suffix)
+            result = await svc.get_conversions(
+                "eth", CCTP_BURN + suffix, included_bridges=CCTP
+            )
         assert len(result.conversions) == kept
-        assert len(result.unresolved_bridges) == 1
+
+    async def test_not_unless_cctp_is_an_included_bridge(self):
+        svc, _ = self.make_service(db_rows("v2_burn"))
+        result = await svc.get_conversions("eth", CCTP_BURN)
+        assert result.half_bridges == ()
 
     async def test_any_other_tx_reports_none(self):
         svc, _ = self.make_service(db_rows("v2_burn", without_cctp_events("v2_burn")))
-        result = await svc.get_conversions("eth", CCTP_BURN)
-        assert result.unresolved_bridges == ()
+        result = await svc.get_conversions("eth", CCTP_BURN, included_bridges=CCTP)
+        assert result.half_bridges == ()
 
     async def test_a_network_without_conversions_reports_nothing(self):
         svc, db = self.make_service(db_rows("v2_burn"))

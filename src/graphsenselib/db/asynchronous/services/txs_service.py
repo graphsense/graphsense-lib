@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
-from graphsenselib.defi.bridging.delegated import UnresolvedBridge
 from graphsenselib.defi.conversions import get_conversions_from_db
 from graphsenselib.defi.bridging.thorchain import UTXO_NETWORKS
 from graphsenselib.errors import (
@@ -145,11 +144,12 @@ class DatabaseProtocol(Protocol):
 
 @dataclass(frozen=True)
 class TxConversions:
-    """The conversions of a tx (TxsService.get_conversions), and its bridge
-    events graphsense-lib cannot pair (defi/bridging/delegated.py)."""
+    """The conversions of a tx (TxsService.get_conversions), and the bridges
+    graphsense-lib finds only half of (defi/bridging/delegated.py), which an
+    external backend may complete."""
 
     conversions: Tuple[ExternalConversion, ...] = ()
-    unresolved_bridges: Tuple[UnresolvedBridge, ...] = ()
+    half_bridges: Tuple[ExternalConversion, ...] = ()
 
 
 class TxsService:
@@ -612,8 +612,8 @@ class TxsService:
     ) -> TxConversions:
         """Extract swap/bridge information from a single transaction hash.
 
-        The conversions are filtered to the identifier's sub-tx suffix; the
-        unresolved bridges are those of the whole tx, whatever the suffix."""
+        Both the conversions and the half bridges are filtered to the
+        identifier's sub-tx suffix."""
         # UTXO networks are supported for THORChain bridging (via OP_RETURN memo)
         supports_conversion_extraction = is_eth_like(currency) or (
             currency.lower() in UTXO_NETWORKS and "thorchain" in included_bridges
@@ -669,20 +669,19 @@ class TxsService:
 
         # if it is a raw tx hash without a subtx, dont filter, otherwise
         # filter the conversions to the ones that have either fromPayment or toPayment as identifier
-        if tx_obj.tx_type is SubTransactionType.ExternalTx or is_root_trace:
-            filtered_conversions = conversions_gslib
-        else:
-            filtered_conversions = [
-                c
-                for c in conversions_gslib
-                if strip_0x(c.fromPayment.lower())
-                == strip_0x(tx_obj.to_string()).lower()
-                or strip_0x(c.toPayment.lower()) == strip_0x(tx_obj.to_string()).lower()
-            ]
+        whole_tx = tx_obj.tx_type is SubTransactionType.ExternalTx or is_root_trace
+        sub_tx = strip_0x(tx_obj.to_string()).lower()
+
+        def wanted(c: Union[ExternalSwap, Bridge]) -> bool:
+            return (
+                whole_tx
+                or strip_0x(c.fromPayment.lower()) == sub_tx
+                or strip_0x(c.toPayment.lower()) == sub_tx
+            )
 
         conversions = []
 
-        for conversion in filtered_conversions:
+        for conversion in filter(wanted, conversions_gslib):
             if isinstance(conversion, ExternalSwap):
                 conversions.append(
                     self._conversion_from_external_swap(currency, conversion)
@@ -692,4 +691,8 @@ class TxsService:
             else:
                 raise ValueError(f"Unknown conversion type: {type(conversion)}")
 
-        return TxConversions(tuple(conversions), detected.unresolved_bridges)
+        half_bridges = tuple(
+            self._conversion_from_bridge(bridge)
+            for bridge in filter(wanted, detected.half_bridges)
+        )
+        return TxConversions(tuple(conversions), half_bridges)
