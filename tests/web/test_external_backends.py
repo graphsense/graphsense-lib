@@ -1440,6 +1440,26 @@ def test_the_outage_alert_reaches_slack(monkeypatch):
     assert handlers[0].level == logging.ERROR
 
 
+@pytest.mark.parametrize("level", ["INFO", "WARNING"])
+def test_the_middleware_logs_at_the_configured_level(monkeypatch, level):
+    """A sibling of the app's logger, the middleware's would otherwise keep the
+    root's WARNING and drop its INFO lines (a backend that cannot answer, a
+    proxied answer refused for an unindexed eth leg)."""
+    from graphsenselib.web.app import setup_logging
+    from graphsenselib.web.config import LoggingConfig
+
+    names = ("graphsenselib.web.app", "graphsenselib.web.middleware.external_backends")
+    for name in (*names, "asyncio", "uvicorn"):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "level", logger.level)
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: None)
+    monkeypatch.setattr(logging.root, "handlers", [])
+
+    setup_logging(logging.getLogger(names[0]), None, "test", LoggingConfig(level=level))
+
+    assert logging.getLogger(names[1]).getEffectiveLevel() == getattr(logging, level)
+
+
 # A hung backend cost every merge merge_timeout_s, and the dashboard asks for a
 # twin list per address it adds: after a failure that is no answer at all,
 # merges leave the backend out for failure_skip_s without asking it.
