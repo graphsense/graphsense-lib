@@ -17,7 +17,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Upgrade notes
 - **Python 3.10 is no longer supported** (`requires-python = ">=3.11, <3.14"`). The Docker images were already on 3.13; the Python client still supports 3.10.
 - **`delta-update update` always runs the full updater** (formerly `--updater-version 2`). `--updater-version 1`, `--write-new`/`--write-dirty` are gone; `--updater-version 2` is still accepted.
-- **`--write-batch-size 1` no longer selects a per-transaction mode**; it is a normal WAL-protected batch of one block. Leftover `*_deltaupdate_*_crashreport.err` files under `/tmp` can be deleted.
+- **`--write-batch-size 1` no longer selects a per-transaction mode**; it is a normal WAL-protected batch of one block. A leftover `*_deltaupdate_*_crashreport.err` under `/tmp` marks a block that was only partly applied and is no longer read: finish that run with 2.18.x before upgrading, or 2.19 skips the rest of that block.
 - **The `/{currency}/entities/...` routes and `/addresses/{address}/entity` answer 404** (sunset 2026-10-31); use the `/clusters` equivalents. The entity-named bulk operations and the deprecated `entity` fields stay.
 - **`notifications.service_token`** is refused by older gs-rest versions; set it only together with this version.
 - **`Dockerfile.transformation` is removed**; use the main image.
@@ -38,6 +38,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **`/search` finds bech32 addresses written in uppercase** (`BC1Q…`, as in QR codes), also by prefix.
 - **A mixed-case bech32 address gets 400 "upper and lower case mixed"** instead of "checksum mismatch".
 - **Networks served by an external backend accept upper-case names** (`/BNB/...`), like core networks.
+- **Cluster neighbor search answers 400 for an unsupported `key`** (e.g. `actors`) instead of 500.
 
 ### Library
 
@@ -63,6 +64,8 @@ Use one changelog file, but separate entries by track in each release window.
 - **`ingest from-node` exits 12 ("nothing to ingest") when the node is behind raw**, instead of failing an assertion.
 - **The post-ingest staleness alert is sent at most once an hour per currency.**
 - **LTC ingest recognises MWEB outputs** instead of warning `ScriptParseError` for every block; stored data is unchanged.
+- **TRX ingest's gRPC retry policy uses the 5 attempts gRPC allows** (it silently clamped the configured 9), with backoff from 20 s up to 120 s, so a node restart of several minutes is ridden out as documented.
+- **Forward-filling today's exchange rate is logged at INFO**, not as an hourly WARNING; a missing earlier day still warns.
 
 ## [2.18.2] - 2026-10-27
 
