@@ -40,8 +40,9 @@ EXIT_INCONSISTENT = 92
 
 # How long a job gets to stop cleanly after SIGTERM before SIGKILL. Ingest and
 # delta-update stop after the current chunk/batch (graceful_ctlc_shutdown).
-# This one is for a job that hit its timeout; when the daemon itself stops,
-# stop_grace_seconds applies (sync.stop_grace_seconds), which is longer.
+# This one is the floor; when stop_grace_seconds (sync.stop_grace_seconds) is
+# longer it applies to a timed-out job too, since a delta-update batch killed
+# midway leaves its locks and a WAL record whether the daemon stops or not.
 TERMINATE_GRACE_SECONDS = 120
 _TAIL_LINES = 30
 
@@ -173,9 +174,7 @@ class JobRunner:
 
         if timed_out or stopped:
             why = "timed out" if timed_out else "stopping"
-            grace = self.terminate_grace_seconds
-            if stopped and self.stop_grace_seconds is not None:
-                grace = self.stop_grace_seconds
+            grace = max(self.terminate_grace_seconds, self.stop_grace_seconds or 0)
             logger.warning(f"[{label}] {why}, sending SIGTERM (SIGKILL after {grace}s)")
             self._terminate(proc, label, grace)
 

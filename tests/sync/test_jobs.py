@@ -97,6 +97,21 @@ def test_stop_uses_stop_grace_not_timeout_grace():
     assert r.exit_code == 0  # finished, not killed after the 1s timeout grace
 
 
+def test_timeout_uses_stop_grace_too():
+    # a job past its timeout still gets to finish its batch, not only on stop
+    code = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, lambda *a: None)\n"
+        "print('started', flush=True)\n"
+        "time.sleep(1.5)\n"
+        "time.sleep(2)\n"
+    )
+    runner = JobRunner(cli_command=PY, terminate_grace_seconds=1, stop_grace_seconds=10)
+    r = runner.run("step", [code], 1, threading.Event(), "test")
+    assert r.outcome is Outcome.TIMEOUT
+    assert r.exit_code == 0  # finished, not killed after the 1s grace
+
+
 SIGTERM_CLEANUP_JOB = (
     "import time\n"
     "from graphsenselib.utils.signals import install_sigterm_as_interrupt\n"
