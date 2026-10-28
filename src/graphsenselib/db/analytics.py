@@ -589,11 +589,17 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         if r == -1:
             # minus one could mean two things, either
             # no missing exchangesrates are found within the lookback range
-            # or that all have exchange rates, so we recheck if the
-            # second case applies
+            # or that all blocks below hb have exchange rates (hi is
+            # exclusive), so we recheck hb: with rates it is the frontier,
+            # without them hb - 1 is (e.g. hb is the first block of a day
+            # whose rates are not out yet)
             er = self.get_exchange_rates_for_block_batch([hb])
             if len(er) > 0 and has_er_value(er):
                 r = hb
+            elif hb > first_rates and has_er_value(
+                self.get_exchange_rates_for_block_batch([hb - 1])
+            ):
+                r = hb - 1
         else:
             r = r - 1
 
