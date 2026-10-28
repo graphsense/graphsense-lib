@@ -239,7 +239,7 @@ def test_cryptocompare_resume_past_end_is_noop(monkeypatch):
     assert len(df) == 0
     # the empty frame must survive the ingest() post-processing steps
     df["fiat_values"] = df.drop("date", axis=1).to_dict(orient="records")
-    df.drop(["USD", "EUR"], axis=1, inplace=True)
+    df = df.drop(["USD", "EUR"], axis=1)
     assert df.to_dict("records") == []
 
 

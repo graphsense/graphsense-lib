@@ -341,8 +341,8 @@ class UpdateStrategyAccount(UpdateStrategy):
                 lambda x: list(x) if x is not None else []
             )
         # replace np.nan with None
-        transactions.replace({pd.NA: None}, inplace=True)
-        traces.replace({pd.NA: None}, inplace=True)
+        transactions = transactions.replace({pd.NA: None})
+        traces = traces.replace({pd.NA: None})
 
         # i havent found out why in some cases pd.NA doesnt work
         blocks[["base_fee_per_gas"]] = blocks[["base_fee_per_gas"]].replace(
