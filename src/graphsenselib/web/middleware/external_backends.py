@@ -994,8 +994,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         logged with why (_fetch_json); a failure is named in `declined`."""
         network, identifier = _CONVERSIONS_PATH.match(request.url.path).groups()
         # percent-encoded: the local lookup ignores whitespace in a hash
-        # (bytes.fromhex), so a control character can get this far
-        path = f"/{network.lower()}/txs/{quote(identifier, safe='')}/conversions"
+        # (bytes.fromhex), so a control character can get this far. Only the
+        # bridges: the tx's swaps are the local detection's, so the backend
+        # need not read or price them.
+        path = (
+            f"/{network.lower()}/txs/{quote(identifier, safe='')}/conversions"
+            "?only_bridges=true"
+        )
         doc = await self._fetch_json(
             request,
             backend.url,
