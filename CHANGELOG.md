@@ -12,6 +12,26 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Web API + Python client
+
+#### Changed
+- **A non-JSON error answer from the notifications service** (e.g. a proxy's HTML error page) is no longer passed to the client; the client gets the status and its reason phrase, and the body is logged.
+
+### Library
+
+#### Added
+- **Tagpack validation names the t1 address behind a ZIP-320 TEX address** (`tex1…`) in its hint; the chain, and so the tagstore lookup, only has the t1 form.
+
+#### Changed
+- **`sync run` warns once, not every second, when the `sync` section or a `-c` network is missing from the config**; with `--once` it then exits 2 instead of 0.
+- **Sync jobs log the config file they run with**, instead of "Running version … without a config".
+- **Compatible with pandas 3.1** (no `inplace=True`, deprecated there). Dependency updates: pandas 3.1.0, fastapi 0.162.0, authlib 1.9.1, dnspython 2.9.0 (GHSA-45c3-73f7-pv4m), aiohttp 3.14.4, uv image 0.13.6; Python client: python-dateutil 3.0.0.
+
+#### Fixed
+- **The legacy ingest pipeline (`GRAPHSENSE_LEGACY_INGEST`) honours `ingest_config.reorg_backoff_blocks`**; it always used the built-in backoff.
+- **`--auto-compact-last-n 0` is refused** like `auto_compact_last_n: 0` in the config; it silently fell back to the default.
+- **A stop while taking a Redis lock no longer leaves the lock behind**, also in the moment between acquiring it and starting work.
+
 ## [2.19.0] - 2026-10-28
 
 `graphsense-cli sync run` replaces the per-network cron jobs with one continuously running sync daemon; the REST API gains address notifications (off by default) and drops the sunset `/entities` routes.
