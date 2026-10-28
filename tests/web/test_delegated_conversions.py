@@ -274,7 +274,7 @@ def test_a_cctp_tx_gains_the_bridge_the_backend_pairs(part, side):
     assert response.json() == [LOCAL_ROW, bridge]
     assert DECLINED_HEADER not in response.headers
     (call,) = seen
-    assert str(call.url) == f"{BACKEND_URL}/eth/txs/{tx}/conversions"
+    assert str(call.url) == f"{BACKEND_URL}/eth/txs/{tx}/conversions?only_bridges=true"
     assert call.headers["authorization"] == "backend-key"
     assert call.headers["x-consumer-username"] == "alice"
 
@@ -318,11 +318,15 @@ def test_a_local_row_naming_a_transfer_of_an_added_bridge_is_dropped():
 )
 def test_the_identifier_reaches_the_backend_as_it_was_asked(network, identifier):
     """The sub-tx suffix included (the backend scopes its answer to it), the
-    network in lower case."""
+    network in lower case; the swaps are the local detection's, so only the
+    bridges are asked for."""
     client, seen, _ = make_client()
     response = client.get(f"/{network}/txs/{identifier}/conversions")
     assert BRIDGE_ROW in response.json()
-    assert seen[0].url.raw_path == f"/eth/txs/{identifier}/conversions".encode()
+    assert (
+        seen[0].url.raw_path
+        == f"/eth/txs/{identifier}/conversions?only_bridges=true".encode()
+    )
 
 
 @pytest.mark.parametrize("timeout_s, expected", [(None, 15.0), (4.0, 4.0)])
