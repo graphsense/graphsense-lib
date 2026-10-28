@@ -477,6 +477,12 @@ def setup_logging(
     FORMAT = "%(asctime)s %(message)s"
     logging.basicConfig(format=FORMAT)
     app_logger.setLevel(level)
+    # The external backends middleware logs to a sibling logger tree: without
+    # its own level it would keep the root's WARNING and drop its INFO lines.
+    backends_logger = logging.getLogger(
+        "graphsenselib.web.middleware.external_backends"
+    )
+    backends_logger.setLevel(level)
 
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
@@ -500,10 +506,7 @@ def setup_logging(
         # REST routes.
         mcp_logger = logging.getLogger("graphsenselib.mcp")
         # The external backends middleware logs at ERROR exactly once per
-        # outage of a backend (its module docstring), a sibling tree as well.
-        backends_logger = logging.getLogger(
-            "graphsenselib.web.middleware.external_backends"
-        )
+        # outage of a backend (its module docstring).
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
