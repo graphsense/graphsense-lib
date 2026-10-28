@@ -410,6 +410,11 @@ def ingest(
                         previous_day=previous_day,
                         provider_timeout=timeout,
                         mode=mode,
+                        reorg_backoff_blocks=(
+                            ks_config.ingest_config.reorg_backoff_blocks
+                            if ks_config.ingest_config is not None
+                            else None
+                        ),
                     )
     except LockAcquisitionError as e:
         # Don't exit here: the staleness check below is the only thing that

@@ -949,6 +949,7 @@ def ingest(
     previous_day: bool,
     provider_timeout: int,
     mode: str,
+    reorg_backoff_blocks: Optional[int] = None,
 ):
     if currency not in SUPPORTED_UTXO_CURRENCIES:
         raise ValueError(
@@ -984,7 +985,9 @@ def ingest(
     else:
         start_block = user_start_block
 
-    end_block = last_synced_block - get_reorg_backoff_blocks(currency)
+    end_block = last_synced_block - get_reorg_backoff_blocks(
+        currency, override=reorg_backoff_blocks
+    )
     if user_end_block is not None:
         end_block = user_end_block
 
