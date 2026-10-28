@@ -207,15 +207,13 @@ async def get_tx_conversions(
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """List DeFi conversions for a transaction."""
-    result, unresolved_bridges = await service.get_tx_conversions(
+    return await service.get_tx_conversions(
         ctx,
         currency=currency.lower(),
         tx_hash=tx_hash,
+        # offered by the external backends middleware (its rule 6)
+        pair_bridges=getattr(request.state, "pair_bridges", None),
     )
-    # Bridges graphsense-lib cannot pair: the external backends middleware may
-    # add their pairing (rule 6). Without it nothing reads them.
-    request.state.unresolved_bridges = unresolved_bridges
-    return result
 
 
 @router.get(

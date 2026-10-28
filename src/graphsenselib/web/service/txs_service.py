@@ -1,5 +1,9 @@
-from typing import Optional
+from typing import Awaitable, Callable, Optional, Sequence, Set
 
+from graphsenselib.db.asynchronous.services.models import (
+    ExternalConversion as ServiceExternalConversion,
+)
+from graphsenselib.web.models import ExternalConversion
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
     pydantic_to_openapi,
@@ -68,9 +72,19 @@ async def list_matching_txs(ctx, currency, expression):
     return await ctx.services.txs_service.list_matching_txs(currency, expression)
 
 
-async def get_tx_conversions(ctx, currency, tx_hash):
-    """The tx's conversions as API rows, and its unresolved bridges (bridge
-    events graphsense-lib cannot pair, defi/bridging/delegated.py)."""
+async def get_tx_conversions(
+    ctx,
+    currency,
+    tx_hash,
+    pair_bridges: Optional[
+        Callable[[], Awaitable[Sequence[ServiceExternalConversion]]]
+    ] = None,
+):
+    """The tx's conversions as API rows. The bridges graphsense-lib finds only
+    half of (defi/bridging/delegated.py) are half rows, unless pair_bridges
+    (the external backends middleware's rule 6) answers the tx's bridges:
+    those then take the half rows' place. A backend pairs all of a tx's
+    bridges or none, and may name a leg otherwise than the half row does."""
     result = await ctx.services.txs_service.get_conversions(
         currency,
         tx_hash,
@@ -78,7 +92,23 @@ async def get_tx_conversions(ctx, currency, tx_hash):
         cow_protocol_swaps=ctx.config.cow_protocol_swaps,
     )
     rows = [to_api_external_conversion(conv) for conv in result.conversions]
-    return rows, result.unresolved_bridges
+    halves = [to_api_external_conversion(conv) for conv in result.half_bridges]
+    paired = []
+    if halves and pair_bridges is not None:
+        paired = [ExternalConversion(**r.model_dump()) for r in await pair_bridges()]
+    if not paired:
+        return rows + halves
+    # a local row naming a leg of a paired bridge is that bridge too
+    named = set().union(*map(_asset_transfers, paired))
+    return [row for row in rows if not _asset_transfers(row) & named] + paired
+
+
+def _asset_transfers(row: ExternalConversion) -> Set[str]:
+    """The asset transfers a row names, in lower case and without 0x."""
+    return {
+        transfer.lower().removeprefix("0x")
+        for transfer in (row.from_asset_transfer, row.to_asset_transfer)
+    }
 
 
 async def list_tx_flows(

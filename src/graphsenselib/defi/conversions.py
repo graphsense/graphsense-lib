@@ -18,7 +18,7 @@ from graphsenselib.defi.bridging.symbiosis import (
     get_bridges_from_symbiosis_decoded_logs,
 )
 from graphsenselib.datatypes.abi import decode_logs_dict
-from graphsenselib.defi.bridging.delegated import UnresolvedBridge, unresolved_bridges
+from graphsenselib.defi.bridging.delegated import half_bridges
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
 from graphsenselib.db.asynchronous.cassandra import Cassandra
@@ -33,11 +33,11 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class DetectedConversions:
     """What get_conversions_from_db finds in a tx: the swaps and bridges it
-    detects, and the bridge events it recognizes but cannot pair
-    (defi/bridging/delegated.py)."""
+    detects, and the bridges it finds only half of (defi/bridging/delegated.py),
+    which an external backend may complete."""
 
     conversions: Tuple[Union[ExternalSwap, Bridge], ...] = ()
-    unresolved_bridges: Tuple[UnresolvedBridge, ...] = ()
+    half_bridges: Tuple[Bridge, ...] = ()
 
 
 async def is_direct_vault_deposit(
@@ -121,10 +121,9 @@ async def get_conversions_from_db(
     to their settlements; False ignores both.
 
     Returns:
-        The swaps and bridges detected, and the bridge events among the tx's
-        logs that graphsense-lib cannot pair. Those are reported whatever
-        included_bridges says; an external backend may pair them. Both are
-        empty if nothing is detected.
+        The swaps and bridges detected, and the bridges of included_bridges
+        that graphsense-lib finds only half of. Both are empty if nothing is
+        detected.
     """
 
     # Check for UTXO THORChain transactions FIRST (before fetching logs)
@@ -173,7 +172,8 @@ async def get_conversions_from_db(
         cow_protocol_swaps=cow_protocol_swaps,
     )
     return DetectedConversions(
-        tuple(conversions), unresolved_bridges(network, tx_logs_raw or ())
+        tuple(conversions),
+        half_bridges(network, tx_logs_raw or (), included_bridges),
     )
 
 

@@ -26,6 +26,7 @@ from graphsenselib.config import AppConfig
 from graphsenselib.config.tagstore_config import set_active_tagstore_config
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
+from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES
 from graphsenselib.errors import (
     AddressNotFoundException,
     BadUserInputException,
@@ -1157,6 +1158,12 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
             "External backends pair the bridges in conversions on: %s",
             ", ".join(sorted(eb_config.delegated_conversions)),
         )
+        if not set(DELEGATED_BRIDGES) & set(config.included_bridges):
+            logger.warning(
+                "delegated_conversions pairs nothing: included_bridges names "
+                "none of %s, so no half bridge is found to pair",
+                ", ".join(DELEGATED_BRIDGES),
+            )
 
 
 # Response headers the dashboard reads, named because the "*" wildcard does not

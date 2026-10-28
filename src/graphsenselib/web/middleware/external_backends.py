@@ -76,22 +76,21 @@ Decision rules:
    ``merge_related_addresses: false`` switches this rule off, so each side
    answers exactly as without this feature.
 6. ``GET /{network}/txs/{tx}/conversions`` of a network in
-   ``delegated_conversions`` (e.g. eth) is answered locally, and the bridges
-   its backend pairs for the tx are added. graphsense-lib recognizes some
-   bridge events that it cannot pair with the other chain (Circle CCTP,
-   defi/bridging/delegated.py); the conversions route leaves the ones it
-   found, in the logs it reads anyway, on ``request.state.unresolved_bridges``.
-   Only such a tx asks the backend, and any other answer passes through
-   untouched. The backend is asked for the same path, sub-tx suffix included,
-   and only its ``bridge_tx`` rows that name the tx are added: the local
-   detection answers swaps. A local row naming an asset transfer that an
-   added row also names is dropped, since the backend's pairing replaces it.
-   A caller entitled to no gated currency asks no backend (behind the gateway
-   that is how the client opt-out arrives), and added rows naming a gated
-   currency the caller lacks are left out. Without the backend's pairing the
-   local answer stands: a status saying that it cannot answer about the tx
-   (400, 404, 422, 501) is logged at INFO, any other failure is handled as on
-   a merge (below).
+   ``delegated_conversions`` (e.g. eth) is answered locally, and its backend
+   may pair the bridges graphsense-lib finds only half of (Circle CCTP,
+   defi/bridging/delegated.py): it reads one leg in the tx's logs but cannot
+   find the other chain's. This middleware offers the pairing on
+   ``request.state.pair_bridges``; the conversions route calls it only for a
+   tx with such a half bridge, and puts the backend's rows in place of the
+   half bridges they complete (web/service/txs_service.py). The answer passes
+   through untouched. The backend is asked for the same path, sub-tx suffix
+   included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
+   name the tx are taken: the local detection answers swaps. A caller entitled
+   to no gated currency is offered no pairing (behind the gateway that is how
+   the client opt-out arrives), and rows naming a gated currency the caller
+   lacks are left out. Without the backend's pairing the half bridge is the
+   answer: a status saying that it cannot answer about the tx (400, 404, 422,
+   501) is logged at INFO, any other failure is handled as on a merge (below).
 
 Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
@@ -163,11 +162,12 @@ own address, charged to nobody and subtracted from everybody.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
 import time
-from typing import Collection, Dict, List, Optional, Sequence, Set, Union
+from typing import Collection, Dict, List, Optional, Set, Union
 from urllib.parse import quote
 
 import httpx
@@ -178,7 +178,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from graphsenselib.db.asynchronous.services.models import ExternalConversion
-from graphsenselib.defi.bridging.delegated import UnresolvedBridge
 from graphsenselib.errors import TransactionNotFoundException
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.web.config import (
@@ -242,7 +241,7 @@ _PUBKEY_RELATION = "pubkey"
 _EVM_NETWORK = "eth"
 
 # a tx's conversions: proxied and checked for eth legs Cassandra lacks (rule
-# 1), or merged with the bridge rows a backend pairs for the tx (rule 6)
+# 1), or the bridge rows a backend pairs for the tx (rule 6)
 _CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
 _CONVERSIONS = TypeAdapter(List[ExternalConversion])
 _BRIDGE_TX = "bridge_tx"
@@ -321,7 +320,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return short_circuit
         backend = self._conversions_backend(request)
         if backend is not None:
-            return await self._with_paired_bridges(request, call_next, backend)
+            return await self._offering_bridge_pairing(request, call_next, backend)
         if not self._wants_merge(request):
             return await call_next(request)
         response = await call_next(request)
@@ -962,36 +961,30 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         return backend
 
-    async def _with_paired_bridges(
+    async def _offering_bridge_pairing(
         self, request: Request, call_next, backend: ExternalBackendConfig
     ) -> Response:
-        """Rule 6: the local conversions, with the bridges the backend pairs
-        added when the route found a bridge it cannot pair. Any other answer
-        passes through untouched."""
-        response = await call_next(request)
-        # left there by the conversions route (routes/txs.py)
-        unresolved = getattr(request.state, "unresolved_bridges", ())
-        if response.status_code != 200 or not unresolved:
-            return response
-        body = b"".join([chunk async for chunk in response.body_iterator])
+        """Rule 6: the conversions route may have `backend` pair the bridges
+        it finds only half of; the answer passes through untouched, apart
+        from naming the backend in the declined header when that failed."""
         declined: List[str] = []
-        paired = await self._paired_bridges(request, backend, unresolved, declined)
-        named = set().union(*(_transfers_of(row) for row in paired))
-        kept = [row for row in json.loads(body) if not _transfers_of(row) & named]
-        return JSONResponse(
-            kept + paired, status_code=200, headers=_declined_header(declined)
+        # read by the conversions route (routes/txs.py)
+        request.state.pair_bridges = functools.partial(
+            self._paired_bridges, request, backend, declined
         )
+        response = await call_next(request)
+        response.headers.update(_declined_header(declined))
+        return response
 
     async def _paired_bridges(
         self,
         request: Request,
         backend: ExternalBackendConfig,
-        unresolved: Sequence[UnresolvedBridge],
         declined: List[str],
-    ) -> List[dict]:
-        """Rule 6: the bridge rows the backend pairs for the requested tx, as
-        the conversions route answers rows. [] when it cannot answer or fails,
-        logged with why (_fetch_json); a failure is named in `declined`."""
+    ) -> List[ExternalConversion]:
+        """Rule 6: the bridge rows the backend pairs for the requested tx.
+        [] when it cannot answer or fails, logged with why (_fetch_json); a
+        failure is named in `declined`."""
         network, identifier = _CONVERSIONS_PATH.match(request.url.path).groups()
         # percent-encoded: the local lookup ignores whitespace in a hash
         # (bytes.fromhex), so a control character can get this far. Only the
@@ -1024,17 +1017,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 exc.error_count(),
             )
             return []
-        txs = {_tx_of(bridge.tx_hash) for bridge in unresolved}
+        # the local lookup ignores whitespace in a hash (bytes.fromhex)
+        tx = "".join(_tx_of(identifier).split())
         bridges = [
             row
             for row in rows
             if row.conversion_type == _BRIDGE_TX
-            and {_tx_of(row.from_asset_transfer), _tx_of(row.to_asset_transfer)} & txs
+            and tx in {_tx_of(row.from_asset_transfer), _tx_of(row.to_asset_transfer)}
         ]
         networks = {n for row in bridges for n in (row.from_network, row.to_network)}
         entitled = self._entitled(request, networks)
         return [
-            row.model_dump()
+            row
             for row in bridges
             if row.from_network in entitled and row.to_network in entitled
         ]
@@ -1057,15 +1051,6 @@ def _eth_leg_txs(rows: list) -> List[str]:
         if row.get(f"{side}_network") == _EVM_NETWORK
     )
     return [tx for tx in dict.fromkeys(legs) if tx]
-
-
-def _transfers_of(row: dict) -> Set[str]:
-    """The asset transfers a conversions row names, in lower case and without
-    0x."""
-    return {
-        row[f"{side}_asset_transfer"].lower().removeprefix("0x")
-        for side in ("from", "to")
-    }
 
 
 def _now() -> float:
