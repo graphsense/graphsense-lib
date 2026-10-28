@@ -212,7 +212,7 @@ def make_client(
         "delegated_conversions": delegated_conversions,
     }
     if timeout_s is not None:
-        backends["delegated_conversions_timeout_s"] = timeout_s
+        backends["merge_timeout_s"] = timeout_s
     config = GSRestConfig.from_dict(
         {
             "database": {"nodes": ["localhost"]},
@@ -402,8 +402,8 @@ def test_a_sub_tx_of_no_half_bridge_asks_nothing():
     assert seen == []
 
 
-@pytest.mark.parametrize("timeout_s, expected", [(None, 15.0), (4.0, 4.0)])
-def test_the_call_waits_delegated_conversions_timeout_s(timeout_s, expected):
+@pytest.mark.parametrize("timeout_s, expected", [(None, 5.0), (4.0, 4.0)])
+def test_the_call_waits_merge_timeout_s(timeout_s, expected):
     client, seen, _ = make_client(timeout_s=timeout_s)
     client.get(CONVERSIONS)
     assert seen[0].extensions["timeout"]["read"] == expected
@@ -446,10 +446,10 @@ def test_the_opt_out_and_the_currency_roles(headers, roles_config, asked, answer
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("status", [400, 404, 422, 501])
-def test_a_backend_that_cannot_answer_the_tx_leaves_the_half_bridge(status):
-    """An answer about this tx (e.g. 501, not minted yet) from an up backend:
-    nothing is declined, nothing alerts, and the log says why."""
+@pytest.mark.parametrize("status", [404, 501])
+def test_a_backend_that_cannot_pair_the_tx_leaves_the_half_bridge(status):
+    """It cannot pair the tx (501, e.g. not minted yet) or does not know it
+    (404): nothing is declined, nothing alerts, and the log says so."""
     answer = httpx.Response(status, json={"detail": "cannot pair it"})
     client, _, _ = make_client(backend_answer=answer)
     with records_of_the_middleware() as records:
@@ -458,19 +458,22 @@ def test_a_backend_that_cannot_answer_the_tx_leaves_the_half_bridge(status):
     assert DECLINED_HEADER not in response.headers
     (record,) = records
     assert record.levelno == logging.INFO
-    assert f"HTTP {status}: cannot pair it" in record.getMessage()
+    assert f"{BACKEND_URL} cannot pair /eth/txs/{CCTP_BURN}/conversions" in (
+        record.getMessage()
+    )
 
 
 @pytest.mark.parametrize(
     "answer, level",
     [
         (httpx.Response(500, json={"detail": "boom"}), logging.ERROR),
+        (httpx.Response(400, json={"detail": "bad hash"}), logging.ERROR),
         (httpx.Response(429, headers={"Retry-After": "7"}), logging.WARNING),
         (httpx.Response(200, content=b"<html>busy</html>"), logging.ERROR),
         (httpx.Response(200, json=[{"conversion_type": "bridge_tx"}]), logging.WARNING),
         (httpx.Response(200, json={"detail": "not a list"}), logging.WARNING),
     ],
-    ids=["error", "429", "not json", "invalid row", "not a list"],
+    ids=["error", "400", "429", "not json", "invalid row", "not a list"],
 )
 def test_a_failed_backend_leaves_the_half_bridge_and_is_named(answer, level):
     client, _, _ = make_client(backend_answer=answer)

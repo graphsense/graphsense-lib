@@ -89,8 +89,9 @@ Decision rules:
    to no gated currency is offered no pairing (behind the gateway that is how
    the client opt-out arrives), and rows naming a gated currency the caller
    lacks are left out. Without the backend's pairing the half bridge is the
-   answer: a status saying that it cannot answer about the tx (400, 404, 422,
-   501) is logged at INFO, any other failure is handled as on a merge (below).
+   answer: a 404 or 501 (it cannot pair the tx, or does not know it) is
+   logged at INFO, any other failure is handled as on a merge (below), within
+   the same merge_timeout_s.
 
 Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
@@ -167,7 +168,7 @@ import json
 import logging
 import re
 import time
-from typing import Collection, Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set
 from urllib.parse import quote
 
 import httpx
@@ -245,10 +246,6 @@ _EVM_NETWORK = "eth"
 _CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
 _CONVERSIONS = TypeAdapter(List[ExternalConversion])
 _BRIDGE_TX = "bridge_tx"
-# a backend's answers that it cannot answer about the tx, rather than that it
-# failed: it cannot pair it (501), does not know it (404), or refuses the
-# identifier (400, 422)
-_CANNOT_ANSWER_TX = frozenset({400, 404, 422, 501})
 
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
@@ -424,8 +421,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 base_url,
                 path + query,
                 declined=declined,
-                # an older backend has no /capabilities (rule 4)
-                tolerated={404} if path == "/capabilities" else (),
+                tolerate_404=(path == "/capabilities"),
             )
             if backend_doc is None:
                 continue
@@ -483,8 +479,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 base_url,
                 path + query,
                 declined=declined,
-                # it does not know the address, or declines the question
-                tolerated={404, 501},
+                tolerate_404=True,
+                tolerate_501=True,
             )
             if backend_doc is None:
                 continue
@@ -680,15 +676,12 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         base_url: str,
         path_and_query: str,
         declined: Optional[List[str]] = None,
-        tolerated: Collection[int] = (),
-        timeout: Optional[float] = None,
-        log_tolerated: bool = False,
-    ) -> Optional[Union[dict, list]]:
+        tolerate_404: bool = False,
+        tolerate_501: bool = False,
+    ) -> Optional[dict]:
         """One merge fan-out call. Returns None when the backend declines or
-        fails: a 429, no answer within `timeout` (default merge_timeout_s), no
-        connection, or any other status than 200 (apart from a status in
-        `tolerated`, which is no failure; `log_tolerated` logs it at INFO with
-        the backend's ``detail``).
+        fails: a 429, no answer within merge_timeout_s, no connection, or any
+        other status than 200 (apart from a tolerated 404/501).
 
         A 429 is why this takes the request at all: relaying the caller's
         identity means the backend paces per caller rather than lumping
@@ -721,7 +714,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             response = await self.client.get(
                 base_url.rstrip("/") + path_and_query,
                 headers=headers,
-                timeout=self.config.merge_timeout_s if timeout is None else timeout,
+                timeout=self.config.merge_timeout_s,
             )
         except httpx.TransportError as exc:
             self._merge_failed(declined, base_url, path_and_query, repr(exc))
@@ -740,15 +733,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
             self._backend_answered(base_url)
             return None
-        if response.status_code in tolerated:
+        if tolerate_404 and response.status_code == 404:
             self._backend_answered(base_url)
-            if log_tolerated:
-                logger.info(
-                    "external backend %s cannot answer %s (%s)",
-                    base_url,
-                    path_and_query,
-                    _status_and_detail(response),
-                )
+            return None
+        if tolerate_501 and response.status_code == 501:
+            self._backend_answered(base_url)
             return None
         if response.status_code != 200:
             self._merge_failed(
@@ -969,8 +958,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         declined: List[str],
     ) -> List[ExternalConversion]:
         """Rule 6: the bridge rows the backend pairs for the requested tx.
-        [] when it cannot answer or fails, logged with why (_fetch_json); a
-        failure is named in `declined`."""
+        [] when it cannot pair it (a 404 or 501, logged at INFO) or fails
+        (logged with why, _fetch_json); a failure is named in `declined`."""
         network, identifier = _CONVERSIONS_PATH.match(request.url.path).groups()
         # percent-encoded: the local lookup ignores whitespace in a hash
         # (bytes.fromhex), so a control character can get this far. Only the
@@ -986,9 +975,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 backend.url,
                 path,
                 declined=declined,
-                tolerated=_CANNOT_ANSWER_TX,
-                timeout=self.config.delegated_conversions_timeout_s,
-                log_tolerated=True,
+                # it cannot pair the tx (yet), or does not know it
+                tolerate_404=True,
+                tolerate_501=True,
             )
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
@@ -996,6 +985,12 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             self._merge_failed(declined, backend.url, path, repr(exc))
             return []
         if doc is None:
+            if backend.url not in declined:
+                logger.info(
+                    "external backend %s cannot pair %s (404 or 501)",
+                    backend.url,
+                    path,
+                )
             return []
         try:
             rows = _CONVERSIONS.validate_python(doc)
@@ -1056,19 +1051,6 @@ def _declined_header(declined: List[str]) -> dict:
     An empty header would assert "nothing declined" on every response, which is
     a claim this middleware cannot make about a backend it never called."""
     return {DECLINED_HEADER: ", ".join(declined)} if declined else {}
-
-
-def _status_and_detail(response: httpx.Response) -> str:
-    """A backend's answer for the log: its status, and the ``detail`` of its
-    JSON body when it has one."""
-    try:
-        doc = response.json()
-    except ValueError:
-        doc = None
-    detail = doc.get("detail") if isinstance(doc, dict) else None
-    if detail is None:
-        return f"HTTP {response.status_code}"
-    return f"HTTP {response.status_code}: {detail}"
 
 
 def _strip_legacy_capabilities(entry: dict) -> dict:

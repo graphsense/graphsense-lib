@@ -133,10 +133,10 @@ class ExternalBackendsConfig(BaseSettings):
     merge_timeout_s: float = Field(
         default=5.0,
         description="HTTP timeout of a merge fan-out call (/stats, "
-        "/capabilities, /search, related_addresses). A backend that does not "
-        "answer within it is left out of the merged answer, so a hung backend "
-        "cannot hold up the core networks for the full timeout_s. The "
-        "adapter answers these in under 1 s cold.",
+        "/capabilities, /search, related_addresses, delegated_conversions). "
+        "A backend that does not answer within it is left out of the merged "
+        "answer, so a hung backend cannot hold up the core networks for the "
+        "full timeout_s. The adapter answers these in under 1 s cold.",
     )
     failure_skip_s: float = Field(
         default=30.0,
@@ -161,14 +161,8 @@ class ExternalBackendsConfig(BaseSettings):
         "(Circle CCTP, once 'cctp' is in included_bridges; "
         "defi/bridging/delegated.py). Only a tx with such a half bridge asks "
         "the backend, which must answer GET /{network}/txs/{tx}/conversions "
-        "for that network. Without its answer the half bridge is served. "
-        "Empty: nothing is paired.",
-    )
-    delegated_conversions_timeout_s: float = Field(
-        default=15.0,
-        description="HTTP timeout of a delegated_conversions call, after "
-        "which the half bridge is served. Long enough that a backend "
-        "still pairing a transfer is not taken for a hung one.",
+        "for that network within merge_timeout_s. Without its answer the half "
+        "bridge is served. Empty: nothing is paired.",
     )
     consumer_header: str = Field(
         default="X-Username",
