@@ -431,11 +431,13 @@ def test_busy_service_passes_retry_after():
     assert "x-internal" not in response.headers
 
 
-def test_non_json_error_body_becomes_detail():
-    client, _ = make_client(answer=lambda r: httpx.Response(500, text="boom"))
+def test_non_json_error_body_is_not_passed_on():
+    client, _ = make_client(
+        answer=lambda r: httpx.Response(500, text="<html>proxy page</html>")
+    )
     response = client.get("/notifications/feed/unread_count")
     assert response.status_code == 500
-    assert response.json() == {"detail": "boom"}
+    assert response.json() == {"detail": "Internal Server Error"}
 
 
 def test_unreachable_service_is_502():

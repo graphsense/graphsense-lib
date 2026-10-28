@@ -150,7 +150,18 @@ class NotificationsClient:
         try:
             content = response.json()
         except ValueError:
-            content = {"detail": response.text or response.reason_phrase}
+            # The service answers JSON; anything else is from something in
+            # between (a proxy's HTML page), which the client need not see.
+            logger.warning(
+                "notifications service: %s %s answered %d without JSON: %.200r",
+                method,
+                path,
+                response.status_code,
+                response.text,
+            )
+            content = {
+                "detail": response.reason_phrase or "notifications service error"
+            }
         raise _ServiceAnswer(
             JSONResponse(
                 status_code=response.status_code,
