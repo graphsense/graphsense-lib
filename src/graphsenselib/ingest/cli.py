@@ -165,7 +165,7 @@ def ingesting():
 )
 @click.option(
     "--auto-compact-last-n",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="When --auto-compact triggers, restrict compaction to the most "
     "recent N partitions of each table (default: "
@@ -749,7 +749,7 @@ def deltalake():
 )
 @click.option(
     "--auto-compact-last-n",
-    type=int,
+    type=click.IntRange(min=1),
     default=10,
     help="When --auto-compact triggers, restrict compaction to the most "
     "recent N partitions of each table (default: 10). Older partitions are "
@@ -870,7 +870,7 @@ def dump_rawdata(
 )
 @click.option(
     "--auto-compact-last-n",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Compact only the most recent N partitions of each table "
     "(default: ingest_config.auto_compact_last_n, else 10).",
