@@ -251,6 +251,33 @@ class TestRedisLockStaleHolderReport:
         client, _, _ = self._hold()
         client.delete.assert_called_once_with(HEARTBEAT_KEY, ALERT_KEY)
 
+    def test_stop_while_acquiring_removes_our_lock(self):
+        # SIGTERM unwinds as KeyboardInterrupt; if it lands after the SET, the
+        # lock is ours and must not be left behind (it has no TTL).
+        client, fake_lock, fake_redis = self._client()
+        stored = {}
+
+        def acquire(token):
+            stored[KEY] = token.encode()
+            raise KeyboardInterrupt
+
+        fake_lock.acquire.side_effect = acquire
+        client.get.side_effect = lambda k: stored.get(k)
+        with self._patched(fake_redis, MagicMock()):
+            with pytest.raises(KeyboardInterrupt):
+                with create_lock("test_stale"):
+                    pass
+        client.delete.assert_called_once_with(KEY)
+
+    def test_stop_while_acquiring_leaves_a_foreign_lock(self):
+        client, fake_lock, fake_redis = self._client(values={KEY: "someone else"})
+        fake_lock.acquire.side_effect = KeyboardInterrupt
+        with self._patched(fake_redis, MagicMock()):
+            with pytest.raises(KeyboardInterrupt):
+                with create_lock("test_stale"):
+                    pass
+        client.delete.assert_not_called()
+
     def test_silent_holder_is_reported(self):
         old = time.time() - 9 * 3600
         client, notifier = self._contend(

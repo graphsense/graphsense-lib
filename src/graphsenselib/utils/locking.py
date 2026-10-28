@@ -142,7 +142,17 @@ def _redis_lock(lock_name, redis_url, blocking_timeout):
         lock = client.lock(
             key, timeout=None, blocking_timeout=blocking_timeout, thread_local=False
         )
-        acquired = lock.acquire(token=token)
+        try:
+            acquired = lock.acquire(token=token)
+        except KeyboardInterrupt:
+            # Stopped (SIGTERM unwinds as KeyboardInterrupt) while acquiring:
+            # the SET may have gone through. Remove the lock only if it is ours.
+            try:
+                if _read_str(client, key) == token:
+                    client.delete(key)
+            except Exception:
+                pass
+            raise
         owner = None if acquired else _read_str(client, key)
     except redis.exceptions.RedisError as e:  # type: ignore[union-attr]
         raise LockAcquisitionError(
@@ -159,16 +169,18 @@ def _redis_lock(lock_name, redis_url, blocking_timeout):
             f"If that process no longer exists, force-release with: redis-cli DEL {key}"
         )
 
-    logger.info(f"Redis lock {key} acquired by {token}.")
     stop_heartbeat = threading.Event()
-    heartbeat = threading.Thread(
-        target=_heartbeat,
-        args=(client, key, stop_heartbeat),
-        name=f"redis-lock-heartbeat-{lock_name}",
-        daemon=True,
-    )
-    heartbeat.start()
+    # From here on the lock is ours: everything up to the yield is inside the
+    # try, so a stop in between still releases it.
     try:
+        logger.info(f"Redis lock {key} acquired by {token}.")
+        heartbeat = threading.Thread(
+            target=_heartbeat,
+            args=(client, key, stop_heartbeat),
+            name=f"redis-lock-heartbeat-{lock_name}",
+            daemon=True,
+        )
+        heartbeat.start()
         yield
     finally:
         stop_heartbeat.set()
