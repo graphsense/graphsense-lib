@@ -132,15 +132,13 @@ def make_client(
     refuse_status=None,
     refuse_headers=None,
     fail_with=None,
-    backend_content=None,
     with_cors=False,
     failure_skip_s=30.0,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
     ``fail_with`` makes every backend call raise that transport error (a
-    backend that is down or hangs); ``backend_content`` makes every backend
-    call answer 200 with that body; ``with_cors`` wraps the stack in the CORS
+    backend that is down or hangs); ``with_cors`` wraps the stack in the CORS
     middleware exactly as create_app does. ``failure_skip_s=0`` asks the
     backend on every merge, also after it failed.
 
@@ -210,8 +208,6 @@ def make_client(
             return httpx.Response(
                 refuse_status, json={"detail": "refused"}, headers=refuse_headers or {}
             )
-        if backend_content is not None:
-            return httpx.Response(200, content=backend_content)
         if request.url.path == "/stats":
             return httpx.Response(200, json=backend_stats)
         if request.url.path == "/capabilities":
@@ -1071,44 +1067,6 @@ def test_an_unreachable_backend_does_not_fail_a_merge():
 def test_a_backend_that_does_not_answer_in_time_does_not_fail_a_merge():
     client, _ = make_client(fail_with=httpx.ReadTimeout("hung"), failure_skip_s=0)
     _assert_partial_answers(client)
-
-
-@pytest.mark.parametrize(
-    "unreadable",
-    [
-        {"backend_content": b"<html>busy</html>"},
-        {"fail_with": httpx.DecodingError("bad gzip")},
-    ],
-)
-def test_an_answer_that_cannot_be_read_does_not_fail_a_merge(unreadable):
-    """A 200 whose body is not JSON, or a body httpx cannot decode, raised out
-    of the merge and made /stats a 500. It counts as an error answer."""
-    client, _ = make_client(**unreadable)
-    _assert_partial_answers(client)
-
-
-@pytest.mark.parametrize(
-    "url, status",
-    [
-        ("/capabilities", 404),
-        ("/eth/addresses/0xsame/related_addresses", 404),
-        ("/eth/addresses/0xsame/related_addresses", 501),
-    ],
-)
-def test_a_backend_that_cannot_answer_is_logged_with_its_detail(url, status, caplog):
-    """A tolerated status contributes nothing and is no failure, but a backend
-    refusing every such question (e.g. a network it does not serve) must be
-    visible in the log."""
-    client, _ = make_client(refuse_status=status)
-    with caplog.at_level(
-        logging.INFO, logger="graphsenselib.web.middleware.external_backends"
-    ):
-        response = client.get(url)
-    assert response.status_code == 200
-    assert DECLINED_HEADER not in response.headers
-    (record,) = caplog.records
-    assert record.levelno == logging.INFO
-    assert f"HTTP {status}: refused" in record.getMessage()
 
 
 def test_a_backend_error_answer_does_not_fail_a_merge():

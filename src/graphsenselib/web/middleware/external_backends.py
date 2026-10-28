@@ -682,17 +682,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         declined: Optional[List[str]] = None,
         tolerated: Collection[int] = (),
         timeout: Optional[float] = None,
+        log_tolerated: bool = False,
     ) -> Optional[Union[dict, list]]:
-        """One merge fan-out call. Returns None when the backend declines,
-        fails or cannot answer: a 429, no answer within `timeout` (default
-        merge_timeout_s), no connection, a 200 whose body is not JSON, or any
-        other status than 200.
-
-        A status in `tolerated` is the backend saying it cannot answer this
-        question (it does not know the address, say). That is no failure: the
-        backend contributes nothing, and the status is logged at INFO with
-        the backend's ``detail``, so that a backend which refuses every such
-        question (e.g. for a network it does not serve) is visible.
+        """One merge fan-out call. Returns None when the backend declines or
+        fails: a 429, no answer within `timeout` (default merge_timeout_s), no
+        connection, or any other status than 200 (apart from a status in
+        `tolerated`, which is no failure; `log_tolerated` logs it at INFO with
+        the backend's ``detail``).
 
         A 429 is why this takes the request at all: relaying the caller's
         identity means the backend paces per caller rather than lumping
@@ -718,9 +714,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         consumer = self._consumer_of(request)
         if consumer:
             headers["X-Consumer-Username"] = consumer
-        # A backend that cannot be reached or does not answer in time is a
-        # partial answer, exactly like a declined one (module docstring), not
-        # a 500 for every network.
+        # The one exception this module handles: a backend that cannot be
+        # reached or does not answer in time is a partial answer, exactly
+        # like a declined one (module docstring), not a 500 for every network.
         try:
             response = await self.client.get(
                 base_url.rstrip("/") + path_and_query,
@@ -730,10 +726,6 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         except httpx.TransportError as exc:
             self._merge_failed(declined, base_url, path_and_query, repr(exc))
             self._skip(base_url)
-            return None
-        except httpx.DecodingError as exc:
-            # an answer whose body cannot be read counts as an error answer
-            self._merge_failed(declined, base_url, path_and_query, repr(exc))
             return None
         if response.status_code == 429:
             if declined is not None and base_url not in declined:
@@ -750,27 +742,21 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         if response.status_code in tolerated:
             self._backend_answered(base_url)
-            logger.info(
-                "external backend %s cannot answer %s (%s)",
-                base_url,
-                path_and_query,
-                _status_and_detail(response),
-            )
+            if log_tolerated:
+                logger.info(
+                    "external backend %s cannot answer %s (%s)",
+                    base_url,
+                    path_and_query,
+                    _status_and_detail(response),
+                )
             return None
         if response.status_code != 200:
             self._merge_failed(
                 declined, base_url, path_and_query, f"HTTP {response.status_code}"
             )
             return None
-        try:
-            doc = response.json()
-        except ValueError:
-            self._merge_failed(
-                declined, base_url, path_and_query, "HTTP 200 without a JSON body"
-            )
-            return None
         self._backend_answered(base_url)
-        return doc
+        return response.json()
 
     def _merge_failed(
         self,
@@ -994,14 +980,21 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             f"/{network.lower()}/txs/{quote(identifier, safe='')}/conversions"
             "?only_bridges=true"
         )
-        doc = await self._fetch_json(
-            request,
-            backend.url,
-            path,
-            declined=declined,
-            tolerated=_CANNOT_ANSWER_TX,
-            timeout=self.config.delegated_conversions_timeout_s,
-        )
+        try:
+            doc = await self._fetch_json(
+                request,
+                backend.url,
+                path,
+                declined=declined,
+                tolerated=_CANNOT_ANSWER_TX,
+                timeout=self.config.delegated_conversions_timeout_s,
+                log_tolerated=True,
+            )
+        except (ValueError, httpx.DecodingError) as exc:
+            # an answer whose body cannot be read is a failed one: the half
+            # bridges are served, never a 500
+            self._merge_failed(declined, backend.url, path, repr(exc))
+            return []
         if doc is None:
             return []
         try:
