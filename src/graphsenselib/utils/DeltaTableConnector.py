@@ -81,6 +81,14 @@ class DeltaTableConnector:
         # Load the Delta table with storage options
         dt = deltalake.DeltaTable(table_path, storage_options=storage_options)
 
+        from graphsenselib.ingest.delta.sink import LAST_VACUUM_PROPERTY
+
+        marker = dt.metadata().configuration.get(LAST_VACUUM_PROPERTY)
+        if marker is not None:
+            return datetime.fromtimestamp(int(marker) // 1000)
+
+        # Tables last vacuumed before the property existed: with retention 0
+        # every vacuum deleted files and so left a VACUUM END commit.
         # Get the table history
         history = dt.history()
 

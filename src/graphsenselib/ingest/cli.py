@@ -931,7 +931,9 @@ def auto_compact_deltalake(env, currency, auto_compact, auto_compact_last_n):
         ],
         case_sensitive=False,
     ),
-    help="Optimization mode for the deltalake tables (default: both)",
+    help="Optimization mode for the deltalake tables (default: both). "
+    "Vacuum deletes only files removed more than 48h ago, so running readers "
+    "keep their snapshot.",
     default="both",
     multiple=False,
 )

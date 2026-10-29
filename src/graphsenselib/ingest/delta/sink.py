@@ -40,6 +40,15 @@ from ..transform import _finalize_inplace
 
 logger = logging.getLogger(__name__)
 
+# Vacuum deletes files the current version no longer references, but a reader
+# that loaded an older snapshot (a transformation or pubkey-update Spark run)
+# still reads them; Delta has no reader registration. Keep them longer than the
+# longest such run, or it fails mid-read on a missing parquet file.
+VACUUM_RETENTION_HOURS = 48
+
+# Table property holding the epoch millis of the last vacuum run.
+LAST_VACUUM_PROPERTY = "graphsense.lastVacuum"
+
 
 def delta_lake_highest_block(directory: str, s3_credentials: Optional[dict] = None):
     """Return max(block_id) from the ``block`` Delta table at ``directory``.
@@ -165,12 +174,18 @@ def optimize_table(
     if mode in ["both", "vacuum"]:
         logger.debug("Vacuuming table...")
         metrics = table.vacuum(
-            retention_hours=0,
+            retention_hours=VACUUM_RETENTION_HOURS,
             enforce_retention_duration=False,
             dry_run=False,
             full=full_vacuum,
         )
         logger.debug(f"Files vacuumed: {len(metrics)}")
+        # A vacuum that deletes nothing commits nothing, so the history alone
+        # cannot tell when the last one ran; auto-compaction schedules on this.
+        table.alter.set_table_properties(
+            {LAST_VACUUM_PROPERTY: str(int(time.time() * 1000))},
+            raise_if_not_exists=False,
+        )
     logger.debug("Table optimized")
 
 

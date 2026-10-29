@@ -28,6 +28,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **Compatible with pandas 3.1** (no `inplace=True`, deprecated there). Dependency updates: pandas 3.1.0, fastapi 0.162.0, authlib 1.9.1, dnspython 2.9.0 (GHSA-45c3-73f7-pv4m), aiohttp 3.14.4, uv image 0.13.6; Python client: python-dateutil 3.0.0.
 
 #### Fixed
+- **Delta Lake compaction no longer deletes files a running Spark job still reads.** Vacuum kept no removed files (retention 0), so a transformation or `pubkey-update` that overlapped a compaction of its source network could fail mid-read on a missing parquet file. Removed files are now kept for 48h; storage of compacted-away files is freed that much later. The time of the last vacuum is stored in the table property `graphsense.lastVacuum`, since a vacuum that deletes nothing leaves no commit to schedule `auto_compact` on.
 - **The legacy ingest pipeline (`GRAPHSENSE_LEGACY_INGEST`) honours `ingest_config.reorg_backoff_blocks`**; it always used the built-in backoff.
 - **`--auto-compact-last-n 0` is refused** like `auto_compact_last_n: 0` in the config; it silently fell back to the default.
 - **A stop while taking a Redis lock no longer leaves the lock behind**, also in the moment between acquiring it and starting work.
