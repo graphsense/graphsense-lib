@@ -20,6 +20,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Added
+- **`transformation pubkey-update-all`**: `pubkey-update --skip-detect` for every network with a delta sink (or `-n`, in that order), then `pubkey-detect`, `pubkey-compact` and, for a delta sink, `pubkey-load`, as one job.
 - **Tagpack validation names the t1 address behind a ZIP-320 TEX address** (`tex1…`) in its hint; the chain, and so the tagstore lookup, only has the t1 form.
 
 #### Changed

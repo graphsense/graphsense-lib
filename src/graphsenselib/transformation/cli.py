@@ -1135,6 +1135,147 @@ def run_pubkey_detect_command(
         )
 
 
+def _pubkey_networks(env_config) -> list:
+    """Networks of ``env_config`` that pubkey-update supports and can read."""
+    from graphsenselib.pubkey.job import ACCOUNT_CURRENCIES, UTXO_CURRENCIES
+
+    networks = []
+    for network, ks in env_config.keyspaces.items():
+        if network not in UTXO_CURRENCIES | ACCOUNT_CURRENCIES:
+            continue
+        sinks = (
+            (ks.ingest_config.raw_keyspace_file_sinks or {}) if ks.ingest_config else {}
+        )
+        if sinks.get("delta") is not None:
+            networks.append(network)
+    return networks
+
+
+@transformation.command(
+    "pubkey-update-all",
+    short_help="[ALPHA] pubkey-update for every network, then detect, compact, load.",
+)
+@require_environment(required=True)
+@click.option(
+    "--network",
+    "-n",
+    "networks",
+    multiple=True,
+    help=(
+        "Network to update, in the given order; repeatable. Defaults to every "
+        "supported network with a delta sink in the environment, in config order."
+    ),
+)
+@click.option(
+    "--sink-path",
+    type=str,
+    default=None,
+    help="As for pubkey-update; defaults to environments.<env>.pubkey.sink_path.",
+)
+@click.option(
+    "--sink-type",
+    type=click.Choice(["cassandra", "delta"]),
+    default=None,
+    help=(
+        "As for pubkey-update. With 'delta' the result is loaded into "
+        "Cassandra at the end (pubkey-load) unless --no-load."
+    ),
+)
+@click.option(
+    "--pubkey-keyspace",
+    type=str,
+    default=None,
+    help="As for pubkey-update.",
+)
+@click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help="Name of the s3_configs entry; required when a path is on s3://.",
+)
+@click.option("--local", is_flag=True, help="Run Spark in local mode.")
+@click.option(
+    "--no-compact",
+    is_flag=True,
+    help="Skip compacting 'observed' (pubkey-compact) after detection.",
+)
+@click.option(
+    "--no-load",
+    is_flag=True,
+    help="With --sink-type delta: skip loading pubkey_by_address into Cassandra.",
+)
+@spark_profile_option
+@click.pass_context
+def run_pubkey_update_all(
+    ctx,
+    env,
+    networks,
+    sink_path,
+    sink_type,
+    pubkey_keyspace,
+    s3_config_name,
+    local,
+    no_compact,
+    no_load,
+    spark_profile,
+):
+    """Run the whole cross-chain pubkey update as one job.
+
+    ``pubkey-update --skip-detect`` for each network, then ``pubkey-detect``
+    once, ``pubkey-compact`` and, for a delta sink, ``pubkey-load``. Stops at
+    the first failing step; every network keeps its own progress in the state
+    table, so a rerun resumes where each one left off.
+
+    ALPHA: not yet validated in production; the interface may change.
+    """
+    from graphsenselib.config import get_config
+
+    config = get_config()
+    env_config = config.get_environment(env)
+    if not networks:
+        networks = _pubkey_networks(env_config)
+        if not networks:
+            raise click.UsageError(
+                f"No network in environment {env} has a delta sink that "
+                "pubkey-update can read."
+            )
+    if sink_type is None:
+        pubkey_cfg = env_config.pubkey
+        sink_type = (pubkey_cfg.sink_type if pubkey_cfg else None) or "cassandra"
+
+    common = dict(
+        env=env,
+        sink_path=sink_path,
+        s3_config_name=s3_config_name,
+        local=local,
+        pubkey_keyspace=pubkey_keyspace,
+        spark_profile=spark_profile,
+    )
+    steps = [
+        (
+            f"pubkey-update {network}",
+            run_pubkey_update,
+            dict(common, currency=network, sink_type=sink_type, skip_detect=True),
+        )
+        for network in networks
+    ]
+    steps.append(
+        ("pubkey-detect", run_pubkey_detect_command, dict(common, sink_type=sink_type))
+    )
+    if not no_compact:
+        compact_args = {k: v for k, v in common.items() if k != "pubkey_keyspace"}
+        steps.append(("pubkey-compact", run_pubkey_compact_command, compact_args))
+    if sink_type == "delta" and not no_load:
+        steps.append(("pubkey-load", run_pubkey_load_cmd, common))
+
+    logger.info(f"pubkey-update-all: {' -> '.join(name for name, _, _ in steps)}")
+    for i, (name, command, kwargs) in enumerate(steps, 1):
+        logger.info(f"pubkey-update-all [{i}/{len(steps)}]: {name}")
+        ctx.invoke(command, **kwargs)
+    logger.info("pubkey-update-all: done")
+
+
 @transformation.command(
     "top-untagged-addresses",
     short_help="[ALPHA] Rank the most active addresses that carry no tag yet.",
