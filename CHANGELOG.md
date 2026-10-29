@@ -12,6 +12,14 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-10-29
+
+`graphsense-cli sync run` gains scheduled tasks (e.g. the weekly cross-chain pubkey update), and Delta Lake compaction no longer deletes files a running Spark job still reads. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
+
+### Upgrade notes
+- **Vacuum keeps removed Delta Lake files for 48h** (was 0), so storage of compacted-away files is freed two days later.
+- **`sync run --once` exits 2** when the `sync` section or the `-c` network is missing from the config (was 0).
+
 ### Web API + Python client
 
 #### Changed
