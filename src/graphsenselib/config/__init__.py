@@ -9,6 +9,7 @@ from .config import (
     IngestConfig,
     SyncConfig,
     SyncNetworkConfig,
+    SyncTaskConfig,
     avg_blocktimes_by_currencies,
     chain_forks,
     currency_to_schema_type,

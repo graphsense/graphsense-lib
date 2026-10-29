@@ -731,6 +731,51 @@ release track is the image tag.
    delta update, and `finished: ok` for each.
 5. Add its service to the compose file and `docker compose up -d sync-<net>`.
 
+#### Scheduled tasks
+
+Jobs that belong to no single network, such as the cross-chain pubkey
+update, go under `sync.tasks`. Each runs at a time of day, optionally on
+one weekday only:
+
+```yaml
+    sync:
+      tasks:
+        pubkey:
+          args: [transformation, pubkey-update-all, --spark-profile, pubkey,
+                 --sink-type, delta, --s3-config, spark-ingest]
+          weekday: saturday               # unset: every day
+          at: "19:00"                     # UTC
+          channel: tasks
+          timeout_minutes: 720
+          retry_minutes: 60               # after a failure, until it succeeds
+          success_topic: pubkey           # optional; failures go to alert_topic
+```
+
+The daemon appends `-e <env>` to `args`. A task runs on a daemon of its
+`channel` started without `-c`, and on one of them at a time. A run counts
+for the most recent scheduled time, and the last run is kept with the rest
+of the sync state, so a restart neither repeats the run nor drops it. A time
+missed while no daemon ran is caught up when one starts. A failure alerts
+and is retried every `retry_minutes`. A run stopped with the daemon starts
+again on the next daemon. `sync status` lists the tasks, and
+`sync pause/resume --task <name>` work like they do for a network.
+
+Give a Spark task a channel and a container of its own. The Spark driver
+must be reachable from the executors (`network_mode: host`, as for the
+cron container), and the job needs a larger memory limit:
+
+```yaml
+  sync-tasks:
+    <<: *sync
+    container_name: sync-tasks
+    network_mode: host
+    command: graphsense-cli -v sync run -e prod --channel tasks
+```
+
+Spark jobs may read a network's Delta Lake while its compaction runs:
+vacuum keeps replaced files for 48 hours, so a running reader's snapshot
+stays readable.
+
 #### Stopping and switching images
 
 SIGTERM (`docker stop`, `docker compose up -d` with a new tag) stops the

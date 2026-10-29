@@ -11,7 +11,7 @@ from pydantic import BaseModel, TypeAdapter, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from ..utils import first_or_default, flatten, resolve_env_vars
-from ..utils.date import validate_older_than_run_spec
+from ..utils.date import validate_older_than_run_spec, weekday_number
 
 logger = logging.getLogger(__name__)
 
@@ -532,6 +532,81 @@ class SyncNetworkConfig(_WarnExtraModel):
         return _check_sync_args(v)
 
 
+# The daemon passes these to every task itself.
+_SYNC_TASK_RESERVED_ARGS = frozenset({"-e", "--env", "--config-file"})
+
+
+class SyncTaskConfig(_WarnExtraModel):
+    """A job `sync run` starts on a schedule, beside the per-network cycles,
+    e.g. the cross-network pubkey update. Runs once per scheduled time; a
+    time missed while no daemon ran is caught up when one starts."""
+
+    enabled: bool = True
+    channel: str = Field(
+        default=DEFAULT_SYNC_CHANNEL,
+        description=(
+            "Only a daemon started with this --channel, and without -c, runs "
+            "the task. Give a task that needs its own container (Spark with "
+            "host networking, a larger memory limit) a channel of its own."
+        ),
+    )
+    args: List[str] = Field(
+        description=(
+            "graphsense-cli arguments, e.g. [transformation, "
+            "pubkey-update-all, --spark-profile, pubkey]; the daemon appends "
+            "-e <env>."
+        ),
+    )
+    at: str = Field(default="00:00", description="Time of day, HH:MM UTC.")
+    weekday: Optional[str] = Field(
+        default=None, description="e.g. saturday; unset: every day."
+    )
+    timeout_minutes: int = Field(default=720, ge=1)
+    retry_minutes: int = Field(
+        default=60,
+        ge=1,
+        description="After a failure, retry this much later, until it succeeds.",
+    )
+    success_topic: Optional[str] = Field(
+        default=None,
+        description="Notification topic for a successful run; failures go to "
+        "sync.alert_topic.",
+    )
+
+    @field_validator("args")
+    @classmethod
+    def _check_args(cls, v):
+        if not v:
+            raise ValueError("args must name a graphsense-cli command")
+        for arg in v:
+            if arg.split("=", 1)[0] in _SYNC_TASK_RESERVED_ARGS:
+                raise ValueError(
+                    f"{arg} is set by the sync daemon and cannot be passed here"
+                )
+        return v
+
+    @field_validator("at")
+    @classmethod
+    def _check_at(cls, v):
+        hours, sep, minutes = v.partition(":")
+        if not (
+            sep
+            and hours.isdigit()
+            and minutes.isdigit()
+            and int(hours) < 24
+            and int(minutes) < 60
+        ):
+            raise ValueError(f"{v!r}: use HH:MM (UTC), e.g. 19:00")
+        return v
+
+    @field_validator("weekday")
+    @classmethod
+    def _check_weekday(cls, v):
+        if v is not None:
+            weekday_number(v)
+        return v
+
+
 class SyncConfig(_WarnExtraModel):
     """Settings for the continuous sync daemon (`graphsense-cli sync run`)."""
 
@@ -582,6 +657,7 @@ class SyncConfig(_WarnExtraModel):
         ),
     )
     networks: Dict[str, SyncNetworkConfig] = Field(default_factory=dict)
+    tasks: Dict[str, SyncTaskConfig] = Field(default_factory=dict)
 
     @field_validator("consistency_check_args")
     @classmethod

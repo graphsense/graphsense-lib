@@ -4,7 +4,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 import click
 from rich.markup import escape
@@ -131,7 +131,7 @@ def run(ctx, env: str, channel: str, once: bool, only):
 @require_environment()
 def status(env: str):
     """Show every configured network: owner, pause, heights, last result and
-    whether a delta-update WAL record is pending."""
+    whether a delta-update WAL record is pending; then every task."""
     _print_status(env, _store(env))
 
 
@@ -160,6 +160,46 @@ def _print_status(env: str, store, only: Optional[str] = None):
             ),
             highlight=False,
         )
+    if only is None and sync_cfg is not None:
+        for name, task in sorted(sync_cfg.tasks.items()):
+            console.print()
+            console.print(_task_lines(name, task, store), highlight=False)
+
+
+def _task_lines(name: str, task, store) -> str:
+    from .scheduler import task_key, task_slots
+
+    key = task_key(name)
+    st = store.read_status(key) or {}
+    pause = store.get_pause(key)
+    when = f"{task.weekday} {task.at} UTC" if task.weekday else f"daily {task.at} UTC"
+    if not task.enabled:
+        state = "[dim]disabled[/dim]"
+    elif pause is not None:
+        state = f"[yellow]paused[/yellow] ({escape(str(pause.get('reason')))})"
+    elif st.get("running"):
+        state = f"[cyan]running[/cyan] since {_fmt_clock(st.get('started_at'))}"
+    else:
+        slot, next_slot = task_slots(task, time.time())
+        if (st.get("last_success_at") or 0) >= slot:
+            state = f"[green]done[/green] · next {_fmt_clock(next_slot)}"
+        elif st.get("failures"):
+            state = f"[red]retrying[/red] ({st['failures']} failed in a row)"
+        else:
+            state = "due"
+    head = f"[bold]task {escape(name)}[/bold] · {state} · {when}"
+    if task.channel != DEFAULT_SYNC_CHANNEL:
+        head += f" · channel {escape(task.channel)}"
+    rows = [("command", escape(" ".join(task.args)))]
+    result = st.get("last_result")
+    if result == "ok":
+        took = f" in {_fmt_duration(st['seconds'])}" if st.get("seconds") else ""
+        rows.append(("last", f"ok, {_fmt_clock(st.get('last_success_at'))}{took}"))
+    elif result:
+        rows.append(("last", f"[red]{escape(_shorten(str(result)))}[/red]"))
+        if st.get("last_success_at"):
+            rows.append(("last ok", _fmt_clock(st["last_success_at"])))
+    return "\n".join([head] + [f"  {k:<12} {v}" for k, v in rows])
 
 
 def _daemon_lines(key: str, info: dict) -> str:
@@ -264,9 +304,26 @@ def _running_somewhere(store, network: str) -> bool:
     return any(network in info.get("running", []) for _, info in store.list_daemons())
 
 
+def _pause_target(currency: Optional[str], task: Optional[str]) -> Tuple[str, str]:
+    """(state-store key, what to call it) of a pause/resume target."""
+    from .scheduler import task_key
+
+    if (currency is None) == (task is None):
+        raise click.UsageError("Give either -c/--currency or --task.")
+    if task is not None:
+        return task_key(task), f"task {task}"
+    return currency, currency
+
+
+_task_option = click.option(
+    "--task", default=None, help="A sync.tasks entry instead of a network."
+)
+
+
 @sync.command("pause")
 @require_environment()
-@require_currency()
+@require_currency(required=False)
+@_task_option
 @click.option("--reason", required=True, help="Shown in `sync status` and alerts.")
 @click.option(
     "--for",
@@ -281,29 +338,40 @@ def _running_somewhere(store, network: str) -> bool:
     help="Wait until the running cycle (if any) has finished, then show the "
     "network's status, WAL check included. Ctrl-C stops waiting; the pause stays.",
 )
-def pause(env: str, currency: str, reason: str, duration: Optional[str], wait: bool):
-    """Stop starting new jobs for a network. A running job finishes first."""
+def pause(
+    env: str,
+    currency: Optional[str],
+    task: Optional[str],
+    reason: str,
+    duration: Optional[str],
+    wait: bool,
+):
+    """Stop starting new jobs for a network or task. A running job finishes
+    first."""
+    key, what = _pause_target(currency, task)
     seconds = _parse_duration(duration) if duration else None
     by = os.environ.get("USER") or "unknown"
     store = _store(env)
-    store.pause(currency, reason, by=by, seconds=seconds)
+    store.pause(key, reason, by=by, seconds=seconds)
     console.print(
-        f"Paused {env}/{currency}"
+        f"Paused {env}/{what}"
         + (f" for {duration}" if duration else " until resumed")
         + ". A job already running finishes first."
     )
     if not wait:
         return
-    if _running_somewhere(store, currency):
-        console.print(f"Waiting for the running {currency} cycle to finish ...")
-        while _running_somewhere(store, currency):
-            if store.get_pause(currency) is None:
-                # expired (--for) or resumed meanwhile: cycles start again
-                console.print(f"{env}/{currency} is no longer paused, stopped waiting.")
+    if _running_somewhere(store, key):
+        run = "job" if task is not None else "cycle"
+        console.print(f"Waiting for the running {what} {run} to finish ...")
+        while _running_somewhere(store, key):
+            if store.get_pause(key) is None:
+                # expired (--for) or resumed meanwhile: jobs start again
+                console.print(f"{env}/{what} is no longer paused, stopped waiting.")
                 return
             time.sleep(_WAIT_POLL_SECONDS)
-    console.print(f"No {currency} job running.")
-    _print_status(env, store, only=currency)
+    console.print(f"No {what} job running.")
+    if currency is not None:
+        _print_status(env, store, only=currency)
 
 
 _WAIT_POLL_SECONDS = 2
@@ -311,13 +379,15 @@ _WAIT_POLL_SECONDS = 2
 
 @sync.command("resume")
 @require_environment()
-@require_currency()
-def resume(env: str, currency: str):
+@require_currency(required=False)
+@_task_option
+def resume(env: str, currency: Optional[str], task: Optional[str]):
     """Lift a pause (also one set by the reorg check)."""
-    if _store(env).resume(currency):
-        console.print(f"Resumed {env}/{currency}.")
+    key, what = _pause_target(currency, task)
+    if _store(env).resume(key):
+        console.print(f"Resumed {env}/{what}.")
     else:
-        console.print(f"{env}/{currency} was not paused.")
+        console.print(f"{env}/{what} was not paused.")
 
 
 _DURATION = re.compile(r"^(\d+)([smhd])$")

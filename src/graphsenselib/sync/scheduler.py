@@ -23,6 +23,11 @@ run is as long as the raw backlog.
 
 Compaction is a step of its own rather than `--auto-compact` on the ingest:
 a compaction can take hours, far beyond the ingest timeout.
+
+Beside the networks, `sync.tasks` are jobs started at a time of day (e.g. the
+cross-network pubkey update). A task runs on one daemon at a time: the one
+that claims it, among those on its channel without -c. Its last run is kept in
+the state store, so a restart neither repeats nor drops it.
 """
 
 import logging
@@ -33,8 +38,8 @@ import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .. import __version__
 from ..config import (
@@ -42,10 +47,12 @@ from ..config import (
     KeyspaceConfig,
     SyncConfig,
     SyncNetworkConfig,
+    SyncTaskConfig,
     avg_blocktimes_by_currencies,
     get_config,
     get_reorg_backoff_blocks,
 )
+from ..utils.date import weekday_number
 from .jobs import EXIT_INCONSISTENT, JobRunner, Outcome, StepResult
 from .probe import ChainProbe
 from .state import StateStore, new_daemon_id
@@ -69,6 +76,27 @@ def default_max_blocks(network: str) -> int:
     return max(1, _DEFAULT_SLICE_SECONDS // avg_blocktimes_by_currencies[network])
 
 
+def task_key(name: str) -> str:
+    """State-store name of a task (claim, pause, status), apart from networks."""
+    return f"task.{name}"
+
+
+def task_slots(task: SyncTaskConfig, now: float) -> Tuple[float, float]:
+    """Epoch seconds of the task's latest scheduled time at or before ``now``,
+    and of the one after it."""
+    current = datetime.fromtimestamp(now, timezone.utc)
+    hours, minutes = (int(x) for x in task.at.split(":"))
+    slot = current.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    if task.weekday is None:
+        period = timedelta(days=1)
+    else:
+        period = timedelta(days=7)
+        slot -= timedelta(days=(current.weekday() - weekday_number(task.weekday)) % 7)
+    if slot > current:
+        slot -= period
+    return slot.timestamp(), (slot + period).timestamp()
+
+
 def _default_notifier(topic: str, msg: str, dedup_key: str, every_seconds: int):
     from ..monitoring.notifications import send_msg_to_topic_rate_limited
 
@@ -86,6 +114,13 @@ class _Runtime:
     last_rates_at: float = 0.0  # wall clock
     last_consistency_at: float = 0.0  # wall clock
     last_compaction_at: float = 0.0  # wall clock
+    future: Optional[Future] = None
+    claimed: bool = False
+    last_skip_reason: Optional[str] = None
+
+
+@dataclass
+class _TaskRuntime:
     future: Optional[Future] = None
     claimed: bool = False
     last_skip_reason: Optional[str] = None
@@ -147,6 +182,7 @@ class SyncScheduler:
         self._stop = threading.Event()
         self._reload_requested = threading.Event()
         self._runtime: Dict[str, _Runtime] = {}
+        self._tasks: Dict[str, _TaskRuntime] = {}
         self._probes: Dict[str, ChainProbe] = {}
         self._executor = ThreadPoolExecutor(
             max_workers=_MAX_WORKER_THREADS, thread_name_prefix="sync-cycle"
@@ -223,7 +259,8 @@ class SyncScheduler:
         try:
             if once:
                 self.tick()
-                for f in [rt.future for rt in self._runtime.values() if rt.future]:
+                runtimes = [*self._runtime.values(), *self._tasks.values()]
+                for f in [rt.future for rt in runtimes if rt.future]:
                     failed |= bool(f.result())
                 if self._missing:
                     return 2
@@ -245,6 +282,12 @@ class SyncScheduler:
                     self.store.release(network, self.daemon_id)
                 except Exception as e:
                     logger.warning(f"Could not release claim on {network}: {e}")
+        for name, trt in self._tasks.items():
+            if trt.claimed:
+                try:
+                    self.store.release(task_key(name), self.daemon_id)
+                except Exception as e:
+                    logger.warning(f"Could not release claim on task {name}: {e}")
         for probe in self._probes.values():
             probe.close()
         try:
@@ -303,6 +346,12 @@ class SyncScheduler:
             except Exception as e:
                 # e.g. Redis unreachable: try again next tick.
                 logger.warning(f"Scheduling {network} failed: {e}")
+        for name, task in sync.tasks.items():
+            trt = self._tasks.setdefault(name, _TaskRuntime())
+            try:
+                self._schedule_task(name, task, sync, trt)
+            except Exception as e:
+                logger.warning(f"Scheduling task {name} failed: {e}")
         self._announce(sync)
 
     def _schedule_one(
@@ -382,6 +431,9 @@ class SyncScheduler:
                     "seen_at": int(self._wall()),
                     "running": sorted(
                         c for c, rt in self._runtime.items() if _is_running(rt)
+                    )
+                    + sorted(
+                        task_key(n) for n, t in self._tasks.items() if _is_running(t)
                     ),
                     "networks": sorted(
                         c for c, rt in self._runtime.items() if rt.claimed
@@ -404,6 +456,126 @@ class SyncScheduler:
                 f"Resume with: graphsense-cli sync resume -e {self.env} -c {network}",
                 every=_PAUSE_REMINDER_AFTER_SECONDS,
             )
+
+    # -- tasks -------------------------------------------------------------
+
+    def _schedule_task(
+        self, name: str, task: SyncTaskConfig, sync: SyncConfig, trt: _TaskRuntime
+    ):
+        key = task_key(name)
+        if _is_running(trt):
+            self.store.claim(key, self.daemon_id)
+            return
+        trt.future = None
+        # A daemon started with -c runs only those networks.
+        if not (task.enabled and task.channel == self.channel and self.only is None):
+            return
+        pause = self.store.get_pause(key)
+        if pause is not None:
+            self._skip(trt, key, f"paused: {pause.get('reason')}")
+            return
+        trt.last_skip_reason = None
+        if not self._task_due(task, self.store.read_status(key)):
+            return
+        if not self.store.claim(key, self.daemon_id):
+            return  # another daemon runs it
+        # It may just have finished on the daemon whose claim we now took.
+        if not self._task_due(task, self.store.read_status(key)):
+            self.store.release(key, self.daemon_id)
+            return
+        trt.claimed = True
+        trt.future = self._executor.submit(self._run_task, name, task, sync, trt)
+
+    def _task_due(self, task: SyncTaskConfig, status: Optional[dict]) -> bool:
+        st = status or {}
+        now = self._wall()
+        slot, _ = task_slots(task, now)
+        if (st.get("last_success_at") or 0) >= slot:
+            return False
+        attempt = st.get("last_attempt_at") or 0
+        return attempt < slot or now - attempt >= task.retry_minutes * 60
+
+    def _run_task(
+        self, name: str, task: SyncTaskConfig, sync: SyncConfig, trt: _TaskRuntime
+    ) -> bool:
+        """Returns whether the task failed."""
+        key = task_key(name)
+        started = int(self._wall())
+        status = dict(self.store.read_status(key) or {})
+        status.update(
+            owner=self._daemon_key,
+            version=__version__,
+            running="task",
+            started_at=started,
+        )
+        failed = False
+        try:
+            self.store.write_status(key, status)
+            result = self.runner.run(
+                name,
+                [*task.args, "-e", self.env],
+                task.timeout_minutes * 60,
+                self._stop,
+                label=f"task {name}",
+            )
+            if result.outcome is Outcome.STOPPED:
+                # Not an attempt: the next daemon starts it again.
+                status["last_result"] = "stopped"
+            elif result.outcome is Outcome.BUSY:
+                status.update(last_attempt_at=started, last_result="lock busy")
+            elif result.failed:
+                failed = True
+                status.update(
+                    last_attempt_at=started,
+                    last_failure_at=int(self._wall()),
+                    last_result=f"failed: {_describe(result)}",
+                    failures=status.get("failures", 0) + 1,
+                )
+                self._alert(
+                    sync,
+                    f"sync-task-failure:{self.env}:{name}",
+                    f"sync {self.env} task {name} failed: {_describe(result)}. "
+                    f"Retry in {task.retry_minutes} min.\n" + _fmt_tail(result.tail),
+                )
+            else:
+                status.update(
+                    last_attempt_at=started,
+                    last_success_at=started,
+                    last_result="ok",
+                    failures=0,
+                    seconds=round(result.seconds),
+                )
+                if task.success_topic:
+                    self._notify_task_success(task, name, result)
+        except Exception as e:
+            logger.exception(f"task {name} crashed")
+            failed = True
+            status.update(last_attempt_at=started, last_result=f"failed: {e}")
+        finally:
+            status.pop("running", None)
+            try:
+                self.store.write_status(key, status)
+            except Exception as e:
+                logger.warning(f"task {name}: could not write status: {e}")
+            # Only after the status: a daemon that takes the claim next sees
+            # this run.
+            try:
+                self.store.release(key, self.daemon_id)
+            except Exception as e:
+                logger.warning(f"task {name}: could not release claim: {e}")
+            trt.claimed = False
+        return failed
+
+    def _notify_task_success(self, task: SyncTaskConfig, name: str, result):
+        try:
+            self._notify(
+                task.success_topic,
+                f"sync {self.env} task {name} done in {result.seconds / 60:.0f} min.",
+                f"sync-task-ok:{self.env}:{name}:{uuid.uuid4().hex}",
+                60,
+            )
+        except Exception as e:
+            logger.warning(f"Could not send notification: {e}")
 
     # -- one cycle ---------------------------------------------------------
 

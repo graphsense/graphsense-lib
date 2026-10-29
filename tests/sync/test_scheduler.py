@@ -2,9 +2,14 @@ import threading
 
 import pytest
 
-from graphsenselib.config import Environment
+from graphsenselib.config import Environment, SyncTaskConfig
 from graphsenselib.sync.jobs import Outcome, StepResult
-from graphsenselib.sync.scheduler import SyncScheduler, _Slots
+from graphsenselib.sync.scheduler import (
+    SyncScheduler,
+    _Slots,
+    task_key,
+    task_slots,
+)
 from graphsenselib.sync.state import MemoryStateStore
 
 
@@ -113,7 +118,7 @@ def setup():
 
 def one_tick(sched):
     sched.tick()
-    for rt in sched._runtime.values():
+    for rt in [*sched._runtime.values(), *sched._tasks.values()]:
         if rt.future is not None:
             rt.future.result()
 
@@ -447,3 +452,147 @@ def test_missing_sync_section_warned_once(setup, caplog):
         for _ in range(3):
             sched.tick()
     assert sum("Not configured" in r.message for r in caplog.records) == 1
+
+
+# -- tasks ----------------------------------------------------------------
+
+# Saturday 2026-10-31 18:00 UTC
+SAT_1800 = 1793469600.0
+
+
+def task_env(**task):
+    return make_env(
+        sync={
+            "networks": {},
+            "tasks": {
+                "pubkey": {
+                    "args": ["transformation", "pubkey-update-all"],
+                    "weekday": "saturday",
+                    "at": "19:00",
+                    **task,
+                }
+            },
+        }
+    )
+
+
+def test_task_slots():
+    weekly = SyncTaskConfig(args=["x"], weekday="sat", at="19:00")
+    last, nxt = task_slots(weekly, SAT_1800)
+    assert (last, nxt) == (SAT_1800 + 3600 - 7 * 86400, SAT_1800 + 3600)
+    assert task_slots(weekly, SAT_1800 + 3600) == (SAT_1800 + 3600, nxt + 7 * 86400)
+    daily = SyncTaskConfig(args=["x"], at="19:00")
+    assert task_slots(daily, SAT_1800) == (SAT_1800 - 82800, SAT_1800 + 3600)
+
+
+def test_task_runs_once_per_scheduled_time(setup):
+    store = MemoryStateStore()
+    sched, _, runner, _, clock = setup(env=task_env(), store=store)
+    clock.t = SAT_1800 - 7 * 86400 + 7200  # last week's run is done
+    store.write_status(task_key("pubkey"), {"last_success_at": clock.t})
+    one_tick(sched)
+    assert runner.calls == []
+
+    clock.t = SAT_1800 + 3600 + 5  # 19:00:05
+    one_tick(sched)
+    assert runner.calls == [
+        ("pubkey", ["transformation", "pubkey-update-all", "-e", "prod"])
+    ]
+    assert store.claim_owner(task_key("pubkey")) is None
+    clock.t += 6 * 3600
+    one_tick(sched)
+    assert len(runner.calls) == 1
+
+    # a restarted daemon knows it ran
+    sched2, _, runner2, _, clock2 = setup(env=task_env(), store=store)
+    clock2.t = clock.t
+    one_tick(sched2)
+    assert runner2.calls == []
+
+
+def test_missed_time_is_caught_up(setup):
+    sched, _, runner, _, clock = setup(env=task_env())
+    clock.t = SAT_1800 + 3 * 86400  # daemon down over the weekend
+    one_tick(sched)
+    assert len(runner.calls) == 1
+
+
+def test_failed_task_alerts_and_retries_later(setup):
+    sched, _, runner, alerts, clock = setup(env=task_env(retry_minutes=30))
+    runner.outcomes["pubkey"] = [(Outcome.FAILED, 1)]
+    clock.t = SAT_1800 + 3600
+    one_tick(sched)
+    assert [k for k, _ in alerts] == ["sync-task-failure:prod:pubkey"]
+    status = sched.store.read_status(task_key("pubkey"))
+    assert status["failures"] == 1 and status["last_result"].startswith("failed")
+
+    clock.t += 29 * 60
+    one_tick(sched)
+    assert len(runner.calls) == 1
+    clock.t += 60
+    one_tick(sched)
+    assert len(runner.calls) == 2
+    status = sched.store.read_status(task_key("pubkey"))
+    assert status["failures"] == 0 and status["last_result"] == "ok"
+
+
+def test_stopped_task_is_not_an_attempt(setup):
+    sched, _, runner, _, clock = setup(env=task_env())
+    runner.outcomes["pubkey"] = [(Outcome.STOPPED, None)]
+    clock.t = SAT_1800 + 3600
+    one_tick(sched)
+    one_tick(sched)
+    assert len(runner.calls) == 2
+
+
+def test_success_notification(setup):
+    sched, _, runner, alerts, clock = setup(env=task_env(success_topic="pubkey"))
+    clock.t = SAT_1800 + 3600
+    one_tick(sched)
+    assert len(alerts) == 1
+    assert alerts[0][0].startswith("sync-task-ok:prod:pubkey:")
+
+
+def test_task_needs_its_channel_no_c_no_pause_no_claim(setup):
+    store = MemoryStateStore()
+    for kwargs, env in [
+        ({"channel": "default"}, task_env(channel="tasks")),
+        ({"channel": "tasks"}, task_env(channel="tasks", enabled=False)),
+    ]:
+        sched, _, runner, _, clock = setup(env=env, store=store, **kwargs)
+        clock.t = SAT_1800 + 3600
+        one_tick(sched)
+        assert runner.calls == []
+
+    sched, _, runner, _, clock = setup(env=task_env(), store=store)
+    sched.only = {"zec"}
+    clock.t = SAT_1800 + 3600
+    one_tick(sched)
+    assert runner.calls == []
+
+    store.pause(task_key("pubkey"), "spark upgrade", by="me")
+    sched, _, runner, _, clock = setup(env=task_env(), store=store)
+    clock.t = SAT_1800 + 3600
+    one_tick(sched)
+    assert runner.calls == []
+
+    store.resume(task_key("pubkey"))
+    store.claim(task_key("pubkey"), "another daemon")
+    one_tick(sched)
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"args": []},
+        {"args": ["x", "-e", "prod"]},
+        {"args": ["x", "--config-file=a.yaml"]},
+        {"args": ["x"], "at": "25:00"},
+        {"args": ["x"], "at": "7pm"},
+        {"args": ["x"], "weekday": "caturday"},
+    ],
+)
+def test_task_config_is_checked(task):
+    with pytest.raises(ValueError):
+        SyncTaskConfig(**task)

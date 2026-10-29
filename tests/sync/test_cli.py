@@ -211,3 +211,43 @@ def test_status_blocks(tmp_path, monkeypatch):
     assert "980  10 behind raw" in out
     assert "WAL          empty" in out
     assert "last         ok, " in out
+
+
+TASK_CONFIG = CONFIG.replace(
+    "        zec: {channel: CHANNEL}\n",
+    "        zec: {channel: stable}\n"
+    "      tasks:\n"
+    "        pubkey:\n"
+    "          args: [transformation, pubkey-update-all]\n"
+    "          weekday: saturday\n"
+    "          at: '19:00'\n"
+    "          channel: tasks\n",
+)
+
+
+def test_task_pause_status_resume(tmp_path):
+    cfg = tmp_path / "gs.yaml"
+    cfg.write_text(TASK_CONFIG)
+    base = ["--config-file", str(cfg), "sync"]
+    with patch("graphsenselib.sync.cli.FILE_STATE_DIR", str(tmp_path / "state")):
+        r = CliRunner().invoke(cli, base + ["pause", "-e", "dev", "--reason", "x"])
+        assert r.exit_code == 2
+        assert "either -c/--currency or --task" in r.output
+
+        r = CliRunner().invoke(
+            cli, base + ["pause", "-e", "dev", "--task", "pubkey", "--reason", "spark"]
+        )
+        assert r.exit_code == 0, r.output
+        assert "Paused dev/task pubkey" in r.output
+
+        with patch("graphsenselib.sync.probe.ChainProbe", _FakeProbe):
+            r = CliRunner().invoke(cli, base + ["status", "-e", "dev"])
+        assert r.exit_code == 0, r.output
+        assert "task pubkey · paused (spark) · saturday 19:00 UTC" in r.output
+        assert "transformation pubkey-update-all" in r.output
+
+        r = CliRunner().invoke(cli, base + ["resume", "-e", "dev", "--task", "pubkey"])
+        assert "Resumed dev/task pubkey" in r.output
+        with patch("graphsenselib.sync.probe.ChainProbe", _FakeProbe):
+            r = CliRunner().invoke(cli, base + ["status", "-e", "dev"])
+        assert "task pubkey · due" in r.output
