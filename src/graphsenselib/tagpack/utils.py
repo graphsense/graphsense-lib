@@ -115,6 +115,10 @@ def get_secondlevel_domain(url: str) -> str:
 
 
 def get_github_repo_url(github_url):
+    """The GitHub repo URL (scheme, host, owner/repo) of a tagpack's uri, else
+    None. A tagpack without uri (NULL in the tagstore) has no repo."""
+    if not github_url:
+        return None
     if not github_url.startswith("http"):
         github_url = f"http://{github_url}"
     purl = urlparse(github_url)
