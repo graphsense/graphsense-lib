@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -58,6 +59,58 @@ def aggregate_section_timings(log_text: str) -> list[tuple[str, float, int]]:
         key=lambda t: t[1],
         reverse=True,
     )
+
+# apply_changes logs one summary line per apply, per table abbreviation (first
+# letters of the table name's words) its action counts: "+" new, "u" update,
+# "-" delete, e.g. "a: +5; u3; fcs: +2; -1".
+_UPDATE_MODULE = " | graphsenselib.deltaupdate.update.utxo.update | "
+_CHANGE_SUMMARY_RE = re.compile(r"[a-z]+: [+u-]\d+(?:; (?:[a-z]+: )?[+u-]\d+)*")
+_CHANGE_TABLE_RE = re.compile(r"([a-z]+): ([+u-]\d+(?:; [+u-]\d+)*)")
+
+
+def aggregate_change_counts(log_text: str) -> dict[str, dict[str, int]]:
+    """Sum the apply summaries of a run: table abbreviation -> action -> rows."""
+    counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for line in log_text.splitlines():
+        if _UPDATE_MODULE not in line:
+            continue
+        message = line.rsplit(" | ", 1)[-1].strip()
+        if not _CHANGE_SUMMARY_RE.fullmatch(message):
+            continue
+        for table, actions in _CHANGE_TABLE_RE.findall(message):
+            for action in actions.split("; "):
+                counts[table][action[0]] += int(action[1:])
+    return counts
+
+
+def activate_fresh_clustering(
+    cassandra_host: str, cassandra_port: int, transformed_keyspace: str
+) -> bool:
+    """Write the fresh-clustering bootstrap marker, as the one-off
+    ``transformation cluster`` does as its last step, so the delta updater
+    maintains the fresh_* tables from the next block on. Returns False when
+    the keyspace's schema has no state table (versions before fresh
+    clustering)."""
+    from cassandra.cluster import Cluster
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        tables = {
+            row.table_name
+            for row in session.execute(
+                "SELECT table_name FROM system_schema.tables "
+                "WHERE keyspace_name = %s",
+                (transformed_keyspace,),
+            )
+        }
+        if "state" not in tables:
+            return False
+        session.execute(
+            f"INSERT INTO {transformed_keyspace}.state (key, value, updated_at) "  # noqa: S608
+            "VALUES ('fresh_clustering_active', 'regression', toTimestamp(now()))"
+        )
+    return True
+
 
 # UTXO bech32 HRPs as used by graphsense-lib's transformed data_configuration.
 # bch / zec do not use bech32 in their address-decoding path -- the production
@@ -253,6 +306,18 @@ def run_exchange_rates_ingest(
     )
 
 
+@dataclass
+class DeltaUpdateRun:
+    seconds: float
+    # (section, total_seconds, occurrences) from the LoggerScope debug logs,
+    # sorted by total seconds desc
+    section_timings: list[tuple[str, float, int]]
+    # table abbreviation -> action -> rows, see aggregate_change_counts
+    change_counts: dict[str, dict[str, int]]
+    # whether the fresh-clustering marker was set before the measured run
+    fresh_clustering: bool
+
+
 def run_delta_update(
     venv_dir: Path,
     config: DeltaUpdateConfig,
@@ -267,22 +332,24 @@ def run_delta_update(
     write_batch_size: int = 10,
     label: str = "delta-update",
     parallel_workers: int = 1,
-) -> tuple[float, list[tuple[str, float, int]]]:
+    fresh_clustering: bool = False,
+) -> DeltaUpdateRun:
     """Run ``graphsense-cli delta-update update`` with timing.
 
     parallel_workers > 1 appends ``--parallel-workers N``; only pass it for
     graphsense-lib versions that know the flag (baselines before v2.14 don't).
 
+    With fresh_clustering, a first run creates the keyspace and writes the
+    first block, the fresh-clustering marker is set, and the timed run then
+    maintains the fresh_* tables from an empty, consistent state (no
+    multi-input tx precedes it). Versions without the state table run
+    without it.
+
     Always uses ``--updater-version 2`` because the perf-targeted commit
     modifies the v2 (full) UTXO updater. ``--create-schema`` is set so each
     side initialises its own transformed keyspace from the schema shipped with
     *its* graphsense-lib version -- this isolates current vs baseline schemas.
-
-    Returns:
-        (wall_seconds, section_timings) where section_timings is a list of
-        ``(section, total_seconds, occurrences)`` aggregated from the
-        updater's own ``LoggerScope`` debug logs (sorted by total seconds
-        desc). ``-vv`` is set on the CLI so DEBUG-level timings are emitted.
+    ``-vv`` is set on the CLI so DEBUG-level timings are emitted.
     """
     gs_config = build_gs_config(
         currency=config.currency,
@@ -320,45 +387,58 @@ def run_delta_update(
     cli_bin = str(venv_dir / "bin" / "graphsense-cli")
     env = make_cli_env(venv_dir, config_path)
 
-    # --start-block is intentionally omitted. After --create-schema the
-    # transformed state initialises hb_du/hb_ft at 0, and find_import_range
-    # rejects start_block <= last_block, so letting it default makes the
-    # updater pick up at "last_block + 1" on both sides identically.
-    # ``-vv`` enables DEBUG so LoggerScope emits per-scope ``took Xs`` lines.
-    cmd = [
-        cli_bin,
-        "-vv",
-        "delta-update", "update",
-        "-e", "test",
-        "-c", config.currency,
-        "--end-block", str(config.end_block),
-        "--updater-version", "2",
-        "--write-batch-size", str(write_batch_size),
-        "--create-schema",
-        "--no-pedantic",
-        "--disable-safety-checks",
-    ]
-    if parallel_workers > 1:
-        cmd += ["--parallel-workers", str(parallel_workers)]
+    def run(end_block: int) -> tuple[float, str]:
+        # --start-block is intentionally omitted. After --create-schema the
+        # transformed state initialises hb_du/hb_ft at 0, and
+        # find_import_range rejects start_block <= last_block, so letting it
+        # default makes the updater pick up at "last_block + 1" on both
+        # sides identically. ``-vv`` enables DEBUG so LoggerScope emits
+        # per-scope ``took Xs`` lines.
+        cmd = [
+            cli_bin,
+            "-vv",
+            "delta-update", "update",
+            "-e", "test",
+            "-c", config.currency,
+            "--end-block", str(end_block),
+            "--updater-version", "2",
+            "--write-batch-size", str(write_batch_size),
+            "--create-schema",
+            "--no-pedantic",
+            "--disable-safety-checks",
+        ]
+        if parallel_workers > 1:
+            cmd += ["--parallel-workers", str(parallel_workers)]
 
-    t0 = time.perf_counter()
-    try:
+        t0 = time.perf_counter()
         result = subprocess.run(
             cmd, capture_output=True, text=True, env=env,
             timeout=DELTA_UPDATE_TIMEOUT_S,
         )
+        elapsed = time.perf_counter() - t0
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"{label} failed (exit {result.returncode}):\n"
+                f"cmd: {' '.join(cmd)}\n"
+                f"stdout: {result.stdout[-5000:]}\n"
+                f"stderr: {result.stderr[-5000:]}"
+            )
+        return elapsed, (result.stdout or "") + "\n" + (result.stderr or "")
+
+    try:
+        if fresh_clustering:
+            run(config.start_block + 1)
+            fresh_clustering = activate_fresh_clustering(
+                cassandra_host, cassandra_port, transformed_keyspace
+            )
+        elapsed, full_output = run(config.end_block)
     finally:
         Path(config_path).unlink(missing_ok=True)
-    elapsed = time.perf_counter() - t0
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"{label} failed (exit {result.returncode}):\n"
-            f"cmd: {' '.join(cmd)}\n"
-            f"stdout: {result.stdout[-5000:]}\n"
-            f"stderr: {result.stderr[-5000:]}"
-        )
-
-    full_output = (result.stdout or "") + "\n" + (result.stderr or "")
-    section_timings = aggregate_section_timings(full_output)
-    return elapsed, section_timings
+    return DeltaUpdateRun(
+        seconds=elapsed,
+        section_timings=aggregate_section_timings(full_output),
+        change_counts=aggregate_change_counts(full_output),
+        fresh_clustering=fresh_clustering,
+    )

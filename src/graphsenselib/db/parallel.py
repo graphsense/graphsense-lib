@@ -10,12 +10,15 @@ untrusted data).
 """
 
 import atexit
+import logging
 import multiprocessing
 import pickle
 import signal
 import traceback
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class PlainRow:
@@ -206,6 +209,17 @@ class ParallelDbPool:
             initializer=_init_worker_signal_inert,
             initargs=(initializer, initargs),
         )
+        # Start every worker now, before submit() starts the executor's
+        # manager thread. Spawned on demand instead, submit() wakes that
+        # thread before it starts the new worker, so the thread can go back
+        # to waiting without watching it -- and if that worker then dies
+        # (e.g. OOM-killed) and no other result arrives, the pool never
+        # notices and future.result() waits forever.
+        self._executor._launch_processes()
+        # Our own record of the worker processes, for abort(): the executor's
+        # bookkeeping may already be cleared by the time a broken pool is
+        # torn down.
+        self._workers = dict(self._executor._processes)
 
     def map_chunked(self, fn, items: list) -> list:
         """Run fn over near-equal chunks of items in the workers.
@@ -227,9 +241,37 @@ class ParallelDbPool:
     def shutdown(self):
         self._executor.shutdown()
 
+    def abort(self):
+        """Tear the pool down without waiting for in-flight chunks.
+
+        Workers ignore SIGTERM (see _init_worker_signal_inert), and that is
+        all the executor sends them when the pool breaks -- e.g. after the
+        OOM killer took one worker -- before joining them. A sibling still
+        busy with its chunk then blocks that join, and with it any
+        shutdown(wait=True) and the interpreter's exit, for as long as the
+        chunk runs: hours, holding the caller's locks. So kill the workers
+        outright. A batch cut short this way is a torn batch, which the
+        delta-update WAL replays on the next run.
+
+        Kill before shutdown(): from Python 3.12 on, even
+        shutdown(wait=False) blocks while the executor is still joining
+        the workers of a broken pool.
+        """
+        for worker in self._workers.values():
+            worker.kill()
+        for worker in self._workers.values():
+            worker.join()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.shutdown()
+        if exc_type is None:
+            self.shutdown()
+        else:
+            logger.warning(
+                f"Aborting worker pool after {exc_type.__name__}: {exc_value}"
+            )
+            self.abort()
         return False

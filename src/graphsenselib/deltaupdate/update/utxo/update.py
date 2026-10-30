@@ -3,9 +3,9 @@ import sys
 import time
 from collections import defaultdict
 from datetime import datetime
+from enum import IntEnum
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
-from cassandra import InvalidRequest
 
 from graphsenselib.datatypes import DbChangeType, EntityType
 from graphsenselib.db import AnalyticsDb, DbChange
@@ -18,7 +18,6 @@ from graphsenselib.deltaupdate.update.abstractupdater import (
 )
 from graphsenselib.deltaupdate.update.generic import (
     Action,
-    ApplicationStrategy,
     DbDelta,
     DeltaValue,
     EntityDelta,
@@ -33,7 +32,6 @@ from graphsenselib.rates import convert_to_fiat
 from graphsenselib.utils import DataObject as MutableNamedTuple
 from graphsenselib.utils import group_by
 from graphsenselib.monitoring.notifications import send_msg_to_topic
-from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
 from graphsenselib.utils.utxo import (
     get_regflow,
@@ -1642,6 +1640,106 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 raise Exception(f"Have not found validation rule for {change}.")
 
 
+class WritePhase(IntEnum):
+    """Order in which a non-atomic apply writes a batch's changes.
+
+    REST follows ids from row to row: address string -> prefix row ->
+    address row -> cluster row -> root address row, address row -> its
+    first/last tx by id, relation -> neighbor, tx list -> the tx's
+    input/output addresses by string. Written
+    concurrently in one go, a reader can land on a row whose target is not
+    written yet (an address whose cluster row is missing ->
+    DBInconsistencyException -> HTTP 500). A row a reader can reach only
+    points at rows of an earlier phase, and each phase is acknowledged in
+    full before the next one starts, so every reference a reader can follow
+    resolves at every moment of the write.
+    """
+
+    # Lookups an updated address row depends on (account networks). An
+    # existing address is already published, so what its new row names must
+    # resolve the moment the row is visible: the tx id -> hash mapping of its
+    # new last_tx_id (pointing only at raw rows ingest wrote before), and the
+    # raised bucket number in *_secondary_ids, up to which REST reads tx
+    # lists and relations. A bucket number above every row is harmless (REST
+    # skips an empty bucket); one below a visible row leaves that row out.
+    LOOKUPS = 1
+    # The rows a reference ends at. A new object's records are unreachable
+    # while they are written: nothing published points at the object yet.
+    RECORDS = 2
+    # Lookup rows that make a new address or tx findable by its string.
+    PUBLISH = 3
+    # Rows pointing from one object to another. Tx lists come after PUBLISH
+    # because REST resolves a listed tx's input/output addresses by string.
+    EDGES = 4
+    # Deletes, once the edges replacing them are written: an absorbed fresh
+    # cluster goes only after its members point at the survivor.
+    UNLINKS = 5
+    # The checkpoint, so a partially written batch never looks complete.
+    BOOKKEEPING = 6
+
+
+_WRITE_PHASE_BY_TABLE = {
+    "transaction_ids_by_transaction_id_group": WritePhase.LOOKUPS,
+    "address_transactions_secondary_ids": WritePhase.LOOKUPS,
+    "address_incoming_relations_secondary_ids": WritePhase.LOOKUPS,
+    "address_outgoing_relations_secondary_ids": WritePhase.LOOKUPS,
+    "address": WritePhase.RECORDS,
+    "cluster": WritePhase.RECORDS,
+    "fresh_cluster_stats": WritePhase.RECORDS,
+    "balance": WritePhase.RECORDS,
+    "token_exchange_rates": WritePhase.RECORDS,
+    "address_ids_by_address_prefix": WritePhase.PUBLISH,
+    "transaction_ids_by_transaction_prefix": WritePhase.PUBLISH,
+    "address_incoming_relations": WritePhase.EDGES,
+    "address_outgoing_relations": WritePhase.EDGES,
+    "cluster_incoming_relations": WritePhase.EDGES,
+    "cluster_outgoing_relations": WritePhase.EDGES,
+    "cluster_addresses": WritePhase.EDGES,
+    "fresh_address_cluster": WritePhase.EDGES,
+    "fresh_cluster_addresses": WritePhase.EDGES,
+    "address_transactions": WritePhase.EDGES,
+    "cluster_transactions": WritePhase.EDGES,
+    "block_transactions": WritePhase.EDGES,
+    "summary_statistics": WritePhase.BOOKKEEPING,
+    TABLE_NAME_DELTA_HISTORY: WritePhase.BOOKKEEPING,
+}
+
+
+def write_phase(change: DbChange) -> WritePhase:
+    phase = _WRITE_PHASE_BY_TABLE.get(change.table)
+    if phase is None:
+        raise ValueError(
+            f"Table {change.table} has no WritePhase. Add it to "
+            "_WRITE_PHASE_BY_TABLE, after the tables its rows point at."
+        )
+    if phase != WritePhase.BOOKKEEPING and change.action in (
+        DbChangeType.DELETE,
+        DbChangeType.TRUNCATE,
+    ):
+        return WritePhase.UNLINKS
+    return phase
+
+
+def split_into_write_phases(changes: List[DbChange]) -> List[List[DbChange]]:
+    """Changes grouped by WritePhase in phase order, empty phases left out.
+    Raises on a table without a phase, before anything is written."""
+    by_phase = defaultdict(list)
+    for change in changes:
+        by_phase[write_phase(change)].append(change)
+    return [by_phase[phase] for phase in sorted(by_phase)]
+
+
+def _apply_write_phases(
+    db: AnalyticsDb, phases: List[List[DbChange]]
+) -> List[ApplyChangesResult]:
+    # AnalyticsDb.apply_changes returns only after every statement of the
+    # phase is acknowledged, so the next phase starts on a complete one.
+    return [
+        db.transformed.apply_changes(phase_changes, atomic=False)
+        for phase_changes in phases
+    ]
+
+
 def _notify_db_retries(result: ApplyChangesResult, num_changes: int) -> None:
     """Send retry warning notification using the monitoring topic."""
     msg = (
@@ -1658,32 +1756,29 @@ def apply_changes(
     db: AnalyticsDb,
     changes: List[DbChange],
     pedantic: bool,
-    try_atomic_writes: bool,
     pool=None,
 ):
-    """Apply a list of db-changes to the database. Changes are applied
-    atomically and in order.
+    """Apply a list of db-changes to the database, phase by phase in
+    WritePhase order, each phase acknowledged in full before the next one
+    starts.
 
     Args:
         db (AnalyticsDb): Database instance
         changes (List[DbChange]): List of changes
         pedantic (bool): Validate changes before applying
-        try_atomic_writes (bool): Attempt atomic batch writes first
-        pool (ParallelDbPool): When given (and try_atomic_writes is False),
-            shard the upserts across worker processes instead of writing
-            from this process. Safe because every change targets a distinct
-            row (guaranteed by the upstream delta compression) and each
-            worker reuses the same retry logic.
+        pool (ParallelDbPool): When given, shard each phase's upserts across
+            worker processes instead of writing from this process. Safe
+            because every change targets a distinct row (guaranteed by the
+            upstream delta compression) and each worker reuses the same retry
+            logic.
     Returns:
         None: Nothing
 
     Raises:
-        e: reraises exceptions, a common instance for exceptions is when batches
-        are too large. Cassandra has a hard limit for batch sizes
+        e: reraises the exception of a failed write
     """
 
     # Validate changes
-    atomic = True
     if pedantic:
         validate_changes(db, changes)
 
@@ -1715,45 +1810,30 @@ def apply_changes(
         )
         logger.info(short_summary)
 
-    if pool is not None and not try_atomic_writes:
+    phases = split_into_write_phases(changes)
+
+    if pool is not None:
         with LoggerScope.debug(logger, "Applying changes via worker pool") as _:
-            for result in pool.map_chunked(worker_apply_changes, changes):
-                if result.warning_text is not None:
-                    _notify_db_retries(result, len(changes))
+            for phase_changes in phases:
+                # map_chunked returns only once every worker has acknowledged
+                # its shard: the barrier between two phases.
+                for result in pool.map_chunked(worker_apply_changes, phase_changes):
+                    if result.warning_text is not None:
+                        _notify_db_retries(result, len(changes))
         return
 
     with LoggerScope.debug(logger, "Applying changes") as _:
         try:
-            if try_atomic_writes:
-                # try to apply the changes atomic and in-order
-                try:
-                    result = db.transformed.apply_changes(changes, atomic=True)
-                except InvalidRequest as e:
-                    atomic = False
-                    msg = getattr(e, "message", repr(e)).lower()
-                    if "batch too large" in msg:
-                        logger.warning(
-                            "Batch to large: Retrying to apply changes "
-                            "without atomic write."
-                        )
-                        result = db.transformed.apply_changes(changes, atomic=False)
-                    else:
-                        raise e
-            else:
-                atomic = False
-                result = db.transformed.apply_changes(changes, atomic=False)
-
+            results = _apply_write_phases(db, phases)
         except Exception as e:
-            atomicity_msg = (
-                " Nothing was written (atomic writes)."
-                if atomic
-                else " Atomicity not guarantied."
+            logger.error(
+                f"Failed to apply {len(changes)} changes. Atomicity not guarantied."
             )
-            logger.error(f"Failed to apply {len(changes)} changes.{atomicity_msg}")
             raise e
 
-        if result.warning_text is not None:
-            _notify_db_retries(result, len(changes))
+        for result in results:
+            if result.warning_text is not None:
+                _notify_db_retries(result, len(changes))
 
 
 class UpdateStrategyUtxo(UpdateStrategy):
@@ -1762,7 +1842,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
         db,
         currency: str,
         pedantic: bool,
-        application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
         parallel_pool=None,
@@ -1770,11 +1849,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
     ):
         super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
         self._wal_enabled = wal_enabled
-        crash_file = (
-            "/tmp/utxo_deltaupdate_"
-            f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
-            "_crashreport.err"
-        )
         stats_value = self._db.transformed.get_summary_statistics()
         """ Make statistics row mutable"""
         self._statistics = (
@@ -1788,14 +1862,10 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self.bookkeeping_changes = None
         self._parallel_pool = parallel_pool
         self._fresh_clustering_active_cached = None
-        self.application_strategy = application_strategy
-        logger.info(f"Updater running in {application_strategy} mode.")
-        self.crash_recoverer = CrashRecoverer(crash_file)
 
     def persist_updater_progress(self):
         if self.changes is not None:
             t_start = time.time()
-            atomic = ApplicationStrategy.TX == self.application_strategy
             bookkeeping = self.bookkeeping_changes or []
             # In BATCH mode self.changes carries the data changes (address /
             # cluster / relations rows plus the batch's fresh_* clustering
@@ -1804,32 +1874,19 @@ class UpdateStrategyUtxo(UpdateStrategy):
             # recomputed, on the next run. Replay matters most for
             # fresh_cluster_stats, whose rows are folded from their own stored
             # value and would double-count if the batch were recomputed after a
-            # partial commit. (TX mode applies per-tx atomically inside
-            # process_batch and reaches here with self.changes == None.)
-            # No-op when the WAL is disabled.
+            # partial commit. No-op when the WAL is disabled.
             self._stage_wal(self.changes, bookkeeping)
-            if self._parallel_pool is not None and not atomic:
+            if self._parallel_pool is not None:
                 # Shard the data writes across the worker pool; only write
                 # the bookkeeping rows (summary statistics, delta history)
                 # after every data shard has been acked, so a torn batch can
                 # never look completed.
                 apply_changes(
-                    self._db,
-                    self.changes,
-                    self._pedantic,
-                    try_atomic_writes=False,
-                    pool=self._parallel_pool,
+                    self._db, self.changes, self._pedantic, pool=self._parallel_pool
                 )
-                apply_changes(
-                    self._db, bookkeeping, self._pedantic, try_atomic_writes=False
-                )
+                apply_changes(self._db, bookkeeping, self._pedantic)
             else:
-                apply_changes(
-                    self._db,
-                    self.changes + bookkeeping,
-                    self._pedantic,
-                    try_atomic_writes=atomic,
-                )
+                apply_changes(self._db, self.changes + bookkeeping, self._pedantic)
             if self._wal_enabled:
                 self.wal.clear()
             self.changes = None
@@ -1907,7 +1964,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         changes = self._clustering_changes_for(cluster_inputs, touched_activity)
         if not changes:
             return 0
-        apply_changes(self._db, changes, self._pedantic, try_atomic_writes=False)
+        apply_changes(self._db, changes, self._pedantic)
         return len(changes)
 
     def _fresh_clustering_active(self) -> bool:
@@ -1982,23 +2039,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
         """
             Read transaction and exchange rates data
         """
-        with LoggerScope.debug(logger, "Checking recovery state.") as lg:
-            if self.crash_recoverer.is_in_recovery_mode():
-                """
-                If we are in recovery mode we start with a block earlier to catch up
-                the delta otherwise would start with whats in the db +1
-                In case of an error in between blocks this would mean skipping to
-                the next block
-                """
-                mb = max(0, min(batch) - 1)
-                lg.warning(
-                    "Delta update is in crash recovery mode. Crash hint is "
-                    f"{self.crash_recoverer.get_recovery_hint()} in "
-                    f"{self.crash_recoverer.get_recovery_hint_filename()} "
-                    f" restarting at block {mb}."
-                )
-                batch = [mb] + batch
-
         with (
             accumulate_phase(timings, "cassandra_read"),
             LoggerScope.debug(logger, "Reading transaction and rates data") as log,
@@ -2031,167 +2071,50 @@ class UpdateStrategyUtxo(UpdateStrategy):
         cluster_inputs: List[List[int]] = []
         touched_activity: Dict[int, EntityDelta] = {}
 
-        if self.application_strategy == ApplicationStrategy.BATCH:
-            if self.crash_recoverer.is_in_recovery_mode():
-                raise Exception("Batch mode is not allowed in recovery mode.")
-            (
-                delta_changes,
-                nr_new_addresses,
-                nr_new_clusters,
-                nr_new_address_relations,
-                nr_new_cluster_relations,
-                cluster_inputs,
-                touched_activity,
-            ) = get_transaction_changes(
-                self._db,
-                txs,
-                rates,
-                lambda: self.consume_address_id(),
-                lambda: self.consume_cluster_id(),
-                collect_cluster_inputs=collect_cluster_inputs,
-                timings=timings,
-                pool=self._parallel_pool,
-            )
+        (
+            delta_changes,
+            nr_new_addresses,
+            nr_new_clusters,
+            nr_new_address_relations,
+            nr_new_cluster_relations,
+            cluster_inputs,
+            touched_activity,
+        ) = get_transaction_changes(
+            self._db,
+            txs,
+            rates,
+            lambda: self.consume_address_id(),
+            lambda: self.consume_cluster_id(),
+            collect_cluster_inputs=collect_cluster_inputs,
+            timings=timings,
+            pool=self._parallel_pool,
+        )
 
-            last_block_processed = batch[-1]
-            nr_new_tx = len(txs)
-            runtime_seconds = int(time.time() - self.batch_start_time)
+        last_block_processed = batch[-1]
+        nr_new_tx = len(txs)
+        runtime_seconds = int(time.time() - self.batch_start_time)
 
-            # Store changes to be written. They are applied at the end of
-            # the batch in persist_updater_progress; bookkeeping is kept
-            # separate so the pooled write path can order it after the
-            # data shards.
-            self.changes = delta_changes
-            self.bookkeeping_changes = get_bookkeeping_changes(
-                self._statistics,
-                self._db.transformed.get_summary_statistics(),
-                last_block_processed,
-                nr_new_address_relations,
-                nr_new_addresses,
-                nr_new_cluster_relations,
-                nr_new_clusters,
-                nr_new_tx,
-                self.highest_address_id,
-                runtime_seconds,
-                bts,
-                patch_mode=self._patch_mode,
-            )
-        elif self.application_strategy == ApplicationStrategy.TX:
-            last_tx = None
-            last_recovery_hint = None
-            if self.crash_recoverer.is_in_recovery_mode():
-                last_recovery_hint = self.crash_recoverer.get_recovery_hint()
-                current_tx = last_recovery_hint["current_tx_id"]
-                logger.warning(f"Recovering skipping to tx_id {current_tx}")
-                txs = [tx for tx in txs if tx.tx_id >= current_tx]
-                self.crash_recoverer.leave_recovery_mode()
-            for tx in txs:
-                try:
-                    if last_recovery_hint is not None:
-                        logger.info(
-                            f"Resuming processing at tx_id {tx.tx_id} at "
-                            f"block {tx.block_id}"
-                        )
-                    crash_last_succ_tx_id = None
-                    crash_last_succ_tx_block_id = None
-                    if last_tx is not None:
-                        crash_last_succ_tx_id = last_tx.tx_id
-                        crash_last_succ_tx_block_id = last_tx.block_id
-                    elif last_recovery_hint is not None:
-                        """
-                        If recovery hint is available and no last tx take over
-                        values from there.
-                        """
-                        crash_last_succ_tx_id = last_recovery_hint[
-                            "last_successful_tx_id"
-                        ]
-                        crash_last_succ_tx_block_id = last_recovery_hint[
-                            "last_successful_tx_block_id"
-                        ]
-                        block_last_error = last_recovery_hint["current_block_id"]
-                        assert tx.block_id == block_last_error
+        # Store changes to be written. They are applied at the end of
+        # the batch in persist_updater_progress; bookkeeping is kept
+        # separate so the pooled write path can order it after the
+        # data shards.
+        self.changes = delta_changes
+        self.bookkeeping_changes = get_bookkeeping_changes(
+            self._statistics,
+            self._db.transformed.get_summary_statistics(),
+            last_block_processed,
+            nr_new_address_relations,
+            nr_new_addresses,
+            nr_new_cluster_relations,
+            nr_new_clusters,
+            nr_new_tx,
+            self.highest_address_id,
+            runtime_seconds,
+            bts,
+            patch_mode=self._patch_mode,
+        )
 
-                    crash_hint = {
-                        "current_block_id": tx.block_id,
-                        "current_tx_id": tx.tx_id,
-                        "last_successful_tx_id": crash_last_succ_tx_id,
-                        "last_successful_tx_block_id": crash_last_succ_tx_block_id,
-                    }
-                    last_recovery_hint = None
-                    with LoggerScope.debug(
-                        logger, f"Working on tx_id {tx.tx_id} at block {tx.block_id}"
-                    ):
-                        with self.crash_recoverer.enter_critical_section(crash_hint):
-                            (
-                                delta_changes_tx,
-                                nr_new_addresses,
-                                nr_new_clusters,
-                                nr_new_address_relations_tx,
-                                nr_new_cluster_relations_tx,
-                                tx_cluster_inputs,
-                                tx_touched_activity,
-                            ) = get_transaction_changes(
-                                self._db,
-                                [tx],
-                                rates,
-                                lambda: self.consume_address_id(),
-                                lambda: self.consume_cluster_id(),
-                                collect_cluster_inputs=collect_cluster_inputs,
-                            )
-                            last_block_processed = tx.block_id
-                            runtime_seconds = int(time.time() - self.batch_start_time)
-                            # get_bookkeeping_changes accumulates its deltas into
-                            # self._statistics in place, and it runs once per tx
-                            # here, so pass this tx's deltas — not a running total,
-                            # which would inflate the counters quadratically.
-                            bookkeepin_changes = get_bookkeeping_changes(
-                                self._statistics,
-                                self._db.transformed.get_summary_statistics(),
-                                last_block_processed,
-                                nr_new_address_relations_tx,
-                                nr_new_addresses,
-                                nr_new_cluster_relations_tx,
-                                nr_new_clusters,
-                                1,
-                                self.highest_address_id,
-                                runtime_seconds,
-                                bts,
-                                patch_mode=self._patch_mode,
-                            )
-                            # Fold this tx's fresh-clustering writes into the SAME
-                            # atomic commit as its bookkeeping (which carries
-                            # last_synced_block). Each tx commits before the next,
-                            # so the per-tx clustering reads the prior txs' committed
-                            # state — sequentially equivalent to batch clustering —
-                            # and clustering can never lag the persisted height. (In
-                            # BATCH mode clustering is applied once after the loop.)
-                            clustering_changes = self._clustering_changes_for(
-                                tx_cluster_inputs, tx_touched_activity
-                            )
-                            apply_changes(
-                                self._db,
-                                delta_changes_tx
-                                + bookkeepin_changes
-                                + clustering_changes,
-                                self._pedantic,
-                                try_atomic_writes=True,
-                            )
-                except Exception as e:
-                    assert self.crash_recoverer.is_in_recovery_mode()
-                    logger.error(
-                        "Entering recovery mode. Recovery hint written "
-                        f"at {self.crash_recoverer.get_recovery_hint_filename()}"
-                    )
-                    logger.error(f"Failed to apply tx {tx.tx_id} ({tx.tx_hash.hex()}).")
-                    raise e
-                finally:
-                    last_tx = tx
-        else:
-            raise ValueError(
-                f"Unknown application strategy {self.application_strategy}"
-            )
-
-        # BATCH mode only: the whole batch's harvested edges are clustered once
+        # The whole batch's harvested edges are clustered once
         # here, planned against the pre-batch `address` / `fresh_*` rows (nothing
         # of this batch is committed yet), and the writes are STAGED into
         # self.changes — never applied here. `fresh_cluster_stats` is an absolute
@@ -2203,10 +2126,8 @@ class UpdateStrategyUtxo(UpdateStrategy):
         # guard.) Staging puts them in the same WAL record and the same commit as
         # the address rows and the bookkeeping that advances last_synced_block.
         #
-        # TX mode does NOT reach here: it folds each tx's clustering into that
-        # tx's own atomic commit above (cluster_inputs and touched_activity stay
-        # empty in TX mode). touched_activity also fires this when a batch only
-        # refreshes existing members' stats (activity but no co-spend).
+        # touched_activity also fires this when a batch only refreshes existing
+        # members' stats (activity but no co-spend).
         if cluster_inputs or touched_activity:
             clustering_changes = self._clustering_changes_for(
                 cluster_inputs, touched_activity

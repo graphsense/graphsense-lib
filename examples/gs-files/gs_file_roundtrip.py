@@ -47,10 +47,13 @@ What it shows, in order:
 5. decode the file back to typed dataclasses and summarize it;
 6. assert the round-trip is lossless.
 
-The same thing from the shell (the CLI has no layout step — it always uses
-the columnar ``GsBuilder`` defaults)::
+The same thing from the shell. ``encode`` has no layout step — it uses
+the columnar ``GsBuilder`` defaults — so run ``layout`` on its output.
+With a REST URL (``--api-url`` or ``GRAPHSENSE_HOST``) ``layout`` also
+looks up which way money flows, and draws inflows on the left::
 
     graphsense-cli convert gs-files encode -i graph.json -o out.gs --verify
+    graphsense-cli convert gs-files layout out.gs -o out.gs --report
     graphsense-cli convert gs-files decode out.gs --format structured
     graphsense-cli convert gs-files summary out.gs
 """

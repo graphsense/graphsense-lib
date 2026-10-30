@@ -108,6 +108,8 @@ git push origin --tags
 
 CI publishes a Docker image tagged `vX.Y.Z-rc.N` and the rolling `rc` alias. No PyPI publish, no GitHub Release.
 
+An image reports the API version (`/stats`, `openapi.json`) of the commit it was built from, so if the OpenAPI spec changed since the last `webapi-v*` tag, bump `WEBAPISEM` (and run `make update-api-version && make run-codegen`) **before** the first library tag that ships the change; an rc `webapi-vX.Y.Z-rc.N` tag publishes nothing. `make tag-version` refuses otherwise (`check-api-bump`: generated client code under `clients/python/graphsense/{api,models}` differs from the last webapi tag while `__api_version__` has not moved). `v2.19.0-rc.1` went out reporting API 2.18.1 that way. Override with `ALLOW_STALE_API=1` when the change needs no new API version.
+
 ### "I'm shipping a stable library release"
 
 1. Make sure `CHANGELOG.md` has a section for the version (the release workflow extracts it).

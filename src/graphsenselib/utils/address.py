@@ -7,6 +7,7 @@ from collections import Counter
 from functools import reduce
 from typing import Callable, Iterator, Optional, Union, List
 
+import base58
 from bitarray import bitarray
 from bitarray.util import ba2int
 from graphsenselib.utils.bch import InvalidAddress as BCHInvalidAddress
@@ -18,7 +19,11 @@ from .accountmodel import (
     is_hex_string,
     strip_0x,
 )
-from .bch import bch_address_to_legacy, try_bch_address_to_legacy
+from .bch import (
+    bch_address_to_legacy,
+    checked_bch_address_to_legacy,
+    try_bch_address_to_legacy,
+)
 from .tron import (
     evm_to_tron_address_string,
     tron_address_to_evm,
@@ -323,9 +328,44 @@ def address_to_str(network: str, address: bytes) -> str:
         raise ValueError("No address converter configured for network {network}")
 
 
+# Uppercase bech32 human-readable parts per network. BIP173 allows an
+# all-uppercase address (QR codes use it); the stored form is lowercase.
+_UPPERCASE_BECH32_PREFIXES = {
+    "btc": ("BC1", "TB1", "BCRT1"),
+    "ltc": ("LTC1", "TLTC1", "RLTC1"),
+}
+
+_TRX_HEX_ADDRESS = re.compile(r"41[0-9a-fA-F]{40}")
+
+
+def lowercase_uppercase_bech32(currency, address: str) -> str:
+    """BIP173 allows a bech32 address in all uppercase too (QR codes use it),
+    but the database stores the lowercase form. Mixed case is invalid bech32
+    and stays as it is. Also works on the start of an address (search input)."""
+    if address.isupper() and address.startswith(
+        _UPPERCASE_BECH32_PREFIXES.get(currency, ())
+    ):
+        return address.lower()
+    return address
+
+
+def _trx_address_to_bytes(address: str) -> bytes:
+    """User-supplied TRX address (base58 ``T…`` or hex ``41…``) to its stored
+    bytes, verifying the base58 checksum (which also rejects a truncated or
+    extended string) and, on a full-length address, the 0x41 prefix."""
+    if _TRX_HEX_ADDRESS.fullmatch(address):
+        return bytes.fromhex(address[2:])
+    raw = base58.b58decode(address)
+    if len(raw) < 5 or (len(raw) == 25 and raw[0] != 0x41):
+        raise ValueError(f"{address} is not a TRX address")
+    return tron_address_to_evm(address, validate=True)
+
+
 def cannonicalize_address(currency, address: str):
     if currency == "trx":
-        return tron_address_to_evm(address, validate=False)
+        return _trx_address_to_bytes(address)
+    elif currency in _UPPERCASE_BECH32_PREFIXES and isinstance(address, str):
+        return lowercase_uppercase_bech32(currency, address)
     elif currency == "bch":
         return try_bch_address_to_legacy(address)
     elif currency == "eth":
@@ -591,6 +631,158 @@ def bech32_validate(s: str, expected_hrp: Optional[str] = None) -> bool:
     return spec == "bech32m"
 
 
+# bech32 human-readable parts per network (mainnet, testnet, regtest).
+_BECH32_HRPS = {
+    "btc": ("bc", "tb", "bcrt"),
+    "ltc": ("ltc", "tltc", "rltc"),
+}
+# Networks whose non-bech32 addresses are base58check (ZEC transparent only).
+_BASE58CHECK_NETWORKS = frozenset({"btc", "ltc", "bch", "zec"})
+_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def _bech32_checksum_ok(s: str) -> bool:
+    """Only the checksum: either constant counts, whatever the witness
+    version or program, so an odd but real output is never called a typo."""
+    if s != s.lower() and s != s.upper():
+        return False
+    s = s.lower()
+    pos = s.rfind("1")
+    if pos < 1 or pos + 7 > len(s):
+        return False
+    data_part = s[pos + 1 :]
+    if any(c not in _BECH32_CHARSET for c in data_part):
+        return False
+    data = [_BECH32_CHARSET.find(c) for c in data_part]
+    return bech32_checksum_spec(s[:pos], data) is not None
+
+
+def address_checksum_invalid(network: str, address) -> bool:
+    """True when ``address`` is in a checksummed UTXO format (bech32 with a
+    known prefix, or base58check) and its checksum fails: a typo.
+
+    Conservative on purpose, for turning a "not found" into "invalid": an
+    unrecognised format, a ``nonstandard`` placeholder or another network
+    gives False. Callers ask only after a lookup found nothing, so an
+    indexed address is never rejected, whatever its checksum.
+    """
+    if not isinstance(address, str) or not address:
+        return False
+    if address.startswith("nonstandard"):
+        return False
+    network = network.lower()
+    # A valid address in any of the network's formats is no typo, also when
+    # it happens to be base58-shaped (bare cashaddr, zs1/u1 without "0"/"l").
+    if network in _BASE58CHECK_NETWORKS and validate_address(network, address):
+        return False
+    lowered = address.lower()
+    base58_shaped = network in _BASE58CHECK_NETWORKS and all(
+        c in _BASE58_ALPHABET for c in address
+    )
+    # A valid base58 address is no typo, also one that starts like bech32 by
+    # chance (LTC: always "L", then random characters, so "LTC1...").
+    if base58_shaped and base58_check_validate(address):
+        return False
+    for hrp in _BECH32_HRPS.get(network, ()):
+        if lowered.startswith(hrp + "1"):
+            return not _bech32_checksum_ok(address)
+    return base58_shaped
+
+
+BECH32_MIXED_CASE_HINT = (
+    "upper and lower case mixed; a bech32 address is all lowercase or all uppercase"
+)
+
+
+def bech32_mixed_case(network: str, address) -> bool:
+    """True when ``address`` mixes upper and lower case but in lowercase is a
+    valid bech32 address of ``network``: only the case is wrong (BIP173
+    allows all lowercase or all uppercase). A base58 address that starts
+    like bech32 by chance is never one: in lowercase its checksum fails."""
+    if not isinstance(address, str) or address in (address.lower(), address.upper()):
+        return False
+    lowered = address.lower()
+    return any(
+        lowered.startswith(hrp + "1") for hrp in _BECH32_HRPS.get(network.lower(), ())
+    ) and _bech32_checksum_ok(lowered)
+
+
+def base58_check_payload(s: str) -> Optional[bytes]:
+    """The payload (version + body, without checksum) of a Base58Check
+    string, or None if it is not one."""
+    try:
+        decoded = base58_check_decode(s)
+    except ValueError:
+        return None
+    if len(decoded) < 5:
+        return None
+    payload, checksum = decoded[:-4], decoded[-4:]
+    if hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4] != checksum:
+        return None
+    return payload
+
+
+def base58_version_ok(s: str, versions: dict) -> bool:
+    """True if ``s`` is Base58Check with one of ``versions`` (version bytes
+    -> allowed body lengths). A valid checksum alone says nothing: private
+    keys, extended keys and other chains' addresses have one too."""
+    payload = base58_check_payload(s)
+    if payload is None:
+        return False
+    for version, lengths in versions.items():
+        if payload.startswith(version) and len(payload) - len(version) in lengths:
+            return True
+    return False
+
+
+def bech32_data(s: str, expected_hrp: str) -> Optional[tuple]:
+    """(checksum spec, 5-bit data without checksum) of a bech32/bech32m
+    string with ``expected_hrp``, else None. Unlike ``bech32_validate`` no
+    segwit rules and no 90-character limit (Zcash addresses are longer)."""
+    if s != s.lower() and s != s.upper():
+        return None
+    s = s.lower()
+    pos = s.rfind("1")
+    if pos < 1 or pos + 7 > len(s) or s[:pos] != expected_hrp:
+        return None
+    data_part = s[pos + 1 :]
+    if any(c not in _BECH32_CHARSET for c in data_part):
+        return None
+    data = [_BECH32_CHARSET.find(c) for c in data_part]
+    spec = bech32_checksum_spec(expected_hrp, data)
+    if spec is None:
+        return None
+    return spec, data[:-6]
+
+
+# Base58Check version bytes -> length of the hash that follows.
+_BTC_BASE58_VERSIONS = {
+    b"\x00": {20},  # P2PKH
+    b"\x05": {20},  # P2SH
+    b"\x6f": {20},  # testnet P2PKH
+    b"\xc4": {20},  # testnet P2SH
+}
+# BCH legacy: P2SH32 has a 32-byte hash (see utils/bch.py).
+_BCH_BASE58_VERSIONS = {**_BTC_BASE58_VERSIONS, b"\x05": {20, 32}}
+_LTC_BASE58_VERSIONS = {
+    b"\x30": {20},  # L, P2PKH
+    b"\x32": {20},  # M, P2SH
+    b"\x05": {20},  # 3, P2SH (old, shared with BTC)
+    b"\x6f": {20},  # testnet P2PKH
+    b"\xc4": {20},  # testnet P2SH (old)
+    b"\x3a": {20},  # testnet P2SH
+}
+_ZEC_BASE58_VERSIONS = {
+    b"\x1c\xb8": {20},  # t1, P2PKH
+    b"\x1c\xbd": {20},  # t3, P2SH
+    b"\x1d\x25": {20},  # tm, testnet P2PKH
+    b"\x1c\xba": {20},  # t2, testnet P2SH
+    b"\x16\x9a": {64},  # zc, Sprout
+    b"\x16\xb6": {64},  # zt, testnet Sprout
+}
+_TRX_BASE58_VERSIONS = {b"\x41": {20}}
+
+
 def validate_btc_address(address: str) -> bool:
     """Validate Bitcoin address"""
     if not address:
@@ -602,15 +794,9 @@ def validate_btc_address(address: str) -> bool:
     elif address.lower().startswith("tb1"):  # testnet
         return bech32_validate(address, "tb")
 
-    # Legacy addresses (Base58Check)
-    elif address[0] in "13":  # mainnet
-        return base58_check_validate(address)
-    elif address[0] in "2mn":  # testnet
-        return base58_check_validate(address)
-    elif address[0] in "59LKc":  # private keys and extended keys
-        return base58_check_validate(address)
-
-    return False
+    # Legacy addresses (Base58Check). Private keys (WIF) and extended keys
+    # have a valid checksum too, but are not addresses.
+    return base58_version_ok(address, _BTC_BASE58_VERSIONS)
 
 
 def validate_bch_address(address: str) -> bool:
@@ -618,18 +804,16 @@ def validate_bch_address(address: str) -> bool:
     if not address:
         return False
 
-    # CashAddr format
-    if ":" in address:
-        try:
-            from graphsenselib.utils.bch import bch_address_to_legacy
-
-            bch_address_to_legacy(address)
-            return True
-        except Exception:
-            return False
+    # CashAddr format, with or without the bitcoincash: prefix
+    try:
+        legacy = checked_bch_address_to_legacy(address)
+    except BCHInvalidAddress:
+        return False
+    if legacy != address:
+        return True
 
     # Legacy format
-    return base58_check_validate(address)
+    return base58_version_ok(address, _BCH_BASE58_VERSIONS)
 
 
 def validate_ltc_address(address: str) -> bool:
@@ -642,12 +826,7 @@ def validate_ltc_address(address: str) -> bool:
         return bech32_validate(address, "ltc")
 
     # Legacy addresses
-    elif address[0] in "L3M":  # mainnet
-        return base58_check_validate(address)
-    elif address[0] in "2mn":  # testnet
-        return base58_check_validate(address)
-
-    return False
+    return base58_version_ok(address, _LTC_BASE58_VERSIONS)
 
 
 def validate_zec_address(address: str) -> bool:
@@ -655,25 +834,25 @@ def validate_zec_address(address: str) -> bool:
     if not address:
         return False
 
-    # Zcash transparent addresses (mainnet)
-    if address.startswith("t1") or address.startswith("t3"):
-        return base58_check_validate(address)
+    lowered = address.lower()
+    # Sapling (ZIP-173): bech32, 11-byte diversifier + 32-byte pk_d
+    for hrp in ("zs", "ztestsapling"):
+        if lowered.startswith(hrp + "1"):
+            decoded = bech32_data(address, hrp)
+            if decoded is None or decoded[0] != "bech32":
+                return False
+            body = bech32_convertbits(decoded[1], 5, 8, False)
+            return body is not None and len(body) == 43
 
-    # Zcash transparent addresses (testnet)
-    elif address.startswith("tm"):
-        return base58_check_validate(address)
+    # Unified addresses (ZIP-316): bech32m over an F4Jumbled body, so only
+    # the checksum can be checked offline
+    for hrp in ("u", "utest"):
+        if lowered.startswith(hrp + "1"):
+            decoded = bech32_data(address, hrp)
+            return decoded is not None and decoded[0] == "bech32m"
 
-    # Shielded addresses (Sprout)
-    elif address.startswith("zc") and len(address) == 95:
-        return base58_check_validate(address)
-
-    # Shielded addresses (Sapling)
-    elif (address.startswith("zs") or address.startswith("ztestsapling")) and len(
-        address
-    ) in [78, 88]:
-        return base58_check_validate(address)
-
-    return False
+    # Transparent and Sprout addresses
+    return base58_version_ok(address, _ZEC_BASE58_VERSIONS)
 
 
 def validate_eth_address(address: str) -> bool:
@@ -736,8 +915,7 @@ def validate_trx_address(address: str) -> bool:
     if not address.startswith("T") or len(address) != 34:
         return False
 
-    # Validate using base58check
-    return base58_check_validate(address)
+    return base58_version_ok(address, _TRX_BASE58_VERSIONS)
 
 
 def validate_xrp_address(address: str) -> bool:
@@ -759,12 +937,91 @@ def validate_xrp_address(address: str) -> bool:
         return False
 
 
+def validate_sol_address(address: str) -> bool:
+    """Validate a Solana address: base58 of a 32-byte public key. There is
+    no checksum, so only the alphabet and the length can be checked."""
+    if not address or not 32 <= len(address) <= 44:
+        return False
+    try:
+        return len(base58.b58decode(address)) == 32
+    except ValueError:
+        return False
+
+
+def validate_algo_address(address: str) -> bool:
+    """Validate an Algorand address: base32 (no padding) of a 32-byte public
+    key and a 4-byte checksum, the last 4 bytes of its SHA-512/256."""
+    import base64
+
+    if not address or len(address) != 58:
+        return False
+    try:
+        raw = base64.b32decode(address + "======")
+    except ValueError:
+        return False
+    # the last character carries 2 padding bits: only one spelling is valid
+    if base64.b32encode(raw).decode().rstrip("=") != address:
+        return False
+    key, checksum = raw[:32], raw[32:]
+    return hashlib.new("sha512_256", key).digest()[-4:] == checksum
+
+
+def _crc16_xmodem(data: bytes) -> int:
+    crc = 0
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else crc << 1
+            crc &= 0xFFFF
+    return crc
+
+
+_TON_RAW = re.compile(r"(0|-1):[0-9a-fA-F]{64}")
+
+
+def validate_ton_address(address: str) -> bool:
+    """Validate a TON address: raw (``0:<64 hex>``) or user-friendly, 48
+    characters of base64 (url-safe or standard) over a flag byte, the
+    workchain, a 32-byte hash and a CRC16-XMODEM of the 34 bytes before."""
+    import base64
+
+    if not address:
+        return False
+    if _TON_RAW.fullmatch(address):
+        return True
+    if len(address) != 48:
+        return False
+    try:
+        raw = base64.urlsafe_b64decode(address.replace("+", "-").replace("/", "_"))
+    except ValueError:
+        return False
+    if len(raw) != 36 or raw[0] & 0x7F not in (0x11, 0x51) or raw[1] not in (0, 255):
+        return False
+    return _crc16_xmodem(raw[:34]) == int.from_bytes(raw[34:], "big")
+
+
+_EOSIO_NAME = re.compile(r"[a-z1-5.]{0,11}[a-z1-5]|[a-z1-5.]{12}[a-j1-5]")
+
+
+def validate_eosio_address(address: str) -> bool:
+    """Validate an EOSIO account name: up to 12 characters of a-z, 1-5 and
+    '.', not ending in '.', and a 13th from a-j and 1-5. No checksum."""
+    return bool(address) and _EOSIO_NAME.fullmatch(address) is not None
+
+
+# EVM chains share Ethereum's address format.
+EVM_NETWORKS = frozenset(
+    {"eth", "etc", "bsc", "arb", "avax", "base", "pol", "matic", "op", "zkf", "kcc"}
+)
+
+
 def validate_address(currency: str, address: str) -> bool:
     """
     Validate cryptocurrency address for the given currency.
 
     Args:
-        currency: Currency code (btc, bch, ltc, zec, eth, trx, xrp)
+        currency: Currency code or network (btc, bch, ltc, zec, eth, trx,
+            xrp, sol, algo, eosio, ton, or an EVM network such as bsc)
         address: Address to validate
 
     Returns:
@@ -773,19 +1030,7 @@ def validate_address(currency: str, address: str) -> bool:
     if not currency or not address:
         return False
 
-    currency = currency.lower()
-
-    validation_functions = {
-        "btc": validate_btc_address,
-        "bch": validate_bch_address,
-        "ltc": validate_ltc_address,
-        "zec": validate_zec_address,
-        "eth": validate_eth_address,
-        "trx": validate_trx_address,
-        "xrp": validate_xrp_address,
-    }
-
-    validator = validation_functions.get(currency)
+    validator = _VALIDATORS.get(currency.lower())
     if not validator:
         raise ValueError(f"Unsupported currency: {currency}")
 
@@ -793,3 +1038,24 @@ def validate_address(currency: str, address: str) -> bool:
         return validator(address)
     except Exception:
         return False
+
+
+_VALIDATORS = {
+    "btc": validate_btc_address,
+    "bch": validate_bch_address,
+    "ltc": validate_ltc_address,
+    "zec": validate_zec_address,
+    "eth": validate_eth_address,
+    "trx": validate_trx_address,
+    "xrp": validate_xrp_address,
+    "sol": validate_sol_address,
+    "algo": validate_algo_address,
+    "eosio": validate_eosio_address,
+    "ton": validate_ton_address,
+    **{n: validate_eth_address for n in EVM_NETWORKS},
+}
+
+
+def is_verifiable_network(network: str) -> bool:
+    """True if ``validate_address`` has a validator for ``network``."""
+    return bool(network) and network.lower() in _VALIDATORS

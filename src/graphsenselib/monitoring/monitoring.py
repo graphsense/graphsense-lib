@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import DbFactory
-from .notifications import send_msg_to_topic
+from .notifications import send_msg_to_topic_rate_limited
 
 logger = logging.getLogger(__name__)
 
@@ -112,5 +112,9 @@ def check_raw_ingest_staleness(
         )
         logger.warning(msg)
         if not dry_run:
-            send_msg_to_topic(topic, msg)
+            # Hourly at most: this runs after every ingest, and the sync
+            # scheduler starts one every few seconds.
+            send_msg_to_topic_rate_limited(
+                topic, msg, f"raw-staleness:{env}:{network}", 60 * 60
+            )
     return behind

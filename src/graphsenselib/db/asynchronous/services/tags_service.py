@@ -853,8 +853,11 @@ class TagsService:
                 insert_id = await self.tagstore.add_user_reported_tag(
                     nt, acl_group=tag_acl_group
                 )
-            except TagAlreadyExistsException:
+            except TagAlreadyExistsException as e:
+                # Reporting a tag twice succeeds with the first report's id;
+                # nothing new to review, so no notification either.
                 logger.info("Tag already exists, ignoring insert.")
+                return e.existing_id
 
             info_hook = config.slack_info_hook
 

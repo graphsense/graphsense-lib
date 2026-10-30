@@ -15,17 +15,24 @@ Test flow per currency/range:
 6. Compare the two transformed keyspaces table-by-table:
      * Tables present on both sides are content-hashed (sha256 over sorted
        row reprs).
-     * The schema-evolved ``fresh_*`` clustering tables and the metadata
-       ``state``/``configuration``/``summary_statistics`` tables are excluded
-       from content equality (they legitimately differ across versions or
-       between runs).
+     * The metadata ``state``/``configuration``/``summary_statistics``/
+       ``delta_updater_history`` tables are excluded from content equality
+       (they legitimately differ between runs).
+     * With fresh clustering (``DELTA_UPDATE_FRESH_CLUSTERING``, default on)
+       both sides maintain the ``fresh_*`` clustering tables from the first
+       block on, so they are compared like any other table whenever both
+       schemas have them. On ranges marked ``exercises_cluster_merges`` the
+       current side must also have clustered addresses and merged clusters,
+       or the comparison would prove nothing.
 7. Report per-side wall time, blocks/s, and the speedup factor.
 
 Requires:
 - Docker (for MinIO, Cassandra testcontainers, and the PySpark image).
 - Node URLs configured in .graphsense.yaml.
 - ``DELTA_UPDATE_CURRENCIES`` env var (default: btc,ltc,bch,zec).
-- ``DELTA_UPDATE_REF_VERSION`` env var (default: v2.12.3).
+- ``DELTA_UPDATE_REF_VERSION`` env var (default: v2.12.3), or
+  ``DELTA_UPDATE_REF_PATH`` for a local checkout (e.g. a worktree at the
+  commit before the change under test).
 """
 
 import hashlib
@@ -49,21 +56,19 @@ pytestmark = pytest.mark.delta_update
 # a passing comparison therefore also proves pooled == single-process output.
 PARALLEL_WORKERS_CURRENT = int(os.environ.get("GS_REGRESSION_PARALLEL_WORKERS", "1"))
 
+# Maintain the fresh_* clustering tables on both sides (sides whose schema
+# predates fresh clustering run without).
+FRESH_CLUSTERING = os.environ.get("DELTA_UPDATE_FRESH_CLUSTERING", "1") == "1"
+
 
 # Tables whose content legitimately differs across runs/versions.
 #   state                 -- bootstrap-marker timestamp
 #   configuration         -- target keyspace name baked in
 #   summary_statistics    -- includes per-run timestamp
-#   fresh_address_cluster, fresh_cluster_addresses
-#                         -- only exist on current schema (clustering tables);
-#                            populated by the Rust clustering path, not by
-#                            delta-update update
 METADATA_TABLES = {
     "state",
     "configuration",
     "summary_statistics",
-    "fresh_address_cluster",
-    "fresh_cluster_addresses",
     # delta_updater_history records per-batch run timestamps and durations --
     # legitimately differs across runs and across versions.
     "delta_updater_history",
@@ -235,9 +240,10 @@ class TestDeltaUpdateRegression:
         # Step 4: delta-update update (current)
         # ------------------------------------------------------------------
         print(f"  [4/5] delta-update update (current, "
-              f"workers={PARALLEL_WORKERS_CURRENT}) ...",
+              f"workers={PARALLEL_WORKERS_CURRENT}, "
+              f"fresh_clustering={FRESH_CLUSTERING}) ...",
               end=" ", flush=True)
-        current_secs, current_timings = run_delta_update(
+        current_run = run_delta_update(
             venv_dir=current_venv,
             config=delta_update_config,
             cassandra_host=cass_host,
@@ -248,7 +254,10 @@ class TestDeltaUpdateRegression:
             **minio_kw,
             label="delta-update[current]",
             parallel_workers=PARALLEL_WORKERS_CURRENT,
+            fresh_clustering=FRESH_CLUSTERING,
         )
+        current_secs = current_run.seconds
+        current_timings = current_run.section_timings
         current_bps = delta_update_config.num_blocks / current_secs
         print(
             f"done in {current_secs:.2f}s "
@@ -260,7 +269,7 @@ class TestDeltaUpdateRegression:
         # ------------------------------------------------------------------
         print(f"  [5/5] delta-update update (baseline {baseline_version}) ...",
               end=" ", flush=True)
-        baseline_secs, baseline_timings = run_delta_update(
+        baseline_run = run_delta_update(
             venv_dir=baseline_venv,
             config=delta_update_config,
             cassandra_host=cass_host,
@@ -270,7 +279,10 @@ class TestDeltaUpdateRegression:
             delta_directory=delta_path,
             **minio_kw,
             label=f"delta-update[{baseline_version}]",
+            fresh_clustering=FRESH_CLUSTERING,
         )
+        baseline_secs = baseline_run.seconds
+        baseline_timings = baseline_run.section_timings
         baseline_bps = delta_update_config.num_blocks / baseline_secs
         print(
             f"done in {baseline_secs:.2f}s "
@@ -353,6 +365,39 @@ class TestDeltaUpdateRegression:
                             print(f"      pk={pk}  {diff_str}")
 
         # ------------------------------------------------------------------
+        # Clustering coverage
+        # ------------------------------------------------------------------
+        # fac / fca / fcs = fresh_address_cluster / fresh_cluster_addresses /
+        # fresh_cluster_stats. A new or joined cluster upserts fac and fcs;
+        # a merge also deletes the absorbed cluster's fcs and fca rows.
+        uncovered = []
+        if FRESH_CLUSTERING:
+            print("\n  Fresh clustering writes (rows; + upsert, - delete):")
+            for side, run in (
+                ("current", current_run),
+                (baseline_version, baseline_run),
+            ):
+                if not run.fresh_clustering:
+                    print(f"    {side:<14s} not maintained "
+                          f"(schema predates fresh clustering)")
+                    continue
+                c = run.change_counts
+                print(
+                    f"    {side:<14s} "
+                    f"fresh_address_cluster +{c['fac']['+']:,}  "
+                    f"fresh_cluster_stats +{c['fcs']['+']:,} "
+                    f"-{c['fcs']['-']:,}  "
+                    f"fresh_cluster_addresses +{c['fca']['+']:,} "
+                    f"-{c['fca']['-']:,}"
+                )
+            if delta_update_config.exercises_cluster_merges:
+                c = current_run.change_counts
+                if not c["fac"]["+"]:
+                    uncovered.append("no address was clustered")
+                if not c["fcs"]["-"]:
+                    uncovered.append("no two clusters were merged")
+
+        # ------------------------------------------------------------------
         # Timing summary
         # ------------------------------------------------------------------
         speedup = baseline_secs / current_secs if current_secs > 0 else 0.0
@@ -428,12 +473,15 @@ class TestDeltaUpdateRegression:
                         f"{'':>10s}  {secs:>8.2f}s  ({cnt}x)"
                     )
 
-        if mismatches:
+        if mismatches or uncovered:
             print("  result:          FAIL")
             print(f"{'=' * 68}")
             pytest.fail(
                 f"{currency}[{range_id}] delta-update regression mismatches:\n"
                 + "\n".join(f"  - {m}" for m in mismatches)
+                + "".join(
+                    f"\n  - clustering not exercised: {u}" for u in uncovered
+                )
             )
         else:
             print("  result:          PASS")

@@ -259,6 +259,9 @@ class DatabaseProtocol(Protocol):
     async def get_fresh_cluster_id(
         self, currency: str, address_id: int
     ) -> Optional[int]: ...
+    async def get_cluster_stats(
+        self, currency: str, cluster_id: int
+    ) -> Optional[Dict[str, Any]]: ...
     async def get_address(self, currency: str, address: str) -> Dict[str, Any]: ...
     async def new_address(self, currency: str, address: str) -> Dict[str, Any]: ...
     async def list_neighbors(
@@ -425,6 +428,36 @@ async def try_get_tag_cluster_id(
     return returnv
 
 
+# Structural "possible service" thresholds, moved server-side from the
+# dashboard (Model/Pathfinder/Address.elm, Model/Entity.elm) so every
+# consumer shares one definition. Deliberately tag-free: tag visibility
+# varies per caller's groups, a structural flag stays deterministic.
+_SERVICE_MAX_DEGREE = 7500
+_SERVICE_MAX_TXS = 500
+_SERVICE_MAX_CLUSTER_ADDRESSES = 100
+
+
+def is_possible_service_account(row: Dict[str, Any]) -> bool:
+    """Account networks judge the address itself: heavy incoming traffic."""
+    return (
+        saturate_int32_count(row.get("in_degree", 0)) > _SERVICE_MAX_DEGREE
+        or saturate_int32_count(row.get("no_incoming_txs", 0)) > _SERVICE_MAX_TXS
+    )
+
+
+def is_possible_service_utxo(cluster_row: Optional[Dict[str, Any]]) -> bool:
+    """UTXO networks judge the address's cluster — a service's individual
+    deposit addresses look small, the cluster does not."""
+    if cluster_row is None:
+        return False
+    return (
+        saturate_int32_count(cluster_row.get("no_addresses", 0))
+        > _SERVICE_MAX_CLUSTER_ADDRESSES
+        or saturate_int32_count(cluster_row.get("in_degree", 0)) > _SERVICE_MAX_DEGREE
+        or saturate_int32_count(cluster_row.get("out_degree", 0)) > _SERVICE_MAX_DEGREE
+    )
+
+
 def address_from_row(
     currency: str,
     row: Dict[str, Any],
@@ -432,6 +465,7 @@ def address_from_row(
     token_config: Dict[str, Any],
     actors: Optional[List[Any]] = None,
     fresh_cluster_id: Optional[int] = None,
+    is_possible_service: Optional[bool] = None,
 ) -> Address:
     # Convert actors to LabeledItemRef if they aren't already
     converted_actors = None
@@ -482,6 +516,7 @@ def address_from_row(
         is_contract=row.get("is_contract"),
         actors=converted_actors,
         status=row.get("status"),
+        is_possible_service=is_possible_service,
     )
 
 
@@ -655,12 +690,26 @@ async def get_address(
         else _none()
     )
 
-    actor_res, fresh_cluster_id, rates = await asyncio.gather(
-        actor_task, fresh_cluster_task, rates_task
+    # UTXO service judgment needs the cluster's stats row (legacy cluster id:
+    # fresh clusters can have pending degrees and singletons no row at all);
+    # like the fresh-cluster read it overlaps with the in-flight tasks.
+    cluster_stats_task = asyncio.ensure_future(
+        db.get_cluster_stats(currency, result["cluster_id"])
+        if result and not is_eth_like(currency) and result.get("cluster_id") is not None
+        else _none()
+    )
+
+    actor_res, fresh_cluster_id, cluster_stats, rates = await asyncio.gather(
+        actor_task, fresh_cluster_task, cluster_stats_task, rates_task
     )
     actors = (
         [labeled_item_ref_from_actor(a) for a in actor_res] if include_actors else None
     )
+
+    if is_eth_like(currency):
+        possible_service = is_possible_service_account(result)
+    else:
+        possible_service = is_possible_service_utxo(cluster_stats)
 
     return address_from_row(
         currency,
@@ -669,6 +718,7 @@ async def get_address(
         db.get_token_configuration(currency),
         actors,
         fresh_cluster_id=fresh_cluster_id,
+        is_possible_service=possible_service,
     )
 
 

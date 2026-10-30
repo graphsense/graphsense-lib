@@ -115,7 +115,7 @@ class Report:
     """The outcome of comparing one call.
 
     ``skipped`` carries the reason a call could not be made at all -- v3 has no
-    cluster tables yet, so nine of the adapter's methods raise. A skipped call
+    cluster tables yet, so ten of the adapter's methods raise. A skipped call
     is NOT an agreement, and `agrees` says so: counting it as one would let the
     report claim parity for features that were never exercised.
     """

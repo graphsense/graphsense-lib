@@ -10,12 +10,14 @@ from typing import Dict, List, Optional, Set
 from pydantic import BaseModel, computed_field
 from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from graphsenselib.config.tagstore_config import get_use_label_search_view
+from graphsenselib.utils.accountmodel import normalize_hex_identifier
 from graphsenselib.utils.constants import (
     FRESH_CLUSTER_ID_OFFSET,
     is_fresh_cluster_id,
@@ -27,6 +29,7 @@ from .database import get_db_engine_async
 from .errors import TagAlreadyExistsException
 from .models import (
     Actor,
+    Address,
     AddressClusterMapping,
     AddressClusterMappingV2,
     BestClusterTagView,
@@ -286,6 +289,27 @@ class UserReportedAddressTag(BaseModel):
     user: Optional[str] = None
 
 
+def _normalize_subject_id(subject_id: str) -> str:
+    # Must match what the tagpack insert stores (tagpack.utils.
+    # normalize_tag_address), otherwise checksummed 0x ids never match.
+    return normalize_hex_identifier(subject_id.strip())
+
+
+def _normalize_subject_ids(subject_ids: List[str]) -> Dict[str, List[str]]:
+    """Map each normalized id to the caller's (stripped) spellings of it.
+
+    Batch results are keyed by the stored identifier; this lets callers keep
+    looking them up by the ids they passed in.
+    """
+    by_norm: Dict[str, List[str]] = {}
+    for sid in subject_ids:
+        cleaned = sid.strip()
+        spellings = by_norm.setdefault(normalize_hex_identifier(cleaned), [])
+        if cleaned not in spellings:
+            spellings.append(cleaned)
+    return by_norm
+
+
 # Statements
 
 
@@ -308,7 +332,7 @@ def _get_tags_by_subjectid_stmt(
         .where(Confidence.id == Tag.confidence_id)
         .offset(offset)
         .limit(page_size)
-        .order_by(desc(Confidence.level))
+        .order_by(desc(Confidence.level), Tag.id)
     )
 
     if network is not None:
@@ -331,7 +355,7 @@ def _get_tags_by_subjectids_stmt(
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(desc(Confidence.level))
+        .order_by(desc(Confidence.level), Tag.id)
     )
 
     if network is not None:
@@ -395,6 +419,15 @@ def _routed_id_batches(cluster_ids):
     return ((legacy, False, 0), (fresh_raw, True, FRESH_CLUSTER_ID_OFFSET))
 
 
+def _definer_tie_break():
+    """ORDER BY tail after the confidence: equally confident definers go to
+    the tagpack whose id sorts first, then to its first tag. Tagpack ids
+    derive from the pack's path and a re-insert keeps the order of a pack's
+    tags, so the pick is the same on every request and survives re-inserting
+    a pack (a bare tag id would not)."""
+    return (Tag.tagpack_id.collate("C"), Tag.id)
+
+
 def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str]):
     _, BestClusterTag, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
@@ -409,7 +442,7 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
         .where(BestClusterTag.tag_id == Tag.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(Confidence.level.desc())
+        .order_by(Confidence.level.desc(), *_definer_tie_break())
         .limit(1)
     )
 
@@ -435,7 +468,9 @@ def _get_best_cluster_tag_winners_stmt(
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(BestClusterTag.cluster_id, Confidence.level.desc())
+        .order_by(
+            BestClusterTag.cluster_id, Confidence.level.desc(), *_definer_tie_break()
+        )
     )
 
 
@@ -506,7 +541,7 @@ def _get_tags_by_actorid_stmt(
         .where(Confidence.id == Tag.confidence_id)
         .offset(offset)
         .limit(page_size)
-        .order_by(desc(Confidence.level))
+        .order_by(desc(Confidence.level), Tag.id)
     )
     if network is not None:
         q = q.where(Tag.network == network)
@@ -540,7 +575,7 @@ def _get_tags_by_clusterid_stmt(
     if exclude_identifiers is not None:
         q = q.where(Tag.identifier.not_in(exclude_identifiers))
 
-    return q.offset(offset).limit(page_size).order_by(desc(Confidence.level))
+    return q.offset(offset).limit(page_size).order_by(desc(Confidence.level), Tag.id)
 
 
 def _get_tags_by_label_stmt(
@@ -666,8 +701,21 @@ def _get_similar_tag_labels_view_stmt(query: str, limit: int, groups: List[str])
     )
 
 
-def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
-    return (
+# Actors lists count the same tags as the tag summary's actor: with
+# `only_actor_tags` (REST: tag_summary_only_propagate_high_confidence_actors,
+# on by default) actor-type tags only. A mention or event names whom the label
+# refers to, not who controls the address.
+ACTOR_TAG_TYPE = "actor"
+
+
+def _only_actor_tags(stmt, only_actor_tags: bool):
+    return stmt.where(Tag.tag_type_id == ACTOR_TAG_TYPE) if only_actor_tags else stmt
+
+
+def _get_actors_for_subject_stmt(
+    subject_id: str, groups: List[str], only_actor_tags: bool = True
+):
+    stmt = (
         select(Actor.id, Actor.label)
         .where(Tag.identifier == subject_id)
         .where(Actor.id.isnot(None))
@@ -677,11 +725,14 @@ def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
         .order_by(Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
-def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[str]):
+def _get_actors_for_clusterid_stmt(
+    cluster_id: int, network: int, groups: List[str], only_actor_tags: bool = True
+):
     AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
-    return (
+    stmt = (
         select(Actor.id, Actor.label)
         .where(AddressClusterMap.gs_cluster_id == cluster_id)
         .where(AddressClusterMap.address == Tag.identifier)
@@ -693,14 +744,19 @@ def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[s
         .order_by(Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
 def _get_actors_for_clusterids_batch_stmt(
-    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
+    cluster_ids: List[int],
+    network: str,
+    groups: List[str],
+    fresh: bool,
+    only_actor_tags: bool = True,
 ):
     # Raw ids of one regime; see _routed_id_batches.
     AddressClusterMap, _, _ = _cluster_models(fresh)
-    return (
+    stmt = (
         select(AddressClusterMap.gs_cluster_id, Actor.id, Actor.label)
         .where(AddressClusterMap.gs_cluster_id.in_(cluster_ids))
         .where(AddressClusterMap.address == Tag.identifier)
@@ -712,10 +768,13 @@ def _get_actors_for_clusterids_batch_stmt(
         .order_by(AddressClusterMap.gs_cluster_id, Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
-def _get_actors_for_subjects_batch_stmt(identifiers: List[str], groups: List[str]):
-    return (
+def _get_actors_for_subjects_batch_stmt(
+    identifiers: List[str], groups: List[str], only_actor_tags: bool = True
+):
+    stmt = (
         select(Tag.identifier, Actor.id, Actor.label)
         .where(Tag.identifier.in_(identifiers))
         .where(Actor.id.isnot(None))
@@ -725,6 +784,7 @@ def _get_actors_for_subjects_batch_stmt(identifiers: List[str], groups: List[str
         .order_by(Tag.identifier, Actor.label)
         .distinct()
     )
+    return _only_actor_tags(stmt, only_actor_tags)
 
 
 def _get_labels_by_subjectid_stmt(subject_id: str, groups: List[str]):
@@ -826,8 +886,12 @@ def _inject_session(f):
 class TagstoreDbAsync:
     engine = None
 
-    def __init__(self, engine):
+    def __init__(self, engine, only_actor_tags_in_actor_lists: bool = True):
         self.engine = engine
+        # Actors lists of addresses and clusters: actor-type tags only, like
+        # the tag summary (see _only_actor_tags). REST sets it from
+        # tag_summary_only_propagate_high_confidence_actors.
+        self.only_actor_tags_in_actor_lists = only_actor_tags_in_actor_lists
 
     @staticmethod
     def from_url(db_url):
@@ -896,7 +960,7 @@ class TagstoreDbAsync:
         session=None,
     ) -> List[TagPublic]:
         results = await self._get_tags_by_subjectid(
-            subject_id.strip(),
+            _normalize_subject_id(subject_id),
             offset,
             page_size,
             groups,
@@ -917,15 +981,19 @@ class TagstoreDbAsync:
         # pattern that amplified the 2026-05-04 pool-exhaustion incident.
         if not subject_ids:
             return {}
-        cleaned = [sid.strip() for sid in subject_ids]
+        by_norm = _normalize_subject_ids(subject_ids)
         results = (
             await session.exec(
-                _get_tags_by_subjectids_stmt(cleaned, groups, network=network)
+                _get_tags_by_subjectids_stmt(list(by_norm), groups, network=network)
             )
         ).unique()
-        grouped: Dict[str, List[TagPublic]] = {sid: [] for sid in cleaned}
+        grouped: Dict[str, List[TagPublic]] = {
+            sid: [] for spellings in by_norm.values() for sid in spellings
+        }
         for t, tp, _ in results:
-            grouped.setdefault(t.identifier, []).append(TagPublic.fromDB(t, tp))
+            tag = TagPublic.fromDB(t, tp)
+            for sid in by_norm.get(t.identifier, [t.identifier]):
+                grouped.setdefault(sid, []).append(tag)
         return grouped
 
     @_inject_session
@@ -933,7 +1001,11 @@ class TagstoreDbAsync:
         self, subject_id: str, groups: List[str], session=None
     ) -> List[HumanReadableId]:
         results = await session.exec(
-            _get_actors_for_subject_stmt(subject_id.strip(), groups)
+            _get_actors_for_subject_stmt(
+                _normalize_subject_id(subject_id),
+                groups,
+                self.only_actor_tags_in_actor_lists,
+            )
         )
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
 
@@ -946,13 +1018,17 @@ class TagstoreDbAsync:
         # 2026-05-04 pool-exhaustion incident.
         if not subject_ids:
             return {}
-        cleaned = [sid.strip() for sid in subject_ids]
+        by_norm = _normalize_subject_ids(subject_ids)
         results = await session.exec(
-            _get_actors_for_subjects_batch_stmt(cleaned, groups)
+            _get_actors_for_subjects_batch_stmt(
+                list(by_norm), groups, self.only_actor_tags_in_actor_lists
+            )
         )
         out: Dict[str, List[HumanReadableId]] = {}
-        for sid, idt, lbl in results:
-            out.setdefault(sid, []).append(HumanReadableId(id=idt, label=lbl))
+        for identifier, idt, lbl in results:
+            actor = HumanReadableId(id=idt, label=lbl)
+            for sid in by_norm.get(identifier, [identifier]):
+                out.setdefault(sid, []).append(actor)
         return out
 
     @_inject_session
@@ -960,7 +1036,7 @@ class TagstoreDbAsync:
         self, subject_id: str, groups: List[str], session=None
     ) -> List[str]:
         results = await session.exec(
-            _get_labels_by_subjectid_stmt(subject_id.strip(), groups)
+            _get_labels_by_subjectid_stmt(_normalize_subject_id(subject_id), groups)
         )
         return [x for x in results]
 
@@ -970,11 +1046,14 @@ class TagstoreDbAsync:
     ) -> Dict[str, List[str]]:
         if not subject_ids:
             return {}
-        cleaned = [sid.strip() for sid in subject_ids]
-        results = await session.exec(_get_labels_by_subjectids_stmt(cleaned, groups))
+        by_norm = _normalize_subject_ids(subject_ids)
+        results = await session.exec(
+            _get_labels_by_subjectids_stmt(list(by_norm), groups)
+        )
         out: Dict[str, List[str]] = {}
-        for sid, lbl in results:
-            out.setdefault(sid, []).append(lbl)
+        for identifier, lbl in results:
+            for sid in by_norm.get(identifier, [identifier]):
+                out.setdefault(sid, []).append(lbl)
         return out
 
     @_inject_session
@@ -982,7 +1061,9 @@ class TagstoreDbAsync:
         self, subject_id: str, network: Optional[str], groups: List[str], session=None
     ) -> int:
         results = await session.exec(
-            _get_tag_count_by_subjectid_stmt(subject_id, network, groups)
+            _get_tag_count_by_subjectid_stmt(
+                _normalize_subject_id(subject_id), network, groups
+            )
         )
 
         return sum(x for x in results)
@@ -1117,7 +1198,9 @@ class TagstoreDbAsync:
         if not is_representable_entity_id(int(cluster_id)):
             return []
         results = await session.exec(
-            _get_actors_for_clusterid_stmt(cluster_id, network, groups)
+            _get_actors_for_clusterid_stmt(
+                cluster_id, network, groups, self.only_actor_tags_in_actor_lists
+            )
         )
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
 
@@ -1223,7 +1306,13 @@ class TagstoreDbAsync:
             if not raw_ids:
                 continue
             results = await session.exec(
-                _get_actors_for_clusterids_batch_stmt(raw_ids, network, groups, fresh)
+                _get_actors_for_clusterids_batch_stmt(
+                    raw_ids,
+                    network,
+                    groups,
+                    fresh,
+                    self.only_actor_tags_in_actor_lists,
+                )
             )
             for cid, idt, lbl in results:
                 out.setdefault(cid + shift, []).append(
@@ -1465,10 +1554,13 @@ class TagstoreDbAsync:
 
         context = {"user": tag.user, "uuid": unique_id}
 
+        identifier = _normalize_subject_id(tag.address)
+        network = tag.network.upper()
+
         tagN = Tag(
             label=tag.label,
-            identifier=tag.address,
-            network=tag.network.upper(),
+            identifier=identifier,
+            network=network,
             tag_subject_id="address",
             tag_type_id="actor",
             confidence_id="unknown",
@@ -1482,6 +1574,16 @@ class TagstoreDbAsync:
             tagN.actor_id = actor.id
             tagN.concepts = [TagConcept(concept_id=c) for c in actor.concepts]
 
+        # The cluster-mapping job only maps what is in `address` (the tagpack
+        # importer writes it alongside every tag); without this row a
+        # user-reported address never gets a cluster mapping. Executed before
+        # adding the tag so the autoflush cannot raise a duplicate-tag error
+        # outside the handler below; both commit (or roll back) together.
+        await session.exec(
+            pg_insert(Address)
+            .values(network=network, address=identifier)
+            .on_conflict_do_nothing()
+        )
         session.add(tagN)
 
         try:
@@ -1494,8 +1596,40 @@ class TagstoreDbAsync:
             ):
                 # 23505 is UNIQUE KEY VIOLATION
                 # https://stackoverflow.com/questions/58740043/how-do-i-catch-a-psycopg2-errors-uniqueviolation-error-in-a-python-flask-app
-                raise TagAlreadyExistsException()
+                await session.rollback()
+                raise TagAlreadyExistsException(
+                    await self._get_user_reported_tag_id(
+                        identifier,
+                        network,
+                        tag.label,
+                        IDUserReportedTagpack,
+                        tag.description,
+                        session,
+                    )
+                )
             else:
                 raise e
 
         return unique_id
+
+    async def _get_user_reported_tag_id(
+        self, identifier, network, label, tagpack_id, source, session
+    ) -> Optional[str]:
+        """Report id (context uuid) of the stored tag with these `unique_tag`
+        constraint columns; its row id if the context carries no uuid."""
+        q = select(Tag.id, Tag.context).where(
+            Tag.identifier == identifier,
+            Tag.network == network,
+            Tag.label == label,
+            Tag.tagpack_id == tagpack_id,
+            Tag.source == source,
+        )
+        row = (await session.exec(q)).first()
+        if row is None:
+            return None
+        tag_id, context = row
+        try:
+            report_id = json.loads(context).get("uuid") if context else None
+        except (JSONDecodeError, AttributeError):
+            report_id = None
+        return report_id or str(tag_id)

@@ -17,6 +17,32 @@ def check_timestamp(timestamp: int) -> None:
         logger.warning(f"Timestamp {timestamp} is not between the years 2000 and 2100")
 
 
+_WEEKDAYS = {
+    "monday": 0,
+    "mon": 0,
+    "tuesday": 1,
+    "tue": 1,
+    "wednesday": 2,
+    "wed": 2,
+    "thursday": 3,
+    "thu": 3,
+    "friday": 4,
+    "fri": 4,
+    "saturday": 5,
+    "sat": 5,
+    "sunday": 6,
+    "sun": 6,
+}
+
+
+def weekday_number(name: str) -> int:
+    """'saturday' or 'sat' (any case) -> 5; 0 is Monday."""
+    number = _WEEKDAYS.get(name.lower())
+    if number is None:
+        raise ValueError(f"Invalid weekday: {name}")
+    return number
+
+
 def is_weekday(date_to_check, weekday):
     """
     Check if a given date falls on a specific weekday.
@@ -33,28 +59,8 @@ def is_weekday(date_to_check, weekday):
     if date_to_check is None:
         return False
 
-    # Convert string weekday to number if needed
     if isinstance(weekday, str):
-        weekday_map = {
-            "monday": 0,
-            "mon": 0,
-            "tuesday": 1,
-            "tue": 1,
-            "wednesday": 2,
-            "wed": 2,
-            "thursday": 3,
-            "thu": 3,
-            "friday": 4,
-            "fri": 4,
-            "saturday": 5,
-            "sat": 5,
-            "sunday": 6,
-            "sun": 6,
-        }
-        weekday_num = weekday_map.get(weekday.lower())
-        if weekday_num is None:
-            raise ValueError(f"Invalid weekday: {weekday}")
-        weekday = weekday_num
+        weekday = weekday_number(weekday)
 
     return date_to_check.weekday() == weekday
 
@@ -166,6 +172,16 @@ def is_date_older_than(date_to_check, period_str, now=None):
     threshold_date = now - time_delta
 
     return date_to_check < threshold_date
+
+
+def validate_older_than_run_spec(spec: str) -> None:
+    """Raise ValueError unless spec is a valid '<period>[;<weekday>]'."""
+    parts = spec.split(";")
+    if len(parts) > 2:
+        raise ValueError(f"{spec!r}: use '<period>[;<weekday>]', e.g. '1w;sunday'")
+    parse_time_period(parts[0].strip())
+    if len(parts) == 2:
+        is_weekday(datetime.now(), parts[1].strip())
 
 
 def parse_older_than_run_spec(spec: str, to_compare, now=None) -> bool:

@@ -465,7 +465,7 @@ def test_the_loaders_bound_on_tables_they_actually_read() -> None:
 
     for loader in (raw_utxo, raw_account):
         assert set(loader.BOUND_TABLES) <= set(loader.LAKE_TABLES)
-        assert loader.BOUND_TABLES
+        assert len(loader.BOUND_TABLES) > 0
 
 
 def test_only_tron_pins_the_tron_only_lake_tables() -> None:

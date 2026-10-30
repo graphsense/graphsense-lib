@@ -64,3 +64,12 @@ def test_gap_wider_than_skew_window_raises(monkeypatch):
     db = make_db(lambda b: b == 999, highest_block=1500)
     with pytest.raises(ValueError, match="timestamp-skew window"):
         db.find_highest_block_with_exchange_rates()
+
+
+def test_only_tip_lacks_rates():
+    # Incident 2026-10-28: the previous day's rates had just arrived, so the
+    # raw tip (first block of the new day) was the only block without rates.
+    # The search over [first, tip) found nothing and the tip check failed, so
+    # -1 came back and forward-fill wrote zero fiat values for the tip.
+    db = make_db(lambda b: b <= 974814, highest_block=974815)
+    assert db.find_highest_block_with_exchange_rates() == 974814

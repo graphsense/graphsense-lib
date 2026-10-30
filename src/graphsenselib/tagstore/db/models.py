@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Column, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -95,7 +95,10 @@ class ActorPack(SQLModel, table=True):
     creator: str
     description: str
     uri: Optional[str]
-    lastmod: datetime = Field(sa_column_kwargs={"server_default": func.now()})
+    lastmod: datetime = Field(
+        sa_type=DateTime(timezone=False),
+        sa_column_kwargs={"server_default": func.now()},
+    )
 
 
 class Actor(SQLModel, table=True):
@@ -106,7 +109,10 @@ class Actor(SQLModel, table=True):
     uri: Optional[str]
     label: str
     context: Optional[str]
-    lastmod: datetime = Field(sa_column_kwargs={"server_default": func.now()})
+    lastmod: datetime = Field(
+        sa_type=DateTime(timezone=False),
+        sa_column_kwargs={"server_default": func.now()},
+    )
 
     # FK data
     actorpack_id: str = Field(
@@ -135,7 +141,10 @@ class TagPack(SQLModel, table=True):
     creator: str
     uri: Optional[str]
     acl_group: str = Field(sa_column_kwargs={"server_default": "public"})
-    lastmod: datetime = Field(sa_column_kwargs={"server_default": func.now()})
+    lastmod: datetime = Field(
+        sa_type=DateTime(timezone=False),
+        sa_column_kwargs={"server_default": func.now()},
+    )
 
 
 class Tag(SQLModel, table=True):
@@ -154,7 +163,10 @@ class Tag(SQLModel, table=True):
     is_cluster_definer: bool = Field(
         default=False, index=True, sa_column_kwargs={"server_default": "false"}
     )
-    lastmod: datetime = Field(sa_column_kwargs={"server_default": func.now()})
+    lastmod: datetime = Field(
+        sa_type=DateTime(timezone=False),
+        sa_column_kwargs={"server_default": func.now()},
+    )
     identifier: str = Field(index=True)
     asset: Optional[str]
     network: str
@@ -253,7 +265,10 @@ class ActorConcept(SQLModel, table=True):
 class Address(SQLModel, table=True):
     network: str = Field(primary_key=True)
     address: str = Field(primary_key=True)
-    created: datetime = Field(sa_column_kwargs={"server_default": func.now()})
+    created: datetime = Field(
+        sa_type=DateTime(timezone=False),
+        sa_column_kwargs={"server_default": func.now()},
+    )
     is_mapped: bool = Field(sa_column_kwargs={"server_default": "false"})
 
 

@@ -384,7 +384,11 @@ def test_context_obj_with_date_is_serialized(tagpack_context_date_obj):
 
 
 def test_verify_addresses(tagpack):
-    assert tagpack.verify_addresses() is None
+    findings = tagpack.verify_addresses()
+    assert [(f.network, f.address) for f in findings] == [
+        ("BTC", "123Bitcoin45"),
+        ("ETH", "123Bitcoin66"),
+    ]
 
 
 def test_valid_addresses(tagpack, caplog):
@@ -422,7 +426,7 @@ def test_invalid_addresses(tagpack, caplog):
         record.message for record in caplog.records if record.levelname == "WARNING"
     ]
     assert len(log_messages) == 1
-    assert "possible invalid address" in log_messages[0]
+    assert "invalid address(es)" in log_messages[0]
     assert "BTC" in log_messages[0]
     assert "ETH" in log_messages[0]
 
@@ -435,7 +439,7 @@ def test_verify_addresses_with_missing_uri_does_not_fail(tagpack, caplog):
         record.message for record in caplog.records if record.levelname == "WARNING"
     ]
     assert len(log_messages) == 1
-    assert "possible invalid address" in log_messages[0]
+    assert "invalid address(es)" in log_messages[0]
 
 
 def test_verify_addresses_uses_shortened_source_name(tagpack, caplog):
@@ -930,6 +934,75 @@ def test_validate_warns_for_malformed_bch_cashaddr(schema, taxonomies, caplog):
     assert "Cash address contains more than one colon character" in log_text
 
 
+def _token_tagpack(schema, taxonomies, tags, **header):
+    return TagPack(
+        "http://example.com",
+        {
+            "title": "Token TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/tokens",
+            "confidence": "web_crawl",
+            "currency": "USDT",
+            "lastmod": date.fromisoformat("2021-04-21"),
+            **header,
+            "tags": tags,
+        },
+        schema,
+        taxonomies,
+    )
+
+
+def test_validate_detects_hex_case_collision_on_non_eth_network(schema, taxonomies):
+    # Different currencies survive get_unique_tags, but both rows map to the
+    # same (identifier, network, label, source) once the insert lowercases the
+    # hex address -- which it now does on every network, not just ETH.
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [
+            {"label": "dup", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
+            {
+                "label": "dup",
+                "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "currency": "USDC",
+                "network": "BSC",
+            },
+        ],
+        network="BSC",
+    )
+
+    with pytest.raises(ValidationError, match="Duplicate tags would violate"):
+        tagpack.validate()
+
+
+def test_validate_warns_when_network_is_a_token(schema, taxonomies, caplog):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+    )
+
+    assert tagpack.validate()
+
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any(
+        "have network USDT, which is a token" in m and "ETH" in m for m in warnings
+    ), warnings
+
+
+def test_validate_no_token_warning_with_explicit_network(schema, taxonomies, caplog):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+        network="ETH",
+    )
+
+    assert tagpack.validate()
+
+    assert not any("which is a token" in r.message for r in caplog.records)
+
+
 def test_conf_level_mandatory_if_not_set_default(tagpack):
     # tag without confidence validates
     tagpack.validate()
@@ -1035,6 +1108,110 @@ def test_validate_fail_null_characters_in_list_field(schema, taxonomies):
         tagpack.validate()
 
 
+def _pack_with_label(schema, taxonomies, label, **tag_extra):
+    return TagPack(
+        "http://example.com",
+        {
+            "title": "Test TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "currency": "BTC",
+            "tags": [{"label": label, "address": "123Bitcoin45", **tag_extra}],
+        },
+        schema,
+        taxonomies,
+    )
+
+
+@pytest.fixture
+def text_errors(monkeypatch):
+    """Garbled text as an error, as planned for a later release."""
+    import graphsenselib.tagpack.tagpack as tp
+
+    monkeypatch.setattr(tp, "TEXT_PROBLEMS_ARE_ERRORS", True)
+
+
+# UTF-8 Cyrillic read as Latin-1
+_BROKEN = "Name: Ivanov Иван".encode("utf-8").decode("latin-1")
+
+
+def test_validate_warns_on_mojibake_naming_the_intended_text(
+    schema, taxonomies, caplog
+):
+    _pack_with_label(schema, taxonomies, _BROKEN).validate()
+    assert "1 field value(s) with garbled or non-printable text" in caplog.text
+    assert "Field 'label' is mis-encoded" in caplog.text
+    assert "'Name: Ivanov Иван'" in caplog.text
+
+
+def test_validate_warns_once_per_pack(schema, taxonomies, caplog):
+    tp = TagPack(
+        "http://example.com",
+        {
+            "title": "Test TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "currency": "BTC",
+            "tags": [{"label": f"MÃ¼nchen {i}", "address": f"1A{i}"} for i in range(5)],
+        },
+        schema,
+        taxonomies,
+    )
+    tp.validate()
+    records = [r for r in caplog.records if "garbled" in r.getMessage()]
+    assert len(records) == 1
+    assert "5 field value(s)" in records[0].getMessage()
+    assert "(and 2 more)" in records[0].getMessage()
+
+
+def test_validate_fail_mojibake_when_errors(schema, taxonomies, text_errors):
+    with pytest.raises(ValidationError, match="'Name: Ivanov Иван'"):
+        _pack_with_label(schema, taxonomies, _BROKEN).validate()
+
+
+def test_validate_fail_cp1252_mojibake_when_errors(schema, taxonomies, text_errors):
+    tagpack = _pack_with_label(schema, taxonomies, "Exchange MÃ¼nchen")
+    with pytest.raises(ValidationError, match="'Exchange München'"):
+        tagpack.validate()
+
+
+def test_validate_finds_partly_garbled_text(schema, taxonomies, text_errors):
+    # garbled Arabic-Indic digits next to correct ones: the whole string
+    # cannot be re-encoded, the garbled run can
+    garbled = "٠".encode().decode("latin-1") * 2 + "١٦٦.eth"
+    with pytest.raises(ValidationError, match="'٠٠١٦٦.eth'"):
+        _pack_with_label(schema, taxonomies, garbled).validate()
+
+
+@pytest.mark.parametrize("char", ["\x07", "\x1b", "\x7f", "\x85", "\x9b"])
+def test_validate_non_printable_characters(
+    schema, taxonomies, char, caplog, monkeypatch
+):
+    _pack_with_label(schema, taxonomies, f"label{char}x").validate()
+    assert "non-printable control characters" in caplog.text
+
+    import graphsenselib.tagpack.tagpack as tp
+
+    monkeypatch.setattr(tp, "TEXT_PROBLEMS_ARE_ERRORS", True)
+    with pytest.raises(ValidationError, match="non-printable control characters"):
+        _pack_with_label(schema, taxonomies, f"label{char}x").validate()
+
+
+def test_validate_bad_text_in_context(schema, taxonomies, text_errors):
+    _pack_with_label(schema, taxonomies, "ok", context='{"note": "fine"}').validate()
+    tagpack = _pack_with_label(schema, taxonomies, "ok", context='{"note": "a\x01b"}')
+    with pytest.raises(ValidationError, match="Field 'context' contains non-printable"):
+        tagpack.validate()
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Zürich Exchange", "Артем", "日本 wallet", "Café € naïve", "two\nlines"],
+)
+def test_validate_accepts_correct_unicode(schema, taxonomies, label, text_errors):
+    _pack_with_label(schema, taxonomies, label).validate()
+
+
 def test_tags_cache_invalidation(schema, taxonomies):
     """Test that tags are cached and cache invalidates when contents change."""
     tagpack = TagPack(
@@ -1081,3 +1258,217 @@ def test_concept_ids_cache_invalidation():
     ids3 = taxonomy.concept_ids
     assert ids3 is not ids1, "Cache should be invalidated after add_concept"
     assert ids3 == ["concept1", "concept2"]
+
+
+def _choose_first_candidate(monkeypatch):
+    monkeypatch.setattr(
+        "graphsenselib.tagpack.tagpack.get_user_choice",
+        lambda hl, candidates: candidates[0][0],
+    )
+
+
+def test_dump_actor_updates_keeps_header_include(tmp_path, taxonomies, monkeypatch):
+    """add_actors on a pack with an !include header must write back the
+    include, not the header's fields (issue #33)."""
+    import shutil
+
+    import yaml
+
+    shutil.copytree("tests/testfiles/yaml_inclusion", tmp_path, dirs_exist_ok=True)
+    pack_file = tmp_path / "2021/01/20210101.yaml"
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies, tmp_path
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [("badhack", "BadHack")])
+    tagpack.update_lastmod()
+    out = tagpack.dump_actor_updates(str(pack_file))
+
+    assert out.startswith("header: !include header.yaml\n")
+    raw = yaml.safe_load(out.replace("!include ", ""))
+    assert raw["actor"] == "badhack"
+    assert raw["lastmod"] == date.today()
+    assert "title" not in raw and "creator" not in raw and "confidence" not in raw
+    assert raw["tags"][0]["context"] == '{"validated": true}'
+    assert list(raw)[-1] == "tags"
+
+    pack_file.write_text(out)
+    reloaded = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies, tmp_path
+    )
+    assert reloaded.contents["title"] == "BadHack TagPack"
+    assert reloaded.contents["actor"] == "badhack"
+
+
+def test_dump_actor_updates_sets_tag_actors_only(tmp_path, taxonomies, monkeypatch):
+    """Per-tag actors are written; values filled in on load are not."""
+    import yaml
+
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "title: Two actors\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-01\n"
+        "tags:\n"
+        "- address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "  label: alpha\n"
+        "  context:\n"
+        "    validated: true\n"
+        "- address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        "  label: beta\n"
+    )
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+    raw = yaml.safe_load(tagpack.dump_actor_updates(str(pack_file)))
+
+    assert [t["actor"] for t in raw["tags"]] == ["alpha-actor", "beta-actor"]
+    assert "actor" not in raw
+    assert raw["tags"][0]["context"] == {"validated": True}
+    assert "confidence" not in raw and "network" not in raw
+
+
+def test_dump_actor_updates_edits_lines_in_place(tmp_path, taxonomies, monkeypatch):
+    """Only the actor lines and the lastmod value change; comments, blank
+    lines, quoting and nested blocks stay as written."""
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "# Pack about two wallets\n"
+        "title: Two wallets\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-03   # bumped by tooling\n"
+        "\n"
+        "tags:\n"
+        "  # first one is validated\n"
+        "  - address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        '    label: "alpha"\n'
+        "    context:\n"
+        "      validated: true\n"
+        "\n"
+        "  - address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "    label: beta\n"
+        "    description: |\n"
+        "      multi line\n"
+        "      text\n"
+    )
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+    tagpack.update_lastmod()
+
+    assert tagpack.dump_actor_updates(str(pack_file)) == (
+        "# Pack about two wallets\n"
+        "title: Two wallets\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        f"lastmod: {date.today().isoformat()}   # bumped by tooling\n"
+        "\n"
+        "tags:\n"
+        "  # first one is validated\n"
+        "  - address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        '    label: "alpha"\n'
+        "    context:\n"
+        "      validated: true\n"
+        "    actor: alpha-actor\n"
+        "\n"
+        "  - address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "    label: beta\n"
+        "    description: |\n"
+        "      multi line\n"
+        "      text\n"
+        "    actor: beta-actor\n"
+    )
+
+
+def test_dump_actor_updates_falls_back_for_flow_style_tags(
+    tmp_path, taxonomies, monkeypatch, caplog
+):
+    """A change that is not a plain line edit rewrites the whole file."""
+    import yaml
+
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "title: Flow tags\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-01\n"
+        "tags:\n"
+        "- {address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF, label: alpha}\n"
+        "- {address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh, label: beta}\n"
+    )
+    tagpack = TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+    raw = yaml.safe_load(tagpack.dump_actor_updates(str(pack_file)))
+
+    assert "rewriting the whole file" in caplog.text
+    assert [t["actor"] for t in raw["tags"]] == ["alpha-actor", "beta-actor"]
+    assert "confidence" not in raw
+
+
+def _two_tag_pack(tmp_path, taxonomies, alpha_extra, beta_extra):
+    pack_file = tmp_path / "pack.yaml"
+    pack_file.write_text(
+        "title: Two tags\n"
+        "creator: GraphSense Team\n"
+        "currency: BTC\n"
+        "source: https://example.com\n"
+        "lastmod: 2020-01-01\n"
+        "tags:\n"
+        "- address: 1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF\n"
+        "  label: alpha\n"
+        f"{alpha_extra}"
+        "- address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        "  label: beta\n"
+        f"{beta_extra}"
+    )
+    return TagPack.load_from_file(
+        "http://example.com/", str(pack_file), TagPackSchema(), taxonomies
+    )
+
+
+def test_add_actors_leaves_tags_outside_category_filter_alone(
+    tmp_path, taxonomies, monkeypatch
+):
+    """Used to raise KeyError and would have given beta alpha's actor."""
+    tagpack = _two_tag_pack(
+        tmp_path, taxonomies, "  category: exchange\n", "  category: miner\n"
+    )
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(
+        lambda label: [(f"{label}-actor", label)], only_categories=["exchange"]
+    )
+
+    assert "actor" not in tagpack.contents
+    assert [t.get("actor") for t in tagpack.contents["tags"]] == ["alpha-actor", None]
+
+
+def test_add_actors_keeps_existing_tag_actor(tmp_path, taxonomies, monkeypatch):
+    """Used to move beta's new actor to pack level and drop alpha's actor."""
+    tagpack = _two_tag_pack(tmp_path, taxonomies, "  actor: binance\n", "")
+    _choose_first_candidate(monkeypatch)
+
+    assert tagpack.add_actors(lambda label: [(f"{label}-actor", label)])
+
+    assert "actor" not in tagpack.contents
+    assert [t.get("actor") for t in tagpack.contents["tags"]] == [
+        "binance",
+        "beta-actor",
+    ]

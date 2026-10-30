@@ -9,7 +9,6 @@ from functools import wraps
 from typing import List, Dict, Optional
 
 import numpy as np
-from graphsenselib.utils.bch import bch_address_to_legacy as to_legacy_address
 from psycopg2 import connect
 from psycopg2.errors import DeadlockDetected
 from psycopg2.extensions import AsIs, register_adapter
@@ -18,7 +17,7 @@ from psycopg2.extras import execute_batch, execute_values
 from graphsenselib.tagpack import ValidationError
 from graphsenselib.tagpack.constants import KNOWN_NETWORKS
 from graphsenselib.tagpack.tagpack import TagPack
-from graphsenselib.tagpack.utils import get_github_repo_url
+from graphsenselib.tagpack.utils import get_github_repo_url, normalize_tag_address
 import logging
 
 register_adapter(np.int64, AsIs)
@@ -179,9 +178,26 @@ def retry_on_deadlock(times=1):
     return innerfun
 
 
+# libpq TCP keepalive and user timeout: a connection whose server side is
+# gone (VPN outage, NAT timeout) fails within about two minutes instead of
+# hanging forever.
+_LIBPQ_KEEPALIVE = {
+    "keepalives": 1,
+    "keepalives_idle": 60,
+    "keepalives_interval": 15,
+    "keepalives_count": 4,
+    "tcp_user_timeout": 120_000,
+}
+
+
 class TagStore(object):
     def __init__(self, url, schema):
-        self.conn = connect(url, options=f"-c search_path={schema}")
+        self.conn = connect(
+            url,
+            options=f"-c search_path={schema}",
+            connect_timeout=30,
+            **_LIBPQ_KEEPALIVE,
+        )
         self.cursor = self.conn.cursor()
 
         self.schema = schema
@@ -1110,29 +1126,12 @@ def _get_tag(tag, tagpack_id, tag_type_default, actor_resolve_mapping=None):
     )
 
 
-def _perform_address_modifications(address, network):
-    if "BCH" == network.upper() and address.startswith("bitcoincash"):
-        try:
-            address = to_legacy_address(address)
-        except Exception as exc:
-            logger.warning(
-                "Could not normalize BCH cash address during insert; using original address as-is: %s (%s)",
-                address,
-                exc,
-            )
-
-    elif "ETH" == network.upper():
-        address = address.lower()
-
-    return address
-
-
 def _get_network_and_address(tag):
     if "address" in tag.all_fields:
         net = tag.all_fields.get("network").upper()
         addr = tag.all_fields.get("address")
 
-        addr = _perform_address_modifications(addr, net)
+        addr = normalize_tag_address(addr, net, "insert")
 
         return net, addr
     else:

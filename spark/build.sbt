@@ -127,7 +127,9 @@ lazy val root = (project in file(".")).
       // Same org.bouncycastle.* packages, so it is a drop-in; it must stay on
       // the classpath because EventEncoder hashes the event signature through
       // org.web3j.crypto.Hash, which calls BouncyCastle's Keccak digest.
-      "org.bouncycastle" % "bcprov-jdk18on" % "1.80",
+      // 1.85 clears the advisories filed against 1.80 (GHSA-9pwp-9qqc-pr26,
+      // GHSA-qp49-qgx5-5m26, GHSA-574f-3g2m-x479, GHSA-c3fc-8qff-9hwx).
+      "org.bouncycastle" % "bcprov-jdk18on" % "1.85",
       // Pulled transitively at 3.10 by spark-cassandra-connector-driver, inside
       // the advisory range >= 3.0, < 3.18.0. Declared directly rather than as a
       // dependencyOverride so that sbt's latest-revision conflict manager picks

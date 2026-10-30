@@ -20,8 +20,13 @@ KNOWN_CURRENCIES = {
     "ARB": "Arbitrum",
     "USDT": "Tether USD",
     "USDC": "Circle USD Coin",
+    "DAI": "Dai",
     "KCS": "KuCoin Token",
     "MATIC": "Polygon Token",
+    "POL": "Polygon Ecosystem Token",
+    "SOL": "Solana",
+    "AVAX": "Avalanche",
+    "TON": "Toncoin",
 }
 
 
@@ -45,11 +50,56 @@ KNOWN_NETWORKS = {
     "KCC": "Kucoin Community Chain",
     "ALGO": "Algorand",
     "OP": "Optimism",
+    "POL": "Polygon PoS",
+    "AVAX": "Avalanche C-Chain",
+    "BASE": "Base",
+    "SOL": "Solana",
+    "TON": "TON",
 }
 
+# The chains a token lives on, used for (a) the "network is a token, not a
+# chain" warning, which suggests these, and (b) address validation of tags
+# whose network is the token: the address must be valid on one of them, so
+# a chain missing here turns its valid addresses into "invalid" findings.
+# Every chain listed needs a validator in utils/address.py, else the token
+# cannot be checked at all. Chains a token has left (USDT on ALGO, EOSIO and
+# Omni/BTC, USDC on TRX) stay, for older tags. Last reviewed 2026-10-23;
+# stablecoins add chains every few months, so review it now and then.
 NETWORK_SUGGESTIONS = {
-    "USDT": ["ETH", "ARB", "ETC", "BSC", "TRX", "ALGO", "EOSIO", "KCC"],
-    "USDC": ["ETH", "ARB", "ETC", "BSC", "TRX", "OP", "KCC", "ALGO"],
+    "USDT": [
+        "ETH",
+        "TRX",
+        "BSC",
+        "SOL",
+        "TON",
+        "ARB",
+        "AVAX",
+        "POL",
+        "OP",
+        "BASE",
+        "KCC",
+        "ALGO",
+        "EOSIO",
+        # Omni Layer: USDT's first chain (2014-2023), a protocol on top of
+        # Bitcoin, so its addresses are Bitcoin addresses. Kept for older
+        # tags; it also makes any valid BTC address valid under USDT.
+        "BTC",
+    ],
+    "USDC": [
+        "ETH",
+        "SOL",
+        "BASE",
+        "ARB",
+        "AVAX",
+        "POL",
+        "OP",
+        "BSC",
+        "TRX",
+        "ALGO",
+        "KCC",
+    ],
+    "DAI": ["ETH", "ARB", "OP", "POL", "BASE", "BSC", "AVAX"],
+    "WETH": ["ETH", "ARB", "OP", "BASE", "POL", "BSC", "AVAX"],
     "KCS": ["ETH", "KCC"],
 }
 

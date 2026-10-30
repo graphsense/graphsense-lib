@@ -1,4 +1,6 @@
 # flake8: noqa: F501
+import base64
+import hashlib
 import random
 from functools import reduce
 import pytest
@@ -367,6 +369,14 @@ def test_utils_invalid_address_is_value_error():
     assert issubclass(InvalidAddress, ValueError)
 
 
+# A well-formed ZIP-316 unified address: bech32m with HRP "u" over 80
+# arbitrary bytes (only the checksum can be checked offline).
+_UNIFIED_ADDRESS = (
+    "u15j4ag3yvf9tzmq5pzhgn587va2f8754564ze99lcksly9k5fyw9uzd3xus7ukwxakzpy3zf8aj"
+    "gyldpq2azrnqlgskz3082s25d0uc4plnjrvwz5l7ygel6t3eu8t4sq686f6f"
+)
+
+
 class TestAddressValidation:
     """Test cryptocurrency address validation functions"""
 
@@ -404,6 +414,12 @@ class TestAddressValidation:
             "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj1",
             # Witness v0 encoded with bech32m instead of bech32 (BIP-350 invalid).
             "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kemeawh",
+            # Valid Base58Check, but no address: private keys (WIF),
+            # extended keys, a TRON address
+            "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ",
+            "KwdMAjGmerYanjeui5SHS7JkmpZvVipYvB2LJGU1ZxJwYvP98617",
+            "xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3",
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",
         ]
 
         for addr in invalid_btc:
@@ -437,6 +453,10 @@ class TestAddressValidation:
             "invalid",
             "bitcoincash:invalid",
             "0x1234567890abcdef1234567890abcdef12345678",
+            # Base58Check with a version byte that is no BCH address
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",
+            "xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3",
+            "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ",
         ]
 
         for addr in invalid_bch:
@@ -489,6 +509,9 @@ class TestAddressValidation:
             "t1LEhsLv5W5USqfzyvJrAiRFV9qbehtBYKP",
             "t1UCM8GLR6ysUsgG2SbWR1on1kyHYAy71Eb",
             "t3UeqMiZA7z1BdQNsKNWh1iUgSa2KmoceJA",
+            # Sapling (bech32)
+            "zs1xum6qs4t6tar3369rl9qj9ptaemgs6mh9eht4y8zcxg2t3ls9738zdaa2e68vcrevyatsmxfudd",
+            _UNIFIED_ADDRESS,
         ]
 
         for addr in valid_zec:
@@ -504,6 +527,11 @@ class TestAddressValidation:
             "",
             "invalid",
             "z1invalid",
+            # Sapling with a corrupted checksum / cut short
+            "zs1xum6qs4t6tar3369rl9qj9ptaemgs6mh9eht4y8zcxg2t3ls9738zdaa2e68vcrevyatsmxfuda",
+            "zs1xum6qs4t6tar3369rl9qj9ptaemgs6mh9eht4y8zcxg2t3ls9738zdaa2e68",
+            _UNIFIED_ADDRESS[:-1] + "q",
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",  # TRX address
             "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",  # BTC address
             "0x1234567890abcdef1234567890abcdef12345678",
         ]
@@ -589,6 +617,48 @@ class TestAddressValidation:
             assert not validate_address("trx", addr), (
                 f"Invalid TRX address {addr} should fail validation"
             )
+
+    def test_validate_other_networks(self):
+        evm = "0xFF4c1897369C0DFa37e3442BB08c810A33214349"
+        for network in ("bsc", "arb", "avax", "base", "pol", "op", "zkf"):
+            assert validate_address(network, evm)
+            assert not validate_address(network, evm.replace("0xFF", "0xfF"))
+        assert validate_address("sol", "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM")
+        assert not validate_address("sol", "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w")
+        assert not validate_address(
+            "sol", "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWW0"
+        )
+
+    def test_validate_ton(self):
+        valid = [
+            "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N",  # bounceable
+            "UQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqEBI",  # non-bounceable
+            "0:83dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+        ]
+        for a in valid:
+            assert validate_address("ton", a), a
+        invalid = [
+            "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2M",  # checksum
+            "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2",  # truncated
+            "1:83dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",
+        ]
+        for a in invalid:
+            assert not validate_address("ton", a), a
+
+    def test_validate_algo_and_eosio(self):
+        key = hashlib.sha256(b"k").digest()
+        raw = key + hashlib.new("sha512_256", key).digest()[-4:]
+        algo = base64.b32encode(raw).decode().rstrip("=")
+        assert validate_address("algo", algo)
+        assert not validate_address("algo", algo.lower())
+        # the last character's 2 padding bits must be zero
+        assert not validate_address("algo", algo[:-1] + "B")
+        assert not validate_address("algo", algo[:20] + algo[21:] + "A")
+        for name in ("eosio", "tethertether", "a.b", "abcdefghijklj"):
+            assert validate_address("eosio", name)
+        for name in ("abc.", "ABC", "abcdefghijklz", "abcdefghijklmn", "a6"):
+            assert not validate_address("eosio", name)
 
     def test_validate_address_unsupported_currency(self):
         """Test validation with unsupported currency"""

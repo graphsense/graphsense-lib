@@ -23,6 +23,7 @@ from fastmcp.exceptions import (
     ToolError,
     ValidationError as FastMCPValidationError,
 )
+from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from pydantic import ValidationError as PydanticValidationError
 
@@ -76,8 +77,22 @@ class ErrorLoggingMiddleware(Middleware):
             raise
         except Exception:
             name = _identify(context)
-            logger.exception("MCP %s %r raised an unhandled exception", kind, name)
+            logger.exception(
+                "MCP %s %r raised an unhandled exception | User: %s",
+                kind,
+                name,
+                request_user(),
+            )
             raise
+
+
+def request_user() -> str:
+    """The calling user from the gateway's `X-Consumer-Username`, the same
+    header the REST error logs read (`web/app.py:_get_request_context`).
+    "unknown" outside an HTTP request (stdio transport, unit tests) or without
+    the gateway in front.
+    """
+    return get_http_headers().get("x-consumer-username", "unknown")
 
 
 def _identify(context: MiddlewareContext) -> str:

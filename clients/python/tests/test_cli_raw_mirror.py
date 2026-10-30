@@ -5,7 +5,7 @@ generator renames a method or an API class, one of these tests will fail and
 point precisely at the mismatch.
 
 They are deliberately tolerant about additions — every generated `*Api` class
-except the deprecated `EntitiesApi` must become a group; a small set of
+must become a group; a small set of
 stable endpoints must exist; method invocation must route to the right
 HTTP call.
 """
@@ -35,10 +35,7 @@ def test_raw_help_lists_all_non_deprecated_apis():
     output = res.output
     for cls_name in _all_api_classes():
         key = cls_name[: -len("Api")].lower()
-        if cls_name == "EntitiesApi":
-            assert key not in output, f"deprecated group {key} leaked"
-        else:
-            assert key in output, f"missing raw group {key} in help"
+        assert key in output, f"missing raw group {key} in help"
 
 
 def test_raw_addresses_has_stable_methods():
@@ -54,17 +51,14 @@ def test_raw_addresses_has_stable_methods():
         assert expected in res.output
 
 
-def test_raw_entities_hidden_unless_flag_set(monkeypatch):
-    monkeypatch.delenv("GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS", raising=False)
-    # Re-import the built group to respect env at build time.
-    from graphsense.cli.raw import build_raw_group
+def test_raw_entities_removed_points_to_clusters():
+    runner = CliRunner()
+    res = runner.invoke(cli, ["raw", "--help"])
+    assert "entities" not in res.output
 
-    group = build_raw_group()
-    assert "entities" not in group.commands
-
-    monkeypatch.setenv("GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS", "1")
-    group2 = build_raw_group()
-    assert "entities" in group2.commands
+    res = runner.invoke(cli, ["raw", "entities", "get-entity", "btc", "1"])
+    assert res.exit_code != 0
+    assert "ClustersApi.get_cluster" in res.output
 
 
 def test_raw_get_address_round_trips(http_mock, sample_address):

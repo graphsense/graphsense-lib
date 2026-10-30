@@ -11,6 +11,7 @@ from pydantic import BaseModel, TypeAdapter, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from ..utils import first_or_default, flatten, resolve_env_vars
+from ..utils.date import validate_older_than_run_spec, weekday_number
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ currency_to_public_schema_type = {
 }
 supported_fiat_currencies = ["USD", "EUR"]
 EXCHANGE_RATES_PROVIDERS = ["coingecko", "coinmarketcap", "cryptocompare"]
+# Sinks of `ingest from-node` (ingest.common.INGEST_SINKS plus delta).
+FROM_NODE_SINKS = ("cassandra", "delta", "parquet")
 avg_blocktimes_by_currencies = {
     "trx": 7,
     "eth": 15,
@@ -41,8 +44,8 @@ reorg_backoff_blocks = {
     "trx": 20,
     "eth": 70,
     "btc": 3,
-    "bch": 15,
-    "zec": 150,
+    "bch": 10,  # BCHN finalizes blocks at depth 10
+    "zec": 100,  # zcashd and Zebra reject reorgs deeper than 99 blocks
     "ltc": 12,
 }
 
@@ -105,6 +108,10 @@ def get_default_data_configuration(
     # into dated keyspaces (e.g. zec_raw_20260423), producing two configuration
     # rows after the first real ingest.
 
+    # The transformed defaults are the production layout (the configuration
+    # rows of the prod keyspaces); `transformation raw-to-transformed` passes
+    # them to the graphsense-spark job, whose own defaults differ.
+
     # Configuration for account-based currencies (eth, trx)
     if currency == "eth":
         if keyspace_type == "raw":
@@ -117,6 +124,8 @@ def get_default_data_configuration(
                 "address_prefix_length": 5,
                 "bucket_size": 25000,
                 "tx_prefix_length": 5,
+                "block_bucket_size_address_txs": 150000,
+                "addressrelations_ids_nbuckets": 100,
                 "fiat_currencies": ["EUR", "USD"],
             }
     elif currency == "trx":
@@ -128,8 +137,10 @@ def get_default_data_configuration(
         else:  # transformed
             return {
                 "address_prefix_length": 5,
-                "bucket_size": 10000,
+                "bucket_size": 25000,
                 "tx_prefix_length": 5,
+                "block_bucket_size_address_txs": 50000,
+                "addressrelations_ids_nbuckets": 100,
                 "fiat_currencies": ["EUR", "USD"],
             }
 
@@ -163,15 +174,20 @@ def is_account_based_currency(currency: str) -> bool:
     return currency_to_public_schema_type.get(currency.lower()) == "account"
 
 
-def get_reorg_backoff_blocks(network: str) -> int:
+def get_reorg_backoff_blocks(network: str, override: Optional[int] = None) -> int:
     """For imports we do not want to always catch up with the latest block
     since we want to avoid reorgs lead to spurious data in the database.
 
-    Default conservative estimate is 2h worth of blocks lag.
+    Ingest has no reorg handling: blocks orphaned by a reorg deeper than this
+    stay in the raw keyspace. ``override`` is the per-network
+    ``ingest_config.reorg_backoff_blocks`` and wins over the built-in default.
 
     Args:
         network (str): currency/network label
+        override (Optional[int]): configured backoff, if any
     """
+    if override is not None:
+        return override
     return reorg_backoff_blocks[network.lower()]
 
 
@@ -209,6 +225,16 @@ class IngestConfig(_WarnExtraModel):
             "monitor-raw-ingest`). Unset disables the automatic check."
         ),
     )
+    reorg_backoff_blocks: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How many blocks `ingest from-node` stays behind the node tip to "
+            "avoid ingesting blocks a reorg later orphans (ingest has no reorg "
+            "handling). Unset uses the built-in default for the network. At "
+            "least 1."
+        ),
+    )
     exchange_rates_provider: Optional[str] = Field(
         default=None,
         description=(
@@ -219,6 +245,49 @@ class IngestConfig(_WarnExtraModel):
             "its API key in the config). Unset disables the step."
         ),
     )
+
+    sinks: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Default --sinks of `ingest from-node`, e.g. [cassandra, delta]. "
+            "Unset: [cassandra]. --sinks on the command line replaces it."
+        ),
+    )
+    auto_compact: Optional[str] = Field(
+        default=None,
+        description=(
+            "When to compact the raw Delta Lake tables, e.g. '1w;sunday': on "
+            "Sundays if the last compaction is older than a week. Checked "
+            "after `ingest from-node` (with the delta sink), by `ingest "
+            "delta-lake auto-compact`, and by the sync daemon as a step of "
+            "its own. Unset: never."
+        ),
+    )
+    auto_compact_last_n: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Compact only the newest N partitions of each table (default 10)."
+        ),
+    )
+
+    @field_validator("sinks")
+    @classmethod
+    def _validate_sinks(cls, v):
+        if v is not None:
+            unknown = sorted(set(v) - set(FROM_NODE_SINKS))
+            if unknown or not v:
+                raise ValueError(
+                    f"sinks must be a non-empty list of {list(FROM_NODE_SINKS)}"
+                )
+        return v
+
+    @field_validator("auto_compact")
+    @classmethod
+    def _validate_auto_compact(cls, v):
+        if v is not None:
+            validate_older_than_run_spec(v)
+        return v
 
     @field_validator("exchange_rates_provider")
     @classmethod
@@ -246,6 +315,27 @@ class KeyspaceSetupConfig(_WarnExtraModel):
     data_configuration: Dict[str, object] = Field(default_factory=lambda: {})
 
 
+class DeltaUpdateConfig(_WarnExtraModel):
+    """Defaults for `delta-update update`; a flag on the command line wins.
+
+    Not to be confused with DeltaUpdaterConfig below, which the updater
+    builds at run time.
+    """
+
+    write_batch_size: Optional[int] = Field(
+        default=None, ge=1, description="Default --write-batch-size (unset: 10)."
+    )
+    parallel_workers: Optional[int] = Field(
+        default=None, ge=1, description="Default --parallel-workers (unset: 1)."
+    )
+    forward_fill_rates: Optional[bool] = Field(
+        default=None, description="Default --forward-fill-rates (unset: off)."
+    )
+    pedantic: Optional[bool] = Field(
+        default=None, description="Default --pedantic (unset: off)."
+    )
+
+
 class DeltaUpdaterConfig(BaseModel):
     delta_sink: Optional[FileSink]
     currency: str
@@ -258,6 +348,7 @@ class KeyspaceConfig(_WarnExtraModel):
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
     ingest_config: Optional[IngestConfig]
+    delta_update_config: DeltaUpdateConfig = Field(default_factory=DeltaUpdateConfig)
     keyspace_setup_config: Dict[str, KeyspaceSetupConfig] = Field(
         default_factory=lambda: {kst: KeyspaceSetupConfig() for kst in keyspace_types}
     )
@@ -343,6 +434,237 @@ class PubkeyConfig(_WarnExtraModel):
         return v
 
 
+# Flags the sync scheduler sets itself on the commands it runs. A copy in the
+# per-currency extra args would either be ignored or fight the scheduler.
+_SYNC_RESERVED_ARGS = frozenset(
+    {
+        "-e",
+        "--env",
+        "-c",
+        "--currency",
+        "--start-block",
+        "--end-block",
+        "--config-file",
+        "--no-exchange-rates",
+        "--no-staleness-check",
+    }
+)
+
+
+# The daemon compacts in a step of its own, with its own timeout; inside an
+# ingest job a long compaction would hit the ingest timeout.
+_SYNC_COMPACTION_ARGS = frozenset(
+    {"--auto-compact", "--auto-compact-last-n", "--no-auto-compact"}
+)
+
+
+def _check_sync_args(args: List[str]) -> List[str]:
+    for arg in args:
+        name = arg.split("=", 1)[0]
+        if name in _SYNC_RESERVED_ARGS:
+            raise ValueError(
+                f"{arg} is set by the sync scheduler and cannot be passed here"
+            )
+        if name in _SYNC_COMPACTION_ARGS:
+            raise ValueError(
+                f"{arg}: the sync daemon compacts in a step of its own; set "
+                "ingest_config.auto_compact (and auto_compact_last_n) instead"
+            )
+    return args
+
+
+# A channel only says which daemon runs a network; it is no release track
+# (the image tag is). Daemons started with -c ignore it unless set.
+DEFAULT_SYNC_CHANNEL = "default"
+
+
+class SyncNetworkConfig(_WarnExtraModel):
+    """How `graphsense-cli sync run` keeps one network up to date."""
+
+    enabled: bool = True
+    channel: str = Field(
+        default=DEFAULT_SYNC_CHANNEL,
+        description=(
+            "Only the sync daemon started with this --channel runs the "
+            "network, e.g. to let several networks share one daemon. With "
+            "one daemon per network (-c) leave it unset."
+        ),
+    )
+    poll_seconds: Optional[int] = Field(default=None, ge=5)
+    max_blocks_per_job: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Upper bound for one ingest job. Default: ~2h of blocks.",
+    )
+    ingest_args: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra arguments for `ingest from-node`, e.g. "
+            "[--sinks, cassandra, --sinks, delta]."
+        ),
+    )
+    delta_update: bool = True
+    delta_update_args: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra arguments for `delta-update update`, e.g. "
+            "[--forward-fill-rates, --parallel-workers, 4]."
+        ),
+    )
+    lag_alert_minutes: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Alert when the newest raw block is older than this.",
+    )
+    reorg_check_depth: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Compare this many of the newest ingested block hashes with the "
+            "node's before every ingest; a mismatch means a reorg deeper than "
+            "the reorg backoff, and pauses the network. 0 disables the check."
+        ),
+    )
+
+    @field_validator("ingest_args", "delta_update_args")
+    @classmethod
+    def _no_reserved_args(cls, v):
+        return _check_sync_args(v)
+
+
+# The daemon passes these to every task itself.
+_SYNC_TASK_RESERVED_ARGS = frozenset({"-e", "--env", "--config-file"})
+
+
+class SyncTaskConfig(_WarnExtraModel):
+    """A job `sync run` starts on a schedule, beside the per-network cycles,
+    e.g. the cross-network pubkey update. Runs once per scheduled time; a
+    time missed while no daemon ran is caught up when one starts."""
+
+    enabled: bool = True
+    channel: str = Field(
+        default=DEFAULT_SYNC_CHANNEL,
+        description=(
+            "Only a daemon started with this --channel, and without -c, runs "
+            "the task. Give a task that needs its own container (Spark with "
+            "host networking, a larger memory limit) a channel of its own."
+        ),
+    )
+    args: List[str] = Field(
+        description=(
+            "graphsense-cli arguments, e.g. [transformation, "
+            "pubkey-update-all, --spark-profile, pubkey]; the daemon appends "
+            "-e <env>."
+        ),
+    )
+    at: str = Field(default="00:00", description="Time of day, HH:MM UTC.")
+    weekday: Optional[str] = Field(
+        default=None, description="e.g. saturday; unset: every day."
+    )
+    timeout_minutes: int = Field(default=720, ge=1)
+    retry_minutes: int = Field(
+        default=60,
+        ge=1,
+        description="After a failure, retry this much later, until it succeeds.",
+    )
+    success_topic: Optional[str] = Field(
+        default=None,
+        description="Notification topic for a successful run; failures go to "
+        "sync.alert_topic.",
+    )
+
+    @field_validator("args")
+    @classmethod
+    def _check_args(cls, v):
+        if not v:
+            raise ValueError("args must name a graphsense-cli command")
+        for arg in v:
+            if arg.split("=", 1)[0] in _SYNC_TASK_RESERVED_ARGS:
+                raise ValueError(
+                    f"{arg} is set by the sync daemon and cannot be passed here"
+                )
+        return v
+
+    @field_validator("at")
+    @classmethod
+    def _check_at(cls, v):
+        hours, sep, minutes = v.partition(":")
+        if not (
+            sep
+            and hours.isdigit()
+            and minutes.isdigit()
+            and int(hours) < 24
+            and int(minutes) < 60
+        ):
+            raise ValueError(f"{v!r}: use HH:MM (UTC), e.g. 19:00")
+        return v
+
+    @field_validator("weekday")
+    @classmethod
+    def _check_weekday(cls, v):
+        if v is not None:
+            weekday_number(v)
+        return v
+
+
+class SyncConfig(_WarnExtraModel):
+    """Settings for the continuous sync daemon (`graphsense-cli sync run`)."""
+
+    poll_seconds: int = Field(default=30, ge=5)
+    max_parallel_networks: int = Field(default=4, ge=1)
+    max_parallel_delta_updates: int = Field(default=2, ge=1)
+    ingest_timeout_minutes: int = Field(default=60, ge=1)
+    delta_update_timeout_minutes: int = Field(default=180, ge=1)
+    rates_every_minutes: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "Ingest jobs skip the exchange-rates pre-step, except once per "
+            "this interval."
+        ),
+    )
+    consistency_check_every_minutes: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Run `monitoring check-consistency` this often. Unset: never.",
+    )
+    consistency_check_args: List[str] = Field(default_factory=list)
+    compaction_check_every_minutes: int = Field(
+        default=60,
+        ge=1,
+        description=(
+            "How often to run `ingest delta-lake auto-compact` for networks "
+            "with ingest_config.auto_compact set. The command compacts only "
+            "when that schedule says so; otherwise it is a quick check."
+        ),
+    )
+    compaction_timeout_minutes: int = Field(default=360, ge=1)
+    max_parallel_compactions: int = Field(default=1, ge=1)
+    alert_topic: str = "exceptions"
+    failure_alert_after: int = Field(
+        default=3, ge=1, description="Alert after this many failures in a row."
+    )
+    max_backoff_minutes: int = Field(default=15, ge=1)
+    stop_grace_seconds: int = Field(
+        default=480,
+        ge=10,
+        description=(
+            "When the daemon stops (SIGTERM, e.g. docker stop or a new image), "
+            "how long a running job may take to finish its current chunk "
+            "before it is killed. Long enough for a delta-update batch, so no "
+            "WAL record is left for the next version. Keep the container's "
+            "stop grace period above it (compose stop_grace_period: 10m)."
+        ),
+    )
+    networks: Dict[str, SyncNetworkConfig] = Field(default_factory=dict)
+    tasks: Dict[str, SyncTaskConfig] = Field(default_factory=dict)
+
+    @field_validator("consistency_check_args")
+    @classmethod
+    def _no_reserved_args(cls, v):
+        return _check_sync_args(v)
+
+
 class Environment(_WarnExtraModel):
     cassandra_nodes: List[str]
     username: Optional[str] = Field(default_factory=lambda: None)
@@ -365,6 +687,7 @@ class Environment(_WarnExtraModel):
     )
     keyspaces: Dict[str, KeyspaceConfig]
     pubkey: Optional[PubkeyConfig] = None
+    sync: Optional[SyncConfig] = None
 
     @field_validator("consistency_level")
     @classmethod
@@ -423,7 +746,7 @@ DEFAULT_SCALA_JOB_PACKAGES = [
     "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
     "joda-time:joda-time:2.10.10",
     "org.web3j:abi:4.8.7",
-    "org.bouncycastle:bcprov-jdk18on:1.80",
+    "org.bouncycastle:bcprov-jdk18on:1.85",
     "org.apache.commons:commons-lang3:3.18.0",
     "graphframes:graphframes:0.8.3-spark3.5-s_2.12",
 ]
@@ -865,7 +1188,11 @@ class AppConfig(GoodConf):
             if baseline and config_name != "baseline":
                 return {**baseline, **creds}
             return creds
-        return self.s3_credentials
+        return (
+            self.s3_credentials
+            if self.s3_credentials is not None
+            else self.s3_configs.get("baseline")
+        )
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)
@@ -927,6 +1254,8 @@ class AppConfig(GoodConf):
         field = cls.model_fields.get(field_name)
         if field is None:
             raise ValueError("unknown config key")
+        # FieldInfo.annotation is Optional, but a declared model field always has one.
+        assert field.annotation is not None
         return TypeAdapter(field.annotation).validate_python(value)
 
     @staticmethod

@@ -81,7 +81,7 @@ def fetch_cryptocompare_rates(
     assert diffs.keys().unique()[0] == pd.Timedelta("1 days")
 
     rates.date = rates.date.dt.strftime(DATE_FORMAT)
-    rates.rename(columns={"close": fiat}, inplace=True)
+    rates = rates.rename(columns={"close": fiat})
 
     return rates[["date", fiat]]
 
@@ -222,15 +222,15 @@ def ingest(
 
         if exchange_rates.isna().values.any():
             logger.warning("exchange_rates contain NaNs, dropping them now")
-            exchange_rates.dropna(inplace=True)
+            exchange_rates = exchange_rates.dropna()
 
         # insert final exchange rates into Cassandra
         if "USD" not in fiat_currencies:
-            exchange_rates.drop("USD", axis=1, inplace=True)
+            exchange_rates = exchange_rates.drop("USD", axis=1)
         exchange_rates["fiat_values"] = exchange_rates.drop("date", axis=1).to_dict(
             orient="records"
         )
-        exchange_rates.drop(fiat_currencies, axis=1, inplace=True)
+        exchange_rates = exchange_rates.drop(fiat_currencies, axis=1)
 
         # insert exchange rates into Cassandra table
         if not dry_run:

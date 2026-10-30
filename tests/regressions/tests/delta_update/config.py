@@ -26,6 +26,10 @@ class DeltaUpdateRange:
     start_block: int
     end_block: int
     note: str = ""
+    # The range must cluster addresses and merge fresh clusters; the test
+    # fails when it does not, so the clustering comparison cannot pass
+    # vacuously.
+    exercises_cluster_merges: bool = False
 
 
 # UTXO chains only -- the perf-targeted commit modifies update/utxo/update.py.
@@ -45,6 +49,14 @@ DELTA_UPDATE_RANGES: dict[str, list[DeltaUpdateRange]] = {
             "dense", 0, 30000,
             note="30k blocks -- mid-genesis era, picks up enough tx volume "
                  "for the batched UTXO update path to dominate fixed overheads",
+        ),
+        # Up to block 30k fresh clustering only creates and joins clusters.
+        # The first co-spends joining two (or three) existing clusters, in
+        # 10-block batches from block 2, are at blocks 47372-53581.
+        DeltaUpdateRange(
+            "merges", 0, 55000,
+            note="55k blocks -- the first fresh-cluster merges",
+            exercises_cluster_merges=True,
         ),
     ],
     "ltc": [
@@ -74,6 +86,7 @@ class DeltaUpdateConfig:
         default_factory=lambda: Path(__file__).resolve().parents[4]
     )
     range_note: str = ""
+    exercises_cluster_merges: bool = False
 
     @property
     def num_blocks(self) -> int:
@@ -109,6 +122,7 @@ def build_delta_update_configs() -> list[DeltaUpdateConfig]:
                     schema_type=SCHEMA_TYPE_MAP.get(currency, "utxo"),
                     gslib_path=gslib_path,
                     range_note=cr.note,
+                    exercises_cluster_merges=cr.exercises_cluster_merges,
                 )
             )
     return configs

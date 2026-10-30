@@ -10,7 +10,6 @@ from graphsenselib.web.models import (
     AddressTags,
     AddressTxs,
     Cluster,
-    Entity,
     Links,
     NeighborAddresses,
     RelatedAddresses,
@@ -93,37 +92,6 @@ async def get_address_cluster(
 ):
     """Get the cluster of an address."""
     result = await service.get_address_cluster(
-        ctx,
-        currency=currency.lower(),
-        address=address,
-        include_actors=include_actors,
-    )
-    return result
-
-
-@router.get(
-    "/addresses/{address}/entity",
-    summary="Get the entity for an address",
-    description=(
-        "Deprecated alias for `GET /{currency}/addresses/{address}/cluster`. "
-        "Returns the address cluster that contains the given address."
-    ),
-    operation_id="get_address_entity",
-    deprecated=True,
-    openapi_extra={"x-sunset": "2026-10-31"},
-    response_model=Entity,
-    response_model_exclude_none=True,
-    responses={404: {"description": "Address not found for the selected currency."}},
-)
-async def get_address_entity(
-    request: Request,
-    currency: CurrencyPath,
-    address: AddressPath,
-    include_actors: IncludeActorsQuery = True,
-    ctx: ServiceContext = Depends(get_ctx),
-):
-    """Get the entity of an address"""
-    result = await service.get_address_entity(
         ctx,
         currency=currency.lower(),
         address=address,

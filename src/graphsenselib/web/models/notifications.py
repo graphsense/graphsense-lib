@@ -1,0 +1,284 @@
+"""Address notifications: the contract of the /notifications/* routes.
+
+The routes forward to the gs-notifications service (routes/notifications.py),
+which owns the data and the rules; these models are its API contract.
+gs-notifications keeps an identical copy (its ``api/models.py``); change
+both together. Only the standard library and pydantic, and Python 3.10
+compatible, hence ``(str, Enum)`` rather than ``StrEnum``.
+"""
+
+from datetime import datetime
+from decimal import Decimal
+from enum import Enum
+from typing import Annotated, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class Frequency(str, Enum):
+    instant = "instant"
+    # Not offered at the moment: refused in requests (_offered), still valid
+    # in answers for subscriptions that have it.
+    hourly = "hourly"
+    daily = "daily"
+
+
+class Channel(str, Enum):
+    dashboard = "dashboard"
+    email = "email"
+
+
+class Direction(str, Enum):
+    incoming = "in"
+    outgoing = "out"
+
+
+class PausedReason(str, Enum):
+    no_access = "no_access"
+    user = "user"
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+# Ids are Postgres bigints.
+MAX_ID = 2**63 - 1
+Id = Annotated[int, Field(ge=1, le=MAX_ID)]
+
+
+# A BCP 47 language tag as browsers give it: "de", "en-GB", "de_AT".
+LOCALE_PATTERN = r"^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$"
+
+
+def _offered(v: Frequency | None) -> Frequency | None:
+    if v == Frequency.hourly:
+        raise ValueError("hourly is not offered at the moment: use instant or daily")
+    return v
+
+
+def _no_control_chars(v: str | None) -> str | None:
+    # Labels end up in mail subjects: no line breaks or other control chars.
+    if v is not None and any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+        raise ValueError("must not contain control characters")
+    return v
+
+
+def _known_timezone(v: str | None) -> str | None:
+    if v is not None:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"unknown timezone {v!r}") from e
+    return v
+
+
+# --- filters ---------------------------------------------------------------
+
+
+class ValueUnit(str, Enum):
+    eur = "eur"
+    usd = "usd"
+    native = "native"
+
+
+class MinValue(_Strict):
+    amount: Decimal = Field(ge=0, allow_inf_nan=False)
+    unit: ValueUnit
+
+
+class Filters(_Strict):
+    """Which transactions notify. Versioned so new options don't need a core
+    release (docs/DESIGN.md §6)."""
+
+    v: Literal[1] = 1
+    direction: Literal["in", "out", "both"] = "both"
+    min_value: MinValue | None = None
+    # Token tickers on account networks; None = everything.
+    tokens: list[str] | None = Field(default=None, max_length=50)
+    # Transfers of value 0: on account networks mostly the contract call
+    # behind a token transfer, also address-poisoning spam. Off unless asked.
+    include_zero_value: bool = False
+
+    @field_validator("tokens")
+    @classmethod
+    def _normalize_tokens(cls, v: list[str] | None) -> list[str] | None:
+        return (
+            None if v is None else sorted({t.strip().lower() for t in v if t.strip()})
+        )
+
+
+# --- subscriptions ---------------------------------------------------------
+
+
+class SubscriptionCreate(_Strict):
+    network: str = Field(min_length=1, max_length=32)
+    address: str = Field(min_length=1, max_length=256)
+    # Defaults to the user's default_frequency.
+    frequency: Frequency | None = None
+    filters: Filters = Filters()
+    label: str | None = Field(default=None, max_length=200)
+    # False: dashboard feed only, no mail for this subscription.
+    email: bool = True
+    # The browser's IANA zone (Intl.DateTimeFormat().resolvedOptions().timeZone).
+    # When given it becomes the user's timezone: times in mails, the hour
+    # daily digests go out. Unset keeps the current one (initially UTC).
+    timezone: str | None = Field(default=None, max_length=64)
+    # The dashboard's language ("de"). When given, mails are written in it;
+    # unset keeps the current one, and with none the portal uses the
+    # account's Keycloak language.
+    locale: str | None = Field(default=None, max_length=16, pattern=LOCALE_PATTERN)
+    # Created together with the subscriptions of this group (the `group` of
+    # one of them), e.g. the same address on another network. Unset: a group
+    # of its own. Kept for grouping them into one alert later.
+    group: int | None = Field(default=None, ge=1, le=MAX_ID)
+
+    _check_timezone = field_validator("timezone")(_known_timezone)
+    _check_label = field_validator("label")(_no_control_chars)
+    _check_frequency = field_validator("frequency")(_offered)
+
+
+class SubscriptionUpdate(_Strict):
+    """Only the fields sent are changed; ``label: null`` clears the label."""
+
+    frequency: Frequency | None = None
+    filters: Filters | None = None
+    label: str | None = Field(default=None, max_length=200)
+    # Mail for this subscription on (true) or off (false, feed only).
+    email: bool | None = None
+    # true pauses; false resumes (stays paused with no_access while the
+    # network is not allowed).
+    paused: bool | None = None
+    # The browser's IANA zone, as on create: becomes the user's timezone.
+    timezone: str | None = Field(default=None, max_length=64)
+    # The dashboard's language, as on create: mails are written in it.
+    locale: str | None = Field(default=None, max_length=16, pattern=LOCALE_PATTERN)
+
+    _check_label = field_validator("label")(_no_control_chars)
+    _check_frequency = field_validator("frequency")(_offered)
+    _check_timezone = field_validator("timezone")(_known_timezone)
+
+
+class Subscription(BaseModel):
+    id: int
+    network: str
+    # Normalized form, as the GraphSense API uses it.
+    address: str
+    frequency: Frequency
+    filters: Filters
+    label: str | None
+    # False: feed only, no mail. The default keeps older services valid.
+    email: bool = True
+    # None = running.
+    paused_reason: PausedReason | None
+    created_at: datetime
+    # Polling of the address since this subscription was created. None until
+    # its first check; check_errors counts failed checks in a row, retried with
+    # backoff until next_check_at. Defaults keep older services valid.
+    last_checked_at: datetime | None = None
+    next_check_at: datetime | None = None
+    check_errors: int = 0
+    # Unread feed items of this subscription (on networks the caller may see).
+    unread: int = 0
+    # How busy the address is: its transactions a day (all of them, not only
+    # those the filters let through), as seen by the poller. None until about
+    # an hour after the subscription was created.
+    transactions_per_day: int | None = None
+    # Subscriptions created together share it (SubscriptionCreate.group).
+    # None from older services.
+    group: int | None = None
+
+
+class SubscriptionPage(BaseModel):
+    items: list[Subscription]
+    # Pass as ?cursor= for the next page; None on the last page.
+    next_cursor: str | None
+
+
+# --- feed ------------------------------------------------------------------
+
+
+class FeedItem(BaseModel):
+    """One transaction on a watched address, as shown in the dashboard."""
+
+    id: int
+    subscription_id: int
+    # The subscription's label, if the user set one.
+    label: str | None
+    network: str
+    address: str
+    tx_hash: str
+    height: int
+    timestamp: datetime
+    direction: Direction
+    # Lowercase ticker; differs from network for token transfers.
+    currency: str
+    token: bool
+    # Base units, as a string (may exceed JSON number precision).
+    value: str
+    # Whole coins; None when the token's decimals are unknown.
+    amount: str | None
+    # Fiat values at the transaction's height, e.g. {"eur": 1.5, "usd": 1.7}.
+    fiat: dict[str, float]
+    # Account networks: the other side of the transfer.
+    counterparty: str | None
+    read: bool
+
+
+class FeedPage(BaseModel):
+    items: list[FeedItem]
+    # Pass as ?cursor= for the next (older) page; None on the last page.
+    next_cursor: str | None
+
+
+class FeedReadRequest(_Strict):
+    """Mark feed items read: the listed ``ids``, or everything up to and
+    including ``up_to`` (an item id). Exactly one of the two; either can be
+    narrowed to one ``subscription_id``."""
+
+    ids: list[Id] | None = Field(default=None, min_length=1, max_length=500)
+    up_to: Id | None = None
+    # Only this subscription's items.
+    subscription_id: Id | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "FeedReadRequest":
+        if (self.ids is None) == (self.up_to is None):
+            raise ValueError("give either ids or up_to")
+        return self
+
+
+class FeedReadResult(BaseModel):
+    # Items that were unread and are now read.
+    marked: int
+
+
+class UnreadCount(BaseModel):
+    # Unread items; counting stops at 1000, capped=true means "at least that
+    # many".
+    count: int
+    capped: bool
+    # Subscriptions with at least one unread item: the badge number, since a
+    # burst of transactions on one address is one thing to look at. Defaults
+    # keep older services valid.
+    subscriptions: int = 0
+
+
+# --- settings --------------------------------------------------------------
+
+
+class UserSettings(BaseModel):
+    email_enabled: bool
+    default_frequency: Frequency
+    # IANA name; daily digests go out at local time.
+    timezone: str
+
+
+class UserSettingsUpdate(_Strict):
+    email_enabled: bool | None = None
+    default_frequency: Frequency | None = None
+    timezone: str | None = None
+
+    _check_timezone = field_validator("timezone")(_known_timezone)
+    _check_frequency = field_validator("default_frequency")(_offered)

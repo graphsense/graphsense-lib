@@ -159,3 +159,122 @@ def test_decode_and_summary_on_fixtures(gs_file: Path):
     out = json.loads(summary.output)
     assert out["kind"] in ("graph", "pathfinder")
     assert "version" in out
+
+
+# ----------------------------------------------------------------- layout --
+
+LAYOUT_FIXTURES = FIXTURES_DIR / "layout"
+_POOLING = LAYOUT_FIXTURES / "C4_A1-A2_PoolingAddress.gs"
+_COLLECTOR = "1C6w4hZfMCo8u5JQ1RSzK159Juu49HK5cf"
+
+
+class _FixtureSides:
+    """Stands in for RestBackend: answers from tx_sides.json."""
+
+    def __init__(self, _client) -> None:
+        self.sides = json.loads((LAYOUT_FIXTURES / "tx_sides.json").read_text())
+
+    async def tx_sides(self, network: str, tx_id: str):
+        s, r = self.sides[network][tx_id]
+        return frozenset(s), frozenset(r)
+
+    async def tx_conversions(self, network: str, tx_id: str):
+        return []
+
+    async def tx_io_order(self, network: str, tx_id: str):
+        s, r = self.sides[network][tx_id]
+        return list(s), list(r)
+
+
+def _laid_out(path: Path) -> dict[str, tuple[float, float]]:
+    from graphsenselib.convert.gs_files import decode_gs, structure
+
+    data = structure(decode_gs(path))
+    return {n.id.id: (n.x, n.y) for n in (*data.addresses, *data.txs)}
+
+
+def test_layout_with_lookup_puts_inflows_left(tmp_path: Path, monkeypatch) -> None:
+    import graphsenselib.pathfinder as pathfinder
+
+    monkeypatch.setattr(pathfinder, "RestBackend", _FixtureSides)
+    out = tmp_path / "out.gs"
+    result = CliRunner().invoke(
+        gs_files_cli,
+        [
+            "layout",
+            str(_POOLING),
+            "-o",
+            str(out),
+            "--api-url",
+            "http://test",
+            "--report",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    xy = _laid_out(out)
+    # The collecting address is paid by 72862aca… and e370eb05…, so both
+    # txs sit on its left.
+    for tx in ("72862aca", "e370eb05"):
+        tx_x = next(v[0] for k, v in xy.items() if k.startswith(tx))
+        assert tx_x < xy[_COLLECTOR][0]
+    report = json.loads(result.output[result.output.index("{") :])
+    assert report["after"]["flow_backwards"] == 0
+    assert report["after"]["overlaps"] == 0
+
+
+def test_layout_without_api_url_falls_back(tmp_path: Path, monkeypatch) -> None:
+    for var in ("GRAPHSENSE_HOST", "IKNAIO_HOST", "GS_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    out = tmp_path / "out.gs"
+    result = CliRunner().invoke(gs_files_cli, ["layout", str(_POOLING), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert "without flow direction" in result.output
+    assert set(_laid_out(out)) == set(_laid_out(_POOLING))
+
+
+def test_layout_keeps_labels_starting_points_and_edges(tmp_path: Path) -> None:
+    from graphsenselib.convert.gs_files import decode_gs, structure
+
+    out = tmp_path / "out.gs"
+    result = CliRunner().invoke(
+        gs_files_cli, ["layout", str(_POOLING), "-o", str(out), "--no-lookup"]
+    )
+    assert result.exit_code == 0, result.output
+    before, after = structure(decode_gs(_POOLING)), structure(decode_gs(out))
+    assert after.name == before.name
+    assert after.agg_edges == before.agg_edges
+    starts = lambda d: {n.id.id for n in d.addresses if n.is_starting_point}  # noqa: E731
+    assert starts(after) == starts(before)
+    labels = lambda d: {(n.id.id, n.label) for n in d.annotations if n.label}  # noqa: E731
+    assert labels(after) == labels(before)
+
+
+def test_layout_without_starting_point_does_not_invent_one(tmp_path: Path) -> None:
+    from graphsenselib.convert.gs_files import builder_from_spec, decode_gs, structure
+
+    src = tmp_path / "in.gs"
+    builder_from_spec(
+        {
+            "addresses": ["A", "B"],
+            "txs": ["t"],
+            "agg_edges": [{"a": "A", "b": "B", "tx_ids": ["t"]}],
+        }
+    ).write(src)
+    out = tmp_path / "out.gs"
+    result = CliRunner().invoke(
+        gs_files_cli, ["layout", str(src), "-o", str(out), "--no-lookup"]
+    )
+    assert result.exit_code == 0, result.output
+    data = structure(decode_gs(out))
+    assert not any(n.is_starting_point for n in data.addresses)
+    # Still laid out as a chain from the first address, not piled up.
+    xs = sorted(n.x for n in (*data.addresses, *data.txs))
+    assert xs == [0.0, 4.0, 8.0]
+
+
+def test_layout_rejects_graph_files(tmp_path: Path, sample_graph_gs: Path) -> None:
+    result = CliRunner().invoke(
+        gs_files_cli, ["layout", str(sample_graph_gs), "-o", str(tmp_path / "o.gs")]
+    )
+    assert result.exit_code != 0
+    assert "only Pathfinder files" in result.output

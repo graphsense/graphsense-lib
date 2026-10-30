@@ -316,6 +316,16 @@ def patch_package_init(package_dir: Path) -> None:
         )
         init_path.write_text(content)
 
+    # Last, once every API class exists: hand-written pointers for removed
+    # names (graphsense/removed.py).
+    if "import graphsense.removed" not in content:
+        print("  Adding removed-names stubs import to package __init__.py")
+        content = content.rstrip("\n") + (
+            "\n\n# Pointers for removed client names (hand-written)\n"
+            "import graphsense.removed  # noqa: F401, E402\n"
+        )
+        init_path.write_text(content)
+
 
 # Fields that need CompatInt wrapping (were ModelSimple with int value)
 # This includes both 'height' fields and block-related fields that need .to_str()

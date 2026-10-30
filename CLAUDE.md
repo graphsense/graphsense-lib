@@ -39,9 +39,60 @@ Traps, each of which has already bitten once:
 - **`spark_tests.yml` runs unconditionally, not on a path filter.** The delta
   updater and `spark/` must agree (see the next section), and a path list is
   exactly what goes stale when a new file starts feeding that contract.
+- **Hook tool versions come from the dev environment, not from hook `rev`s.**
+  The ruff and uv-lock hooks are `repo: local` and run `uv run ruff` / `uv lock`,
+  so `uv.lock` is the only ruff version and Dependabot keeps it current. A pinned
+  hook repo (`astral-sh/ruff-pre-commit`, `uv-pre-commit`) is a second version
+  nothing bumps — it had the hook on ruff 0.15 while CI linted with 0.17. Do not
+  switch them back.
+- **uv has a floor: `[tool.uv] required-version = ">=0.13"`** in `pyproject.toml`.
+  The uv-lock hook runs whatever uv is installed, so an older one errors out
+  instead of quietly rewriting `uv.lock`. Raise the floor together with the
+  `ghcr.io/astral-sh/uv` image in the Dockerfile (Dependabot bumps the image,
+  never the floor). Locally: `uv self update`.
 - **A test that reaches a hostname which does not resolve** costs whatever the
   local resolver charges for a dead name — 120s on a dev box behind a
   blackholing DNS server, instant in CI. Use a refused port (`127.0.0.1:1`).
+
+### Python client examples: run them before every client release
+
+`clients/python/test_examples.py` executes every snippet in the generated
+`clients/python/docs/*Api.md` against a live API (`report_tag` is skipped —
+side effects). No hook or test suite covers this, and the CI job
+(`python-examples.yml`) silently skips when `GS_API_KEY` is unset. **Run it
+against prod before releasing graphsense-python**, from `clients/python/`:
+
+```bash
+GS_API_KEY=<key> REPLACE_API_URL='https://api.iknaio.com>http://localhost:8080' \
+  uv run --with pypandoc_binary test_examples.py
+```
+
+(`REPLACE_API_URL` is `from>to`; drop it to hit api.iknaio.com directly.)
+Snippets are generated, so fix failures at the source: query/path params get
+their value from `Query/Path(examples=[...])`; JSON request bodies get theirs
+from the request model's `api_model_config(EXAMPLE)`, which
+`_add_request_body_examples_for_generated_clients` (`web/app.py`) hands to
+`templates/api_doc_example.mustache`. Without a model example, a body snippet
+sends `Model()` and fails. Example data must be real on-chain data.
+
+## Sync daemon: stopping must release locks
+
+`graphsense-cli sync run` (`src/graphsenselib/sync/`) is deployed so that a
+plain `docker compose up -d` with a new image tag is a safe switch (README
+"Continuous Sync"). That rests on three things; keep them:
+
+- **SIGTERM unwinds, it does not kill.** `cli/main.py` installs
+  `utils/signals.install_sigterm_as_interrupt` (SIGTERM -> KeyboardInterrupt),
+  and leaving `graceful_ctlc_shutdown` restores the previous handler, never
+  `SIG_DFL`. Python's default SIGTERM skips every `finally`, and the Redis
+  lock has no TTL by design (`utils/locking.py`), so a job stopped outside its
+  graceful section used to leave the network blocked until `redis-cli DEL`.
+- **Grace order: compose `stop_grace_period` (10m) > `sync.stop_grace_seconds`
+  (480s) > a delta-update batch.** A batch killed mid-write leaves a WAL record,
+  and the next version refuses to replay another version's record.
+- **Pool workers ignore SIGTERM** (`db/parallel.py`); the job's main process
+  owns the stop. A Delta Lake compaction still cannot stop midway; if killed,
+  its lock stays behind (accepted, the data is safe).
 
 ## Delta updater must stay in tandem with the Spark pipeline (`spark/`)
 

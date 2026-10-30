@@ -479,7 +479,6 @@ import json
 import sys
 
 from graphsenselib.db.factory import DbFactory
-from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
 from graphsenselib.deltaupdate.update.utxo.update import UpdateStrategyUtxo
 
 args = json.load(sys.stdin)
@@ -497,7 +496,6 @@ try:
         db=db,
         currency=args['currency'],
         pedantic=False,
-        application_strategy=ApplicationStrategy.BATCH,
         patch_mode=False,
     )
     updater.run_fresh_clustering(args['start_block'], args['end_block'])

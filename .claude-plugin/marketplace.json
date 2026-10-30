@@ -1,0 +1,15 @@
+{
+  "name": "graphsense",
+  "description": "Claude Code plugins for GraphSense",
+  "owner": {
+    "name": "Iknaio Cryptoasset Analytics GmbH",
+    "email": "contact@iknaio.com"
+  },
+  "plugins": [
+    {
+      "name": "graphsense",
+      "source": "./src/graphsenselib/mcp/skills",
+      "description": "GraphSense MCP connector plus investigation skills"
+    }
+  ]
+}

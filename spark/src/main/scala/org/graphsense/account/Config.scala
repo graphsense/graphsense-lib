@@ -1,11 +1,15 @@
 package org.graphsense.account.config
 
-import org.graphsense.config.WriterConfig
+import org.graphsense.config.{AccountLayout, NetworkDefaults, WriterConfig}
 import org.rogach.scallop._
 
 class AccountConfig(arguments: Seq[String])
     extends ScallopConf(arguments)
     with WriterConfig {
+  // Layout options default per network (see NetworkDefaults). Scallop
+  // evaluates `default` lazily, after --network is parsed.
+  private def layout[A](f: AccountLayout => A): Option[A] =
+    network.toOption.map(n => f(NetworkDefaults.accountFor(n)))
   val rawKeyspace: ScallopOption[String] =
     opt[String](
       "raw-keyspace",
@@ -22,21 +26,21 @@ class AccountConfig(arguments: Seq[String])
   val bucketSize: ScallopOption[Int] = opt[Int](
     "bucket-size",
     required = false,
-    default = Some(25000),
+    default = layout(_.bucketSize),
     noshort = true,
     descr = "Bucket size for Cassandra partitions"
   )
   val addressPrefixLength: ScallopOption[Int] = opt[Int](
     "address-prefix-length",
     required = false,
-    default = Some(5),
+    default = layout(_.addressPrefixLength),
     noshort = true,
     descr = "Prefix length of address hashes for Cassandra partitioning keys"
   )
   val txPrefixLength: ScallopOption[Int] = opt[Int](
     "tx-prefix-length",
     required = false,
-    default = Some(5),
+    default = layout(_.txPrefixLength),
     noshort = true,
     descr = "Prefix length for tx hashes Cassandra partitioning keys"
   )
@@ -85,7 +89,7 @@ class AccountConfig(arguments: Seq[String])
   val blockBucketSizeAddressTxs: ScallopOption[Int] = opt[Int](
     "block-bucket-size-address-txs",
     required = false,
-    default = Some(150000),
+    default = layout(_.blockBucketSizeAddressTxs),
     noshort = true,
     descr =
       "Bucket size for Cassandra partitions of address transactions base on blockid"
@@ -93,7 +97,7 @@ class AccountConfig(arguments: Seq[String])
   val addressrelationsIdsNbuckets: ScallopOption[Int] = opt[Int](
     "addressrelations-ids-nbuckets",
     required = false,
-    default = Some(100),
+    default = layout(_.addressrelationsIdsNbuckets),
     noshort = true,
     descr =
       "Number of buckets for Cassandra partitions of address relations based on address id"

@@ -4,6 +4,9 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastmcp import FastMCP
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
+from fastmcp.server.transforms import ToolTransform
+from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 from mcp.types import Icon
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import RedirectResponse
@@ -12,7 +15,13 @@ from starlette.routing import Route
 from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
+from graphsenselib.mcp.declined import (
+    DeclinedBackendsNoteMiddleware,
+    networks_by_backend,
+    record_declined,
+)
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
+from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE, PagesizeDefaultMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 from graphsenselib.mcp.tools import register_custom_tools
 
@@ -38,7 +47,9 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         )
 
     route_map_fn = make_route_map_fn(curation)
-    component_fn = make_component_fn(curation)
+    # Filled in by component_fn while from_fastapi walks the routes below.
+    paged_tools: set[str] = set()
+    component_fn = make_component_fn(curation, paged_tools)
 
     # serverInfo extras advertised in the initialize handshake, forwarded
     # through from_fastapi's **settings to the FastMCP constructor. Both
@@ -53,7 +64,7 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         icons = [
             Icon(
                 src=icon_src,
-                mimeType=config.icon_mime_type,
+                mime_type=config.icon_mime_type,
                 sizes=sizes,
             )
         ]
@@ -67,12 +78,38 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         mcp_component_fn=component_fn,
         website_url=config.website_url or None,
         icons=icons,
+        # collects the backends a REST answer names as missing, for the
+        # DeclinedBackendsNoteMiddleware below
+        httpx_client_kwargs={"event_hooks": {"response": [record_declined]}},
+    )
+
+    # Publish the default in each generated tool's input schema and apply it
+    # when the caller omits pagesize. component_fn populated paged_tools while
+    # from_fastapi built the tools above.
+    mcp.add_transform(
+        ToolTransform(
+            {
+                name: ToolTransformConfig(
+                    arguments={"pagesize": ArgTransformConfig(default=DEFAULT_PAGESIZE)}
+                )
+                for name in paged_tools
+            }
+        )
     )
 
     # Surface unhandled tool/resource/prompt exceptions to the graphsenselib.mcp
     # logger so the same handlers the REST app uses for incident notifications
     # (Slack/SMTP, set up in web/app.py:setup_logging) fire for MCP failures too.
     mcp.add_middleware(ErrorLoggingMiddleware())
+
+    # An explicit null bypasses a schema default because the argument is
+    # present. Default that case too, and reject JSON containers before HTTPX
+    # can serialize an empty one as an omitted query parameter.
+    mcp.add_middleware(PagesizeDefaultMiddleware(paged_tools))
+
+    # A merged REST answer whose external backend did not answer is a 200
+    # without that backend's networks; the model is told so in the result.
+    mcp.add_middleware(DeclinedBackendsNoteMiddleware(networks_by_backend(app)))
 
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;
     # tools that build Pathfinder deep links (build_pathfinder_file's
@@ -84,6 +121,12 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         if config.pathfinder_open_url_enabled
         else None
     )
+
+    # The skills directory doubles as the Claude Code plugin root
+    # (.claude-plugin/plugin.json); the provider only picks up subdirectories
+    # holding a SKILL.md, so the manifest is not served.
+    if config.skills_enabled:
+        mcp.add_provider(SkillsDirectoryProvider(roots=config.resolved_skills_dir()))
 
     stack = AsyncExitStack()
     register_custom_tools(mcp, app, curation, config, stack)
@@ -110,32 +153,16 @@ def attach_to_fastapi(app, config: GSMCPConfig) -> None:
 
     mcp, stack = build_mcp(app, config)
 
-    # FastMCP >= 3.4.3 validates the request Host against an allowlist
-    # (DNS-rebinding protection) and returns 421 for anything but localhost.
-    # Behind a reverse proxy the Host is the public domain, so pass the
-    # configured allowed hosts through. Done version-safely: FastMCP <= 3.4.2
-    # neither validates the Host nor accepts the kwarg, so we fall back cleanly.
+    # FastMCP validates the request Host against an allowlist (DNS-rebinding
+    # protection) and returns 421 for anything but localhost. Behind a reverse
+    # proxy the Host is the public domain, so pass the configured allowed hosts
+    # through.
     if config.allowed_hosts:
-        try:
-            # allowed_hosts is only accepted by FastMCP >= 3.4.3; the pinned
-            # (older) version doesn't declare it, hence the type-ignore + the
-            # TypeError fallback below.
-            mcp_asgi = mcp.http_app(
-                path="/",
-                stateless_http=config.stateless_http,
-                allowed_hosts=config.allowed_hosts,  # ty: ignore[unknown-argument]
-            )
-        except TypeError:
-            # FastMCP <= 3.4.2 doesn't accept the kwarg — but it also doesn't
-            # validate the Host at all, so there's nothing to enforce and the
-            # fallback is harmless. (On >= 3.4.3 the kwarg is honoured above.)
-            logger.info(
-                "Installed FastMCP does not accept allowed_hosts (needs "
-                ">= 3.4.3); it does not validate the request Host either, so "
-                "GS_MCP_ALLOWED_HOSTS=%s is not needed and not applied.",
-                config.allowed_hosts,
-            )
-            mcp_asgi = mcp.http_app(path="/", stateless_http=config.stateless_http)
+        mcp_asgi = mcp.http_app(
+            path="/",
+            stateless_http=config.stateless_http,
+            allowed_hosts=config.allowed_hosts,
+        )
     else:
         mcp_asgi = mcp.http_app(path="/", stateless_http=config.stateless_http)
 

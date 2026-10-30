@@ -70,3 +70,10 @@ tag:
     type: text
     mandatory: false
     taxonomy: tag_type
+  address_validation:
+    type: text
+    mandatory: false
+    description: >-
+      'skip' exempts the address from address validation, for sources kept
+      verbatim on purpose (e.g. ID numbers in a sanctions list). Say why in
+      context. Not stored in db.

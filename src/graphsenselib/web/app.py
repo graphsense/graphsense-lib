@@ -27,6 +27,7 @@ from graphsenselib.config.tagstore_config import set_active_tagstore_config
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
 from graphsenselib.errors import (
+    AddressNotFoundException,
     BadUserInputException,
     FeatureNotAvailableException,
     GsTimeoutException,
@@ -38,25 +39,44 @@ from graphsenselib.tagstore.db.database import (
     get_db_engine_async,
 )
 from graphsenselib.utils import resolve_env_vars
+from graphsenselib.utils.address import (
+    BECH32_MIXED_CASE_HINT,
+    address_checksum_invalid,
+    bech32_mixed_case,
+)
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
-from graphsenselib.web.config import FileStoreConfig, GSRestConfig, LoggingConfig
+from graphsenselib.web.config import (
+    CurrencyRolesConfig,
+    FileStoreConfig,
+    GSRestConfig,
+    LoggingConfig,
+)
 from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
 from graphsenselib.web.middleware.body_size import RequestBodySizeLimitMiddleware
 from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
-from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
+from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
+from graphsenselib.web.middleware.external_backends import (
+    DECLINED_HEADER,
+    RETRY_AFTER_HEADER,
+    SERVED_BY_HEADER,
+    ExternalBackendMiddleware,
+)
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
+from graphsenselib.web.routes.notifications import (
+    order_notifications_tag,
+    register_notifications_routes,
+)
 from graphsenselib.web.routes import (
     addresses,
     blocks,
     bulk,
     clusters,
-    entities,
     general,
     graph,
     rates,
@@ -354,6 +374,35 @@ def _normalize_parameter_examples_for_generated_clients(
     return schema
 
 
+def _add_request_body_examples_for_generated_clients(
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose model-level request body examples to the python client snippets.
+
+    openapi-generator ignores schema examples for body parameters and emits
+    ``graphsense.<Model>()`` — an empty body that fails model validation (or
+    the server's own checks) when ``make run-examples`` executes the snippet.
+    The generator copies requestBody extensions onto the body parameter, so
+    the ``api_doc_example`` template can build the body from this literal.
+    """
+    components = schema.get("components", {}).get("schemas", {})
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            body = operation.get("requestBody")
+            if not isinstance(body, dict):
+                continue
+            body_schema = (
+                body.get("content", {}).get("application/json", {}).get("schema", {})
+            )
+            ref = body_schema.get("$ref", "")
+            example = components.get(ref.rsplit("/", 1)[-1], {}).get("example")
+            if example is not None:
+                body["x-graphsense-python-body-example"] = repr(example)
+    return schema
+
+
 def _convert_schema_names_to_snake_case(schema: dict[str, Any]) -> dict[str, Any]:
     """Post-process OpenAPI schema to use snake_case schema names.
 
@@ -449,6 +498,11 @@ def setup_logging(
         # for MCP incidents the way the unhandled-exception handler does for
         # REST routes.
         mcp_logger = logging.getLogger("graphsenselib.mcp")
+        # The external backends middleware logs at ERROR exactly once per
+        # outage of a backend (its module docstring), a sibling tree as well.
+        backends_logger = logging.getLogger(
+            "graphsenselib.web.middleware.external_backends"
+        )
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
@@ -456,6 +510,9 @@ def setup_logging(
             mcp_handler = SlackLogHandler(h, environment=default_environment)
             mcp_handler.setLevel("ERROR")
             mcp_logger.addHandler(mcp_handler)
+            backends_handler = SlackLogHandler(h, environment=default_environment)
+            backends_handler.setLevel("ERROR")
+            backends_logger.addHandler(backends_handler)
 
     smtp = logging_config.smtp
     if not smtp:
@@ -482,22 +539,28 @@ def setup_logging(
     app_logger.addHandler(handler)
 
 
-def log_slack_exception_notification_status(
-    slack_exception_hook, default_environment: Optional[str]
+def log_slack_notification_status(
+    topic: str, what: str, slack_hook, default_environment: Optional[str]
 ):
-    """Log whether Slack exception notifications are configured at startup."""
-    hooks = slack_exception_hook.hooks if slack_exception_hook is not None else []
+    """Log whether the Slack notifications for `topic` are configured at startup.
+
+    A missing hook otherwise only shows as notifications that never arrive.
+    """
+    hooks = slack_hook.hooks if slack_hook is not None else []
     environment = default_environment or "unknown"
 
     if hooks:
         logger.info(
-            "Slack exception notifications enabled (hooks=%d, environment=%s)",
+            "Slack %s notifications enabled (hooks=%d, environment=%s)",
+            what,
             len(hooks),
             environment,
         )
     else:
         logger.info(
-            "Slack exception notifications disabled (no 'exceptions' slack hooks configured, environment=%s)",
+            "Slack %s notifications disabled (no '%s' slack hooks configured, environment=%s)",
+            what,
+            topic,
             environment,
         )
 
@@ -574,7 +637,12 @@ async def setup_database(app: FastAPI):
             pool_pre_ping=True,
         )
 
-        tagstore_db = TagstoreDbAsync(engine)
+        tagstore_db = TagstoreDbAsync(
+            engine,
+            only_actor_tags_in_actor_lists=(
+                config.tag_summary_only_propagate_high_confidence_actors
+            ),
+        )
         await ConceptsCacheServiceFastAPI.setup_cache(tagstore_db, app)
 
         app.state.tagstore_engine = engine
@@ -631,6 +699,12 @@ async def teardown_database(app: FastAPI):
     if external_client is not None:
         await external_client.aclose()
         logger.info("Closed external backends HTTP client.")
+
+    # Close the notifications HTTP client if the feature is enabled
+    notifications_client = getattr(app.state, "notifications_client", None)
+    if notifications_client is not None:
+        await notifications_client.client.aclose()
+        logger.info("Closed notifications HTTP client.")
 
 
 class ConceptsCacheServiceFastAPI(ConceptProtocol):
@@ -815,6 +889,27 @@ def _register_exception_handlers(app: FastAPI):
 
     @app.exception_handler(NotFoundException)
     async def not_found_handler(request: Request, exc: NotFoundException):
+        # An address that is not indexed AND has a wrong checksum is a typo:
+        # say so (400) instead of "not found". Only after the lookup, so an
+        # indexed address is never rejected, whatever its checksum.
+        if (
+            isinstance(exc, AddressNotFoundException)
+            and not exc.no_external_txs
+            and address_checksum_invalid(exc.network, exc.address)
+        ):
+            reason = (
+                BECH32_MIXED_CASE_HINT
+                if bech32_mixed_case(exc.network, exc.address)
+                else "checksum mismatch, probably a typo"
+            )
+            msg = (
+                f"The address provided does not look like a {exc.network.upper()}"
+                f" address: {exc.address} ({reason})"
+            )
+            logger.warning(
+                f"BadUserInputException: {msg} | {_get_request_context(request)}"
+            )
+            return JSONResponse(status_code=400, content={"detail": msg})
         logger.warning(
             f"NotFoundException: {exc.get_user_msg()} | {_get_request_context(request)}"
         )
@@ -889,11 +984,6 @@ def _register_routers(app: FastAPI):
         clusters.router,
         prefix="/{currency}",
         tags=["clusters"],
-    )
-    app.include_router(
-        entities.router,
-        prefix="/{currency}",
-        tags=["entities"],
     )
     app.include_router(txs.router, prefix="/{currency}", tags=["txs"])
     app.include_router(rates.router, prefix="/{currency}", tags=["rates"])
@@ -982,6 +1072,46 @@ def _promote_common_security_to_global(schema: dict[str, Any]) -> dict[str, Any]
     return schema
 
 
+def _setup_currency_roles_middleware(app: FastAPI, config: GSRestConfig):
+    """Gate externally served currencies on the gateway's roles header
+    (middleware/currency_roles.py). Added AFTER the external-backends
+    middleware so it wraps it: a refused request never reaches a backend and
+    the listing filter sees the merged /stats, /capabilities, /search and
+    related_addresses answers. No-op when the gate is switched off or nothing
+    is gated (no external backends and no explicit list).
+    """
+    roles_config, gated = _currency_role_gate(config)
+    if roles_config is None or not gated:
+        return
+    app.add_middleware(CurrencyRoleMiddleware, config=roles_config, gated=gated)
+    logger.info(
+        "Currency role gating enforced for: %s (header %s, prefix %s)",
+        ", ".join(sorted(gated)),
+        roles_config.roles_header,
+        roles_config.currency_role_prefix,
+    )
+
+
+def _currency_role_gate(config: GSRestConfig):
+    """The role gate both middlewares must agree on: the config and the set of
+    currencies it covers, or (None, empty) when the gate is switched off.
+
+    Defined once because two middlewares consult it -- CurrencyRoleMiddleware
+    to filter the answer, ExternalBackendMiddleware to skip fetching what is
+    about to be filtered. If they gated on different sets, the second would
+    drop rows the first would have kept.
+    """
+    roles_config = config.auth or CurrencyRolesConfig()
+    if not roles_config.enforce_currency_roles:
+        return None, set()
+    if roles_config.gated_currencies is not None:
+        return roles_config, set(roles_config.gated_currencies)
+    eb_config = config.external_backends
+    if eb_config is not None and eb_config.enabled:
+        return roles_config, set(eb_config.networks)
+    return roles_config, set()
+
+
 def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
@@ -994,11 +1124,36 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
         return
     client = httpx.AsyncClient(timeout=httpx.Timeout(eb_config.timeout_s))
     app.state.external_backends_client = client
-    app.add_middleware(ExternalBackendMiddleware, config=eb_config, client=client)
-    logger.info(
-        "External backends enabled for networks: %s",
-        ", ".join(sorted(eb_config.networks)),
+    roles_config, gated = _currency_role_gate(config)
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=eb_config,
+        client=client,
+        roles_config=roles_config,
+        gated=gated,
     )
+    # The posture, not just the fact. Whether the fan-out is role-gated and
+    # whether the caller's identity reaches the backend are the two things
+    # that decide who pays for lite-network provider spend, and both are
+    # config-driven -- so a deployment must be able to state them from its own
+    # startup log rather than by re-reading the config.
+    logger.info(
+        "External backends enabled for networks: %s (fan-out: %s; caller identity: %s)",
+        ", ".join(sorted(eb_config.networks)),
+        f"skipped for currencies without a {roles_config.currency_role_prefix}* role"
+        if gated
+        else "not role-gated, every caller fans out",
+        f"relayed from {eb_config.consumer_header} as X-Consumer-Username"
+        if eb_config.consumer_header
+        else "NOT relayed, so the backend paces every caller as one",
+    )
+
+
+# Response headers the dashboard reads, named because the "*" wildcard does not
+# cover a request with credentials: which external backends are missing from
+# a merged answer, and when to retry a proxied request (a 429, or a 503 for a
+# backend that is down).
+EXPOSED_HEADERS = ["*", DECLINED_HEADER, RETRY_AFTER_HEADER, SERVED_BY_HEADER]
 
 
 def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
@@ -1008,6 +1163,10 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
     allow_origins=["*"]. This makes the middleware echo back the requesting
     Origin header instead of sending literal "*", which allows credentials
     to work (browsers reject Access-Control-Allow-Origin: * with credentials).
+
+    The same holds for ``expose_headers``: on a request with credentials a
+    browser reads ``*`` as a header literally named "*", so every header the
+    dashboard must read is named as well (EXPOSED_HEADERS).
     """
     origins = config.ALLOWED_ORIGINS
     if isinstance(origins, str):
@@ -1023,7 +1182,7 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["*"],
+            expose_headers=EXPOSED_HEADERS,
         )
     else:
         app.add_middleware(
@@ -1032,7 +1191,7 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["*"],
+            expose_headers=EXPOSED_HEADERS,
         )
 
 
@@ -1089,7 +1248,9 @@ def create_app(
     """
     # Load gslib config (always needed for slack hooks)
     gslib_config = AppConfig()
-    gslib_config.load_partial()
+    # load_partial keeps defaults for unparseable keys (e.g. a malformed
+    # GRAPHSENSE_SLACK_TOPICS) and only reports them in its return value
+    _, gslib_config_errors = gslib_config.load_partial()
 
     config = resolve_rest_config(config_file, config, gslib_config)
 
@@ -1103,7 +1264,14 @@ def create_app(
     config.slack_info_hook = slack_info_hook
 
     setup_logging(logger, slack_exception_hook, default_environment, config.logging)
-    log_slack_exception_notification_status(slack_exception_hook, default_environment)
+    for error in gslib_config_errors:
+        logger.warning("Ignoring invalid gslib config setting: %s", error)
+    log_slack_notification_status(
+        "exceptions", "exception", slack_exception_hook, default_environment
+    )
+    log_slack_notification_status(
+        "info", "user-reported tag", slack_info_hook, default_environment
+    )
 
     app = FastAPI(
         title="GraphSense API",
@@ -1122,6 +1290,9 @@ def create_app(
     # ends up INSIDE it (Starlette: last added = outermost) — short-circuited
     # proxy responses must still receive CORS headers.
     _setup_external_backends_middleware(app, config)
+    # Role gate for the externally served currencies: outside the backends
+    # middleware (added after it), still inside CORS.
+    _setup_currency_roles_middleware(app, config)
 
     logger.info(f"ALLOWED_ORIGINS: {config.ALLOWED_ORIGINS}")
     _setup_cors_middleware(app, config)
@@ -1143,6 +1314,8 @@ def create_app(
     )
 
     _register_exception_handlers(app)
+    # Before the /{currency} routers, so no network path can shadow them.
+    register_notifications_routes(app, config.notifications)
     _register_routers(app)
     _register_download_route(app, config.file_store)
     _setup_custom_openapi(app)
@@ -1199,6 +1372,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
         # Add servers for client generator compatibility
         openapi_schema["servers"] = [{"url": ""}]
 
+        # Notifications last and marked beta (registered first for routing)
+        openapi_schema = order_notifications_tag(openapi_schema)
+
         info = openapi_schema["info"]
         config = app.state.config
 
@@ -1238,6 +1414,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Normalize selected parameter examples for generated SDK snippets
         openapi_schema = _normalize_parameter_examples_for_generated_clients(
+            openapi_schema
+        )
+        openapi_schema = _add_request_body_examples_for_generated_clients(
             openapi_schema
         )
 
@@ -1509,6 +1688,10 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     app.state.config = config
 
     _setup_external_backends_middleware(app, config)
+    # wired here too: the backends middleware skips fetching what the gate is
+    # about to delete, so an app with the skip and no gate would filter rows
+    # that nothing else in that app would have filtered
+    _setup_currency_roles_middleware(app, config)
     _setup_cors_middleware(app, config)
     app.add_middleware(PluginMiddleware)
     app.add_middleware(
@@ -1517,6 +1700,8 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     )
 
     _register_exception_handlers(app)
+    # Before the /{currency} routers, so no network path can shadow them.
+    register_notifications_routes(app, config.notifications)
     _register_routers(app)
     _setup_custom_openapi(app)
 

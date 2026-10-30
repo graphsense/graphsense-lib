@@ -1,0 +1,442 @@
+import logging
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from typing import Optional, Tuple
+
+import click
+from rich.markup import escape
+
+from ..cli.common import require_currency, require_environment
+from ..config import get_config
+from ..config.config import DEFAULT_SYNC_CHANNEL
+from ..utils.console import console
+
+logger = logging.getLogger(__name__)
+
+
+@click.group()
+def sync_cli():
+    pass
+
+
+@sync_cli.group("sync")
+def sync():
+    """Keep networks continuously up to date (replaces per-network cron jobs)."""
+    pass
+
+
+# Fixed rather than tempfile.gettempdir(), like utils/locking.LOCK_DIR: every
+# daemon and every `sync pause/status` must resolve the same directory.
+FILE_STATE_DIR = "/tmp/graphsense-sync"
+
+
+def _store(env: str):
+    from .state import FileStateStore, RedisStateStore
+
+    config = get_config()
+    if config.use_redis_locks and config.redis_url:
+        return RedisStateStore(config.redis_url, env)
+    directory = os.path.join(FILE_STATE_DIR, env)
+    logger.info(
+        f"No Redis configured (use_redis_locks/redis_url): sync state in "
+        f"{directory}. Daemons in separate containers need it on a shared volume."
+    )
+    return FileStateStore(directory)
+
+
+class _EnvironmentReloader:
+    """Re-reads the config file when it changes, so enabling a network or
+    moving it to another channel needs no daemon restart."""
+
+    def __init__(self, env: str, path: Optional[str]):
+        self.env = env
+        self.path = path
+        self._mtime: Optional[float] = None
+        self._environment = None
+
+    def __call__(self):
+        from ..config import AppConfig
+
+        if self.path is None:
+            return get_config().get_environment(self.env)
+        mtime = os.stat(self.path).st_mtime
+        if self._environment is None or mtime != self._mtime:
+            cfg = AppConfig(config_file=self.path)
+            cfg.load(filename=self.path)
+            self._environment = cfg.get_environment(self.env)
+            if self._mtime is not None:
+                logger.info(f"Config {self.path} changed, reloaded")
+            self._mtime = mtime
+        return self._environment
+
+
+@sync.command("run")
+@require_environment()
+@click.option(
+    "--channel",
+    default=DEFAULT_SYNC_CHANNEL,
+    show_default=True,
+    help="Run only the networks whose sync.networks.<c>.channel matches.",
+)
+@click.option(
+    "--once",
+    is_flag=True,
+    help="One cycle per network, then exit (non-zero if any failed).",
+)
+@click.option(
+    "--currency",
+    "-c",
+    "only",
+    multiple=True,
+    help="Restrict to these networks (repeatable). They must still be "
+    "enabled and on this channel.",
+)
+@click.pass_context
+def run(ctx, env: str, channel: str, once: bool, only):
+    """Run the sync daemon.
+
+    Per network it ingests new blocks from the node, then runs the delta
+    update, as child processes of the same graphsense-lib version. Configure
+    it under environments.<env>.sync; run one daemon per network (-c) or
+    per channel (--channel).
+    """
+    from .jobs import JobRunner
+    from .scheduler import SyncScheduler
+
+    root = ctx.find_root().params
+    # The loaded config does not remember a --config-file path (path() only
+    # knows GRAPHSENSE_CONFIG_YAML and the default locations), so take it from
+    # the option. Jobs must read the very same file.
+    config_path = root.get("config_file") or get_config().path()
+    config_path = os.path.abspath(config_path) if config_path else None
+    global_args = ["-" + "v" * root["verbosity"]] if root.get("verbosity") else []
+    if config_path:
+        global_args += ["--config-file", config_path]
+
+    scheduler = SyncScheduler(
+        env=env,
+        channel=channel,
+        store=_store(env),
+        load_environment=_EnvironmentReloader(env, config_path),
+        runner=JobRunner(global_args=global_args),
+        only=list(only) or None,
+    )
+    sys.exit(scheduler.run(once=once))
+
+
+@sync.command("status")
+@require_environment()
+def status(env: str):
+    """Show every configured network: owner, pause, heights, last result and
+    whether a delta-update WAL record is pending; then every task."""
+    _print_status(env, _store(env))
+
+
+def _print_status(env: str, store, only: Optional[str] = None):
+    """Daemons as two lines each, then one block per network."""
+    environment = get_config().get_environment(env)
+    sync_cfg = environment.sync
+    networks = sorted(sync_cfg.networks) if sync_cfg else []
+    if only is not None:
+        networks = [n for n in networks if n == only]
+
+    daemons = sorted(store.list_daemons())
+    n = len(daemons)
+    console.print(f"[bold]sync {env}[/bold] · {n} daemon{'' if n == 1 else 's'}")
+    for key, info in daemons:
+        console.print(_daemon_lines(key, info), highlight=False)
+    for network in networks:
+        console.print()
+        console.print(
+            _network_lines(
+                env,
+                network,
+                sync_cfg.networks[network],
+                environment.keyspaces.get(network),
+                store,
+            ),
+            highlight=False,
+        )
+    if only is None and sync_cfg is not None:
+        for name, task in sorted(sync_cfg.tasks.items()):
+            console.print()
+            console.print(_task_lines(name, task, store), highlight=False)
+
+
+def _task_lines(name: str, task, store) -> str:
+    from .scheduler import task_key, task_slots
+
+    key = task_key(name)
+    st = store.read_status(key) or {}
+    pause = store.get_pause(key)
+    when = f"{task.weekday} {task.at} UTC" if task.weekday else f"daily {task.at} UTC"
+    if not task.enabled:
+        state = "[dim]disabled[/dim]"
+    elif pause is not None:
+        state = f"[yellow]paused[/yellow] ({escape(str(pause.get('reason')))})"
+    elif st.get("running"):
+        state = f"[cyan]running[/cyan] since {_fmt_clock(st.get('started_at'))}"
+    else:
+        slot, next_slot = task_slots(task, time.time())
+        if (st.get("last_success_at") or 0) >= slot:
+            state = f"[green]done[/green] · next {_fmt_clock(next_slot)}"
+        elif st.get("failures"):
+            state = f"[red]retrying[/red] ({st['failures']} failed in a row)"
+        else:
+            state = "due"
+    head = f"[bold]task {escape(name)}[/bold] · {state} · {when}"
+    if task.channel != DEFAULT_SYNC_CHANNEL:
+        head += f" · channel {escape(task.channel)}"
+    rows = [("command", escape(" ".join(task.args)))]
+    result = st.get("last_result")
+    if result == "ok":
+        took = f" in {_fmt_duration(st['seconds'])}" if st.get("seconds") else ""
+        rows.append(("last", f"ok, {_fmt_clock(st.get('last_success_at'))}{took}"))
+    elif result:
+        rows.append(("last", f"[red]{escape(_shorten(str(result)))}[/red]"))
+        if st.get("last_success_at"):
+            rows.append(("last ok", _fmt_clock(st["last_success_at"])))
+    return "\n".join([head] + [f"  {k:<12} {v}" for k, v in rows])
+
+
+def _daemon_lines(key: str, info: dict) -> str:
+    channel = info.get("channel", "")
+    label = ", ".join(info.get("networks") or []) or f"channel {channel}"
+    first = f"  {escape(label)} · daemon {key} on {info.get('host', '?')}"
+    if channel and channel != DEFAULT_SYNC_CHANNEL and info.get("networks"):
+        first += f", channel {escape(channel)}"
+    second = f"    {_fmt_build(info.get('version', ''))}"
+    if info.get("started_at"):
+        second += f", up {_fmt_duration(time.time() - info['started_at'])}"
+    if info.get("running"):
+        second += f", in a cycle of {', '.join(info['running'])}"
+    return first + "\n" + second
+
+
+def _network_lines(env: str, network: str, ccfg, ks, store) -> str:
+    st = store.read_status(network) or {}
+    pause = store.get_pause(network)
+    schedulable = False
+    if not ccfg.enabled:
+        state = "[dim]disabled[/dim]"
+    elif pause is not None:
+        until = pause.get("until")
+        state = f"[yellow]paused[/yellow] ({escape(str(pause.get('reason')))}" + (
+            f", until {_fmt_clock(until)})" if until else ")"
+        )
+    elif st.get("running"):
+        state = f"[cyan]running {st['running']}[/cyan]"
+    elif store.claim_owner(network) is None:
+        state = "[red]no daemon[/red]"
+    elif st.get("failures"):
+        state = f"[red]retrying[/red] ({st['failures']} failed in a row)"
+        schedulable = True
+    else:
+        state = "[green]idle[/green]"
+        schedulable = True
+    head = f"[bold]{network}[/bold] · {state}"
+    if schedulable and st.get("next_cycle_at"):
+        wait = st["next_cycle_at"] - time.time()
+        head += (
+            f" · next cycle in {_fmt_duration(wait)}" if wait > 0 else " · cycle due"
+        )
+    if ccfg.channel != DEFAULT_SYNC_CHANNEL:
+        head += f" · channel {escape(ccfg.channel)}"
+
+    rows = []
+    tip, target, raw = st.get("node_tip"), st.get("target"), st.get("raw")
+    transformed = st.get("transformed")
+    if tip is not None:
+        node = f"{tip:,}"
+        if target is not None:
+            node += f"  (target {target:,}, backoff {tip - target})"
+        rows.append(("node", node))
+    if raw is not None:
+        line = f"{raw:,}"
+        if target is not None:
+            line += f"  {max(target - raw, 0):,} behind target"
+        rows.append(("raw", line))
+    if transformed is not None:
+        line = f"{transformed:,}"
+        if raw is not None and transformed < raw:
+            line += f"  {raw - transformed:,} behind raw"
+        rows.append(("transformed", line))
+    wal = _wal_state(env, network, ks)
+    if wal:
+        rows.append(("WAL", f"[red]{wal}[/red]" if wal.startswith("pending") else wal))
+    result = st.get("last_result")
+    if result == "ok":
+        rows.append(("last", f"ok, {_fmt_clock(st.get('last_success_at'))}"))
+    elif result:
+        rows.append(("last", f"[red]{escape(_shorten(str(result)))}[/red]"))
+        if st.get("last_success_at"):
+            rows.append(("last ok", _fmt_clock(st["last_success_at"])))
+    return "\n".join([head] + [f"  {k:<12} {v}" for k, v in rows])
+
+
+def _wal_state(env: str, network: str, ks) -> str:
+    """'empty', 'pending <blocks> (<version>)', or '?' if the check failed."""
+    if ks is None:
+        return ""
+    from .probe import ChainProbe
+
+    probe = ChainProbe(env, network, ks)
+    try:
+        header = probe.wal_pending()
+    except Exception as e:
+        logger.warning(f"{network}: WAL check failed: {e}")
+        return "?"
+    finally:
+        probe.close()
+    if header is None:
+        return "empty"
+    return (
+        f"pending {header['block_lo']}-{header['block_hi']} ({header['code_version']})"
+    )
+
+
+def _running_somewhere(store, network: str) -> bool:
+    """A daemon is in the middle of a cycle of this network. Heartbeats expire
+    after DAEMON_TTL_SECONDS, so a dead daemon does not count for long."""
+    return any(network in info.get("running", []) for _, info in store.list_daemons())
+
+
+def _pause_target(currency: Optional[str], task: Optional[str]) -> Tuple[str, str]:
+    """(state-store key, what to call it) of a pause/resume target."""
+    from .scheduler import task_key
+
+    if (currency is None) == (task is None):
+        raise click.UsageError("Give either -c/--currency or --task.")
+    if task is not None:
+        return task_key(task), f"task {task}"
+    return currency, currency
+
+
+_task_option = click.option(
+    "--task", default=None, help="A sync.tasks entry instead of a network."
+)
+
+
+@sync.command("pause")
+@require_environment()
+@require_currency(required=False)
+@_task_option
+@click.option("--reason", required=True, help="Shown in `sync status` and alerts.")
+@click.option(
+    "--for",
+    "duration",
+    default=None,
+    help="Resume automatically after this long, e.g. 30m, 6h, 2d. "
+    "Default: until `sync resume`.",
+)
+@click.option(
+    "--wait",
+    is_flag=True,
+    help="Wait until the running cycle (if any) has finished, then show the "
+    "network's status, WAL check included. Ctrl-C stops waiting; the pause stays.",
+)
+def pause(
+    env: str,
+    currency: Optional[str],
+    task: Optional[str],
+    reason: str,
+    duration: Optional[str],
+    wait: bool,
+):
+    """Stop starting new jobs for a network or task. A running job finishes
+    first."""
+    key, what = _pause_target(currency, task)
+    seconds = _parse_duration(duration) if duration else None
+    by = os.environ.get("USER") or "unknown"
+    store = _store(env)
+    store.pause(key, reason, by=by, seconds=seconds)
+    console.print(
+        f"Paused {env}/{what}"
+        + (f" for {duration}" if duration else " until resumed")
+        + ". A job already running finishes first."
+    )
+    if not wait:
+        return
+    if _running_somewhere(store, key):
+        run = "job" if task is not None else "cycle"
+        console.print(f"Waiting for the running {what} {run} to finish ...")
+        while _running_somewhere(store, key):
+            if store.get_pause(key) is None:
+                # expired (--for) or resumed meanwhile: jobs start again
+                console.print(f"{env}/{what} is no longer paused, stopped waiting.")
+                return
+            time.sleep(_WAIT_POLL_SECONDS)
+    console.print(f"No {what} job running.")
+    if currency is not None:
+        _print_status(env, store, only=currency)
+
+
+_WAIT_POLL_SECONDS = 2
+
+
+@sync.command("resume")
+@require_environment()
+@require_currency(required=False)
+@_task_option
+def resume(env: str, currency: Optional[str], task: Optional[str]):
+    """Lift a pause (also one set by the reorg check)."""
+    key, what = _pause_target(currency, task)
+    if _store(env).resume(key):
+        console.print(f"Resumed {env}/{what}.")
+    else:
+        console.print(f"{env}/{what} was not paused.")
+
+
+_DURATION = re.compile(r"^(\d+)([smhd])$")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_duration(value: str) -> int:
+    m = _DURATION.match(value.strip())
+    if not m or int(m.group(1)) == 0:
+        raise click.BadParameter(
+            f"{value!r}: use a number and s/m/h/d, e.g. 6h", param_hint="--for"
+        )
+    return int(m.group(1)) * _UNIT_SECONDS[m.group(2)]
+
+
+def _shorten(text: str, limit: int = 80) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _fmt_build(version: str) -> str:
+    """'2.19.0.dev52+g1309bed27' -> 'dev build 1309bed (2.19.0.dev52)', a tagged
+    version -> 'release 2.18.1'. The image tag is the release track, not the
+    channel."""
+    if not version:
+        return "?"
+    base, _, local = version.partition("+")
+    m = re.match(r"g([0-9a-f]{7,})", local)
+    if ".dev" in base or m:
+        return f"dev build {m.group(1)[:7]} ({base})" if m else f"dev build ({base})"
+    return f"release {base}"
+
+
+def _fmt_duration(seconds: float) -> str:
+    minutes = int(abs(seconds) // 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h{minutes:02d}m"
+    return f"{hours // 24}d{hours % 24}h"
+
+
+def _fmt_clock(ts) -> str:
+    """'14:30 UTC (5m ago)', with the date when it is not today."""
+    if not ts:
+        return ""
+    dt = datetime.fromtimestamp(ts, timezone.utc)
+    now = datetime.now(timezone.utc)
+    when = dt.strftime("%H:%M UTC" if dt.date() == now.date() else "%m-%d %H:%M UTC")
+    age = time.time() - ts
+    rel = f"{_fmt_duration(age)} ago" if age >= 0 else f"in {_fmt_duration(age)}"
+    return f"{when} ({rel})"

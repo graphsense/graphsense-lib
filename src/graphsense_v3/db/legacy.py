@@ -1542,6 +1542,13 @@ class LegacyAdapter:
     async def get_address_entity_id(self, *_, **__):
         self._no_clusters("get_address_entity_id")
 
+    async def get_cluster_stats(self, *_, **__):
+        """Not stubbed, unlike `get_fresh_cluster_id`: `get_address` only asks
+        for it when the address row carries a ``cluster_id``, which a v3 row
+        never does -- so a stub would be unreachable, and a raise here means a
+        caller that does reach it learns why."""
+        self._no_clusters("get_cluster_stats")
+
     async def get_fresh_cluster_id(self, *_, **__):
         """The one cluster method that can be stubbed usefully.
 

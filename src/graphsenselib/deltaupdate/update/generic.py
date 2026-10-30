@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import reduce
 from typing import Any, Callable, List, Tuple, Union
@@ -12,14 +11,6 @@ from ...datatypes import EntityType
 from ...db import DbChange
 from ...utils import group_by, groupby_property
 from ...utils.account import get_id_group
-
-
-class ApplicationStrategy(Enum):
-    TX = "transaction"
-    BATCH = "batch"
-
-    def __str__(self):
-        return str(self.value)
 
 
 class DeltaUpdate(ABC):
@@ -177,21 +168,35 @@ class DbDelta:
 
     @staticmethod
     def merge(change_sets: List[DbDelta]) -> "DbDelta":
-        return reduce(lambda x, y: x.concat(y), change_sets).compress()
+        # One pass per list: folding with concat() copied the growing lists
+        # once per tx, which is quadratic in the batch size (minutes for a
+        # batch with a few large CoinJoins).
+        return DbDelta(
+            entity_updates=[u for d in change_sets for u in d.entity_updates],
+            new_entity_txs=[t for d in change_sets for t in d.new_entity_txs],
+            relation_updates=[r for d in change_sets for r in d.relation_updates],
+        ).compress()
 
     def to_cluster_delta(self, address_to_cluster_id: Callable[[str], int]):
-        eu = deepcopy(self.entity_updates)
-        etxs = deepcopy(self.new_entity_txs)
-        rel = deepcopy(self.relation_updates)
-        for update in eu:
-            update.identifier = address_to_cluster_id(update.identifier)
-
-        for update in etxs:
-            update.identifier = address_to_cluster_id(update.identifier)
-
-        for update in rel:
-            update.src_identifier = address_to_cluster_id(update.src_identifier)
-            update.dst_identifier = address_to_cluster_id(update.dst_identifier)
+        # Re-keyed shallow copies: the DeltaValue fields are never mutated
+        # (merges build new ones), so the cluster delta can share them with
+        # the address delta instead of deep-copying the whole batch.
+        eu = [
+            replace(u, identifier=address_to_cluster_id(u.identifier))
+            for u in self.entity_updates
+        ]
+        etxs = [
+            replace(t, identifier=address_to_cluster_id(t.identifier))
+            for t in self.new_entity_txs
+        ]
+        rel = [
+            replace(
+                r,
+                src_identifier=address_to_cluster_id(r.src_identifier),
+                dst_identifier=address_to_cluster_id(r.dst_identifier),
+            )
+            for r in self.relation_updates
+        ]
 
         return DbDelta(
             entity_updates=eu, new_entity_txs=etxs, relation_updates=rel

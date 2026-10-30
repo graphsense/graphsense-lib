@@ -35,9 +35,10 @@ async def test_tool_surface_shape(bundled_mcp):
 
         # The POST body fields must surface as tool parameters
         summary_tool = next(t for t in tools if t.name == "graph_summary")
-        props = summary_tool.inputSchema.get("properties", {})
+        props = summary_tool.input_schema.get("properties", {})
         assert "txs" in props
         assert "addresses" in props
+        assert summary_tool.output_schema is not None
 
     # Must-have auto-generated passthroughs
     assert "get_statistics" in names
@@ -155,7 +156,7 @@ async def test_list_tags_by_address_exposes_pagination(bundled_mcp):
     async with Client(bundled_mcp) as c:
         tools = {t.name: t for t in await c.list_tools()}
     tool = tools["list_tags_by_address"]
-    schema = tool.inputSchema or {}
+    schema = tool.input_schema or {}
     properties = schema.get("properties") or {}
     assert "page" in properties
     assert "pagesize" in properties
@@ -208,7 +209,7 @@ async def test_instructions_sent_on_handshake(monkeypatch):
     mcp, stack = build_mcp(app, GSMCPConfig())
     async with stack:
         async with Client(mcp) as c:
-            assert c.initialize_result.instructions == "marker-from-test"
+            assert c.instructions == "marker-from-test"
 
 
 async def test_mcp_trailing_slash_redirect_is_relative(monkeypatch):
@@ -254,3 +255,32 @@ async def test_attach_to_fastapi_twice_raises(monkeypatch):
     app = create_spec_app()  # already attached
     with pytest.raises(MCPBootstrapError):
         attach_to_fastapi(app, GSMCPConfig())
+
+
+async def test_pagesize_policy_covers_auto_generated_list_tools(bundled_mcp):
+    """The default must reach every generated tool that takes a pagesize.
+
+    list_tx_flows is the live case: an omitted pagesize means no pagination
+    at all upstream, so the whole flow list of an aggregator tx comes back.
+    The consolidated tools must NOT be in the set: they default themselves,
+    and list_neighbors reuses pagesize as a filter target.
+    """
+    from graphsenselib.mcp.pagesize import PagesizeDefaultMiddleware
+
+    mw = next(
+        m for m in bundled_mcp.middleware if isinstance(m, PagesizeDefaultMiddleware)
+    )
+
+    assert "list_tx_flows" in mw.tool_names
+    assert mw.tool_names.isdisjoint(
+        {"list_neighbors", "list_txs_for", "list_tags_by_address", "get_statistics"}
+    )
+
+    from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE
+
+    async with Client(bundled_mcp) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+    assert (
+        tools["list_tx_flows"].input_schema["properties"]["pagesize"]["default"]
+        == DEFAULT_PAGESIZE
+    )

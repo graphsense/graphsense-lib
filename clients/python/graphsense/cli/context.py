@@ -7,8 +7,6 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
-import rich_click as click
-
 from graphsense.ext.client import GraphSense
 
 
@@ -47,9 +45,16 @@ class CliContext:
                     "GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS"
                 )
                 == "1",
-                # Resolve click's current stderr stream on each write so
+                # Resolve the current stderr on each write so
                 # `CliRunner(mix_stderr=False)` on click 8.1 captures it.
-                deprecation_stream=lambda: click.get_text_stream("stderr"),
+                # Deliberately not `click.get_text_stream("stderr")`: click
+                # 8.5 moved that behind a module-level `__getattr__` that
+                # raises a DeprecationWarning (removal in 9.0), and the
+                # deprecation hook resolves this stream inside a
+                # `try/except Exception`, so under `-W error` the warning
+                # became the exception that silently swallowed every
+                # deprecation message.
+                deprecation_stream=lambda: sys.stderr,
             )
         return self._gs
 

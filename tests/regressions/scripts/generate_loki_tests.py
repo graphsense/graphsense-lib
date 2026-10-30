@@ -145,7 +145,7 @@ def normalize_uri(uri: str) -> str:
         (r"/addresses/bc1[a-z0-9]{39,59}(?=/|$)", "/addresses/{btc_bech32}"),
         (r"/addresses/0x[a-fA-F0-9]{40}(?=/|$)", "/addresses/{eth_address}"),
         (r"/addresses/T[a-zA-Z0-9]{33}(?=/|$)", "/addresses/{trx_address}"),
-        (r"/entities/\d+(?=/|$)", "/entities/{entity_id}"),
+        (r"/clusters/\d+(?=/|$)", "/clusters/{cluster_id}"),
         (r"/txs/0x[a-fA-F0-9]{64}(?=/|$)", "/txs/{eth_tx}"),
         (r"/txs/[a-fA-F0-9]{64}(?=/|$)", "/txs/{tx_hash}"),
         (r"/blocks/\d+(?=/|$)", "/blocks/{height}"),

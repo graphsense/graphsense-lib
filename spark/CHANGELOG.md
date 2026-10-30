@@ -3,7 +3,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [v26.09.1] 2026-09-30
+### Security
+- **BouncyCastle `bcprov-jdk18on` 1.80 → 1.85.** Clears the four advisories
+  filed against 1.80 since it was added: GHSA-9pwp-9qqc-pr26 (Name Constraints
+  bypass, critical), GHSA-574f-3g2m-x479 (GOST 28147 CTR keystream reuse,
+  critical), GHSA-qp49-qgx5-5m26 (ASN.1 nesting-depth guard reset, high) and
+  GHSA-c3fc-8qff-9hwx (LDAP injection). Same coordinate, same packages; the
+  only caller is web3j's Keccak hash for event signatures.
+- The remaining Dependabot alerts on this build — jackson-core/databind 2.15.2,
+  netty-handler 4.1.111 and commons-lang3 3.12.0 — are all in the `Provided`
+  tree (`spark-sql`/`spark-graphx` 3.5.8, `cassandra-analytics-core` 0.3.0),
+  i.e. the cluster's Spark, not the jar this build ships. Spark 3.5.9 pins the
+  same versions, so they cannot be cleared from here.
+
+## [v26.09.0] 2026-09-29
 ### Security
 - **`org.web3j:core` dropped from the build.** Nothing imported it — the whole
   web3j surface is four calls in `Tokens.scala` (`EventEncoder`,
@@ -22,7 +36,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the event signature through `org.web3j.crypto.Hash`, which calls Keccak.
 
 ### Changed
+- **Layout options default per network, to the production layout.** One
+  default per schema could not be right for every network, and it was not the
+  production layout for any UTXO chain: a job started without layout options
+  wrote bucket size 25000 and no bech32 prefix (so every `bc1q…` address landed
+  in the `address_ids_by_address_prefix` partition `bc1q`), and trx got a
+  `--block-bucket-size-address-txs` of 150000. The defaults now come from
+  `NetworkDefaults` by `--network`: btc/ltc/bch/zec bucket size 5000, address
+  prefix length 4, bech32 prefix `bc` / `ltc1` / none / none, coinjoin
+  filtering on; eth/trx bucket size 25000, address and tx prefix length 5,
+  block bucket size 150000 / 50000, 100 address-relation buckets. **Behaviour
+  change** for callers that relied on the old defaults (e.g. `docker/submit.sh`
+  for UTXO chains or trx): new keyspaces get the production layout. Explicit
+  options are unaffected, and readers take the layout from each keyspace's
+  `configuration` row. The table must match graphsense-lib's
+  `get_default_data_configuration`; a parity test in graphsense-lib guards it.
+- `docker/submit.sh` no longer shows a bucket size of 10000 it never passed:
+  `TRANSFORM_BUCKET_SIZE` is now forwarded as `--bucket-size` when set, and the
+  per-network default applies otherwise.
 - scalatest 3.2.12 -> 3.2.19 (test scope).
+- `docker/submit.sh` takes optional `CASSANDRA_USERNAME` / `CASSANDRA_PASSWORD`
+  and forwards them as `spark.cassandra.auth.*`, so the Docker transformation
+  job works against a cluster with `PasswordAuthenticator` enabled. Unset, it
+  connects anonymously as before.
 - **`scalacOptions += "-release:8"`.** Scala 2.12 always emitted Java 8
   bytecode, so the artifact never varied by build JDK — but the source was
   checked against whichever class library the builder had, so a Java 9+ stdlib

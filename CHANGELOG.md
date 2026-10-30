@@ -12,9 +12,228 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-10-29
+
+`graphsense-cli sync run` gains scheduled tasks (e.g. the weekly cross-chain pubkey update), and Delta Lake compaction no longer deletes files a running Spark job still reads. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
+
+### Upgrade notes
+- **Vacuum keeps removed Delta Lake files for 48h** (was 0), so storage of compacted-away files is freed two days later.
+- **`sync run --once` exits 2** when the `sync` section or the `-c` network is missing from the config (was 0).
+
+### Web API + Python client
+
+#### Changed
+- **A non-JSON error answer from the notifications service** (e.g. a proxy's HTML error page) is no longer passed to the client; the client gets the status and its reason phrase, and the body is logged.
+
 ### Library
 
 #### Added
+- **`sync run` runs scheduled tasks** (`sync.tasks`): a graphsense-cli command at a time of day (UTC), optionally on one weekday, on one daemon of the task's channel at a time. A missed time is caught up, a failure alerts and is retried every `retry_minutes`, and the last run survives restarts. `sync status` lists the tasks; `sync pause/resume --task <name>`. Replaces the cron line of the weekly pubkey update.
+- **`transformation pubkey-update-all`**: `pubkey-update --skip-detect` for every network with a delta sink (or `-n`, in that order), then `pubkey-detect`, `pubkey-compact` and, for a delta sink, `pubkey-load`, as one job.
+- **Tagpack validation names the t1 address behind a ZIP-320 TEX address** (`tex1…`) in its hint; the chain, and so the tagstore lookup, only has the t1 form.
+
+#### Changed
+- **`sync run` warns once, not every second, when the `sync` section or a `-c` network is missing from the config**; with `--once` it then exits 2 instead of 0.
+- **Sync jobs log the config file they run with**, instead of "Running version … without a config".
+- **Compatible with pandas 3.1** (no `inplace=True`, deprecated there). Dependency updates: pandas 3.1.0, fastapi 0.162.0, authlib 1.9.1, dnspython 2.9.0 (GHSA-45c3-73f7-pv4m), aiohttp 3.14.4, uv image 0.13.6; Python client: python-dateutil 3.0.0.
+
+#### Fixed
+- **Delta Lake compaction no longer deletes files a running Spark job still reads.** Vacuum kept no removed files (retention 0), so a transformation or `pubkey-update` that overlapped a compaction of its source network could fail mid-read on a missing parquet file. Removed files are now kept for 48h; storage of compacted-away files is freed that much later. The time of the last vacuum is stored in the table property `graphsense.lastVacuum`, since a vacuum that deletes nothing leaves no commit to schedule `auto_compact` on.
+- **The legacy ingest pipeline (`GRAPHSENSE_LEGACY_INGEST`) honours `ingest_config.reorg_backoff_blocks`**; it always used the built-in backoff.
+- **`--auto-compact-last-n 0` is refused** like `auto_compact_last_n: 0` in the config; it silently fell back to the default.
+- **A stop while taking a Redis lock no longer leaves the lock behind**, also in the moment between acquiring it and starting work.
+
+## [2.19.0] - 2026-10-28
+
+`graphsense-cli sync run` replaces the per-network cron jobs with one continuously running sync daemon; the REST API gains address notifications (off by default) and drops the sunset `/entities` routes.
+
+### Upgrade notes
+- **Python 3.10 is no longer supported** (`requires-python = ">=3.11, <3.14"`). The Docker images were already on 3.13; the Python client still supports 3.10.
+- **`delta-update update` always runs the full updater** (formerly `--updater-version 2`). `--updater-version 1`, `--write-new`/`--write-dirty` are gone; `--updater-version 2` is still accepted.
+- **`--write-batch-size 1` no longer selects a per-transaction mode**; it is a normal WAL-protected batch of one block. A leftover `*_deltaupdate_*_crashreport.err` under `/tmp` marks a block that was only partly applied and is no longer read: finish that run with 2.18.x before upgrading, or 2.19 skips the rest of that block.
+- **The `/{currency}/entities/...` routes and `/addresses/{address}/entity` answer 404** (sunset 2026-10-31); use the `/clusters` equivalents. The entity-named bulk operations and the deprecated `entity` fields stay.
+- **`notifications.service_token`** is refused by older gs-rest versions; set it only together with this version.
+- **`Dockerfile.transformation` is removed**; use the main image.
+
+### Web API + Python client
+
+#### Added
+- **Address notifications under `/notifications/*`**, enabled with `notifications.enabled` and `notifications.url`. Subscriptions and the feed of notified transactions are forwarded to the gs-notifications service with the gateway's identity headers and an optional `service_token`. Requests are validated before forwarding (control characters in labels, oversized ids, `hourly` → 422); the service's answers are passed through unchanged, an unreachable service is 502, a timeout 504. Hidden from the OpenAPI spec and the Python client unless `notifications.include_in_schema` is set (then labelled beta).
+- **`/capabilities` lists the deployment's optional services** (`services`: name, availability, version, contract version, beta, and for notifications the supported `networks`), read from each service's `/meta` and cached for a minute.
+
+#### Changed
+- **`entity` is optional in the OpenAPI schema of `Address`, `Cluster` and `Entity`.** The server still sends it; Python client: `Address.entity` is `Optional[int]`.
+
+#### Removed
+- **The `/{currency}/entities/...` routes and `/{currency}/addresses/{address}/entity`** (see Upgrade notes). Python client: `EntitiesApi`, `AddressesApi.get_address_entity`, `EntityAddresses`/`NeighborEntities` and `graphsense raw entities` are gone; using them raises an error naming the replacement.
+
+#### Fixed
+- **`/search` finds bech32 addresses written in uppercase** (`BC1Q…`, as in QR codes), also by prefix.
+- **A mixed-case bech32 address gets 400 "upper and lower case mixed"** instead of "checksum mismatch".
+- **Networks served by an external backend accept upper-case names** (`/BNB/...`), like core networks.
+- **Cluster neighbor search answers 400 for an unsupported `key`** (e.g. `actors`) instead of 500.
+
+### Library
+
+#### Added
+- **`graphsense-cli sync run`: a daemon that keeps networks up to date continuously.** Per network it polls the node and the raw/transformed heights and runs `ingest from-node`, `delta-update update` and Delta Lake compaction checks as child processes, so lag is one poll plus the reorg backoff instead of up to an hour. Configured under `sync:` (`sync.networks`); one daemon per network (`-c`) or per `--channel`. It checks for reorgs deeper than the backoff before every ingest, alerts on repeated failures and on lag, and stops cleanly on SIGTERM (`stop_grace_seconds`, default 480), so an image switch is a plain `docker compose up -d`. `sync status`, `sync pause [--for] [--wait]` and `sync resume` manage it; state lives in Redis when configured.
+- **Ingest and delta-update defaults in the keyspace config** (`ingest_config.sinks`, `auto_compact`, `auto_compact_last_n`, `reorg_backoff_blocks`; new `delta_update_config` with `write_batch_size`, `parallel_workers`, `forward_fill_rates`, `pedantic`), so manual runs, cron and the daemon behave the same. CLI flags still win.
+- **`ingest delta-lake auto-compact`** runs the compaction check on its own (exit 0 not due, 11 no schedule, 911 lock held).
+- **SIGTERM unwinds `graphsense-cli` like Ctrl-C**, so a stopped job releases its Redis locks.
+- **Tagpack address validation:** `tagpack validate --address-validation {off,warn,error}`, per-tag `address_validation: skip`, and `--invalid-addresses-report <file.tsv>` listing every invalid address with an offline hint (wrong network, hex-encoded, truncated, private key, autofill run, …). More networks are checked (EVM chains, SOL, XRP, and for multi-chain tokens ALGO, EOSIO, TON), against the tag's `network` rather than its currency; the token → chain list is updated. Undecoded escape sequences are reported.
+
+#### Changed
+- **Shorter built-in reorg backoff: zec 150 → 100 blocks, bch 15 → 10**, still covering the deepest reorg the nodes accept.
+
+#### Removed
+- **Python 3.10 support**, the **v1 delta updater**, the **per-transaction UTXO delta-update mode** and **`Dockerfile.transformation`** (see Upgrade notes). Security updates in the lockfile: Pillow 13.0.0, certifi, GitPython, virtualenv.
+
+#### Fixed
+- **Forward-fill no longer writes zero exchange rates for the newest block.** When the raw tip was the only block without rates (the first block of a day, just after the previous day's rates arrived), the rate frontier came back as -1 and the delta update stored zero fiat values for that block.
+- **Base58Check address validation checks version byte and length**, so BTC no longer accepts private or extended keys and BCH no longer accepts TRON addresses; ZEC Sapling (`zs1…`) and unified (`u1…`) addresses are accepted. Mixed-case bech32 is named as such.
+- **Tags by address, actor and cluster are paged in a stable order** (tag id breaks confidence ties), so pages no longer repeat or drop tags.
+- **ETH/TRX delta updates write the tx-id mapping and secondary-id buckets before the address rows**, so a busy address no longer briefly answers 500 or misses its newest txs.
+- **ETH/TRX delta updates with one worker no longer fail serializing token maps into the WAL.**
+- **`ingest from-node` exits 12 ("nothing to ingest") when the node is behind raw**, instead of failing an assertion.
+- **The post-ingest staleness alert is sent at most once an hour per currency.**
+- **LTC ingest recognises MWEB outputs** instead of warning `ScriptParseError` for every block; stored data is unchanged.
+- **TRX ingest's gRPC retry policy uses the 5 attempts gRPC allows** (it silently clamped the configured 9), with backoff from 20 s up to 120 s, so a node restart of several minutes is ridden out as documented.
+- **Forward-filling today's exchange rate is logged at INFO**, not as an hourly WARNING; a missing earlier day still warns.
+
+## [2.18.2] - 2026-10-27
+
+### Library
+
+#### Fixed
+- **ETH ingest works against Erigon 3.8.** Erigon 3.8 reports a reverted contract creation as `{gasUsed, output}`, the way it reports a reverted call, instead of `{address, code, gasUsed}`. Ingest stopped with `Unknown RPC fields ['output'] in trace.result (create)`. The revert data is now stored in `output`, as before. `to_address` stays empty, because the contract was never deployed (older Erigon versions filled in the address it would have had). Derived tables are unaffected, since they only use successful traces.
+
+## [2.18.1] - 2026-10-15
+
+### Web API + Python client
+
+#### Fixed
+- **A failed external backend no longer slows down every merged answer.** A backend that could not be reached or did not answer in time cost every merge (`/stats`, `/capabilities`, `/search`, the twin lookup the dashboard makes per added address) the full `external_backends.merge_timeout_s`. Merges now leave it out for `external_backends.failure_skip_s` (default 30 s) and name it in `X-Ikn-Backends-Declined`; any answer from it ends the window early, and proxied requests still go to it.
+- **Cross-chain twins by public key are listed whichever network an address is asked on.** They were only complete on eth: a btc, trx, ltc, bch or zec address missed its key's addresses on the externally served networks, and an address on one of those missed its btc, trx, ltc, bch and zec twins. The backends are now asked about the key's eth address when the key was used on Ethereum, and an address on an externally served network gets the local pubkey rows of the same address; a failing local lookup leaves those rows out instead of failing the answer.
+
+## [2.18.0] - 2026-10-15
+
+New read-only `quality` commands find where the tag summary hides an address's exchange attribution, actor clashes and garbled text in the tagstore; tied cluster tags are now picked deterministically.
+
+### Upgrade notes
+Without any setting changed:
+- **Ties between equally confident cluster tags are decided deterministically** (the tagpack whose id sorts first, then its first tag; stable across a re-insert of a pack) instead of by whichever row Postgres returns. Labels of tied clusters no longer change between requests, but can differ from what was shown before.
+- **Validation reports more, rejects nothing new:** garbled or non-printable text and unknown `same_as`/`related_actors` ids are warnings; null characters fail as before. Actorpacks using the new context fields still validate and insert with older versions.
+- **Pack files are read as UTF-8** regardless of the locale; a rapidyaml parse failure falls back to PyYAML instead of aborting.
+- **`POSTGRES_PORT` is now honoured** when tagpack-tool builds the URL from `POSTGRES_*`; environments that set it for something else connect to that port.
+- **Packs below a `header.yaml` are read by the fast YAML loader**, which now gives PyYAML's result, so nothing changes for them except that an unquoted `0x…` is text instead of a number (with either loader). Packs elsewhere, already read by the fast loader, can read differently than before where they relied on its old JSON behaviour (see Fixed).
+- **Address lookups answer 400 instead of 404 for an unindexed BTC, LTC, BCH (legacy) or ZEC address with a wrong checksum** (see Fixed). Clients that treat 404 as "no transactions yet" now get an error for such typos.
+- **The `actors` of addresses and clusters list fewer actors:** only those of actor-type tags (see Changed). An actor that only a mention or event tag carries no longer appears there, unless `tag_summary_only_propagate_high_confidence_actors` is turned off.
+- **An external backend that fails no longer turns shared answers into 500s.** `/stats`, `/capabilities`, `/search` and cross-chain twin lists answer 200 without its networks and name it in `X-Ikn-Backends-Declined`; a request on one of its networks answers 503 with `Retry-After: 30` instead of 500. A backend that does not answer a merge within the new `external_backends.merge_timeout_s` (default 5 s) is left out; proxied requests keep `timeout_s`.
+
+### Library
+
+#### Added
+- **`tagpack-tool tagpack validate --jobs N` validates packs in parallel** (`0` = one process per CPU). With more than one job every pack is validated and every failure reported; with the default `1` the run stops at the first invalid pack, as before. Parsing is unchanged. On a synthetic repo of 300 packs of 5,000 tags each: 75 s with one job, 40 s with two, 22 s with four.
+- **`tagpack-tool quality ranking-conflicts` and `quality actor-conflicts` (read-only).** `ranking-conflicts` runs every exchange-tagged address of a network through the same tag digest REST serves (direct tags plus the cluster's best definer, `only_propagate_high_confidence_actors=True`), lists the ones whose `best_actor`/`best_label` is not an exchange tag of theirs, and gives each a reason code (`INHERITED_WINS`, `ACTOR_THRESHOLD_DROPPED`, `MENTION_WINS`, `DIRECT_HIGHER_CONF`, `NON_EXCHANGE_CLUSTER_DEFINER`, `DEFINER_TIE`, …). It also checks each multi-address cluster's selected definer against the majority of its definers (each tagpack votes once per actor, weighted `exp(confidence / 10)`; this vote is the check's own estimate, REST does not use it). `actor-conflicts` lists addresses with more than one actor and clusters whose definers or members disagree on the actor; actor pairs declared as `same_as` or `related_actors` in the actorpacks are not reported. Mention tags never count as exchange attributions: their category describes where the address was mentioned (e.g. a dark-web page), not its owner. Both write stable-sorted CSV or JSON (`--out`) and print per-reason counts to stderr. They read only the tagstore: cluster ids come from its address→cluster mapping (`--clustering auto|legacy|v2|both`). `--limit N` checks only N addresses and their clusters, for a quick trial run; add `-v` (`graphsense-cli -v tagpack-tool …`) to see progress.
+- **Actorpacks can declare `same_as` and `related_actors` in an actor's `context`.** `same_as` marks another actor entry as the same organisation (rebrand, duplicate), `related_actors` a different organisation that legitimately tags the same addresses (e.g. a custodian and its wrapped token). Validation rejects self-references and pairs listed in both fields and warns about ids not in the same pack. Actors declared `same_as` no longer get the "share the same domain / twitter_handle / coingecko_id / defilama_id, consider merging" warnings. Older versions ignore the fields, so actorpacks can use them right away. See `tagpack/docs/README.md`.
+- **Actorpacks can declare `sub_service_of` and `nested_in` in an actor's `context`.** `sub_service_of` names the one actor this one belongs to as a product or division of the same organisation (e.g. an exchange's mining pool). `nested_in` lists actors whose addresses or accounts this one runs on as a separate organisation (e.g. an exchange that keeps its funds with a custodian, a service operating through exchange accounts). Validation rejects self-references, an id in both fields and `sub_service_of` cycles, and warns about ids not in the same pack; `sub_service_of` pairs get no "consider merging" warning. `quality actor-conflicts` does not report either pair. `quality ranking-conflicts` accepts a summary that shows the same organisation (`same_as`, `sub_service_of`) or a nested service instead of the address's exchange tag, but still reports a summary that shows the host and hides the nested service. The tag summary itself is unchanged. Older versions ignore both fields.
+- **`tagpack-tool quality list-bad-text` (read-only).** Lists every value already in the tagstore that tagpack validation now rejects (see below), per tagpack or actorpack and field, with the probably intended text for mis-encoded values, so it can be fixed in the pack.
+
+#### Deprecated
+- **The `watch` module (`graphsense-cli watch money-flows`) is deprecated and will be removed in a release after 2027-04-09.** Invoking it prints a deprecation notice; constructing `FlowWatcherFactory` raises a `DeprecationWarning`. It still works unchanged until then.
+
+#### Fixed
+- **The fast YAML loader reads files as PyYAML does.** It used to go through JSON, which turned some unquoted values into something else: digits with an exponent (`12E34`, address-like strings) into numbers or `inf`, `inf`/`nan` into `.inf`/`.nan`, aliases (`*id001`, written by `yaml.dump` for repeated lists) into the literal text, and kept `yes`/`no`, `~`, `012` as text. Now rapidyaml only parses and unquoted values are interpreted with PyYAML's rules. With that, packs in a directory with a `header.yaml` use the fast loader too (before, all of them went through PyYAML); only packs with an `!include` still use PyYAML. In both loaders an unquoted `0x…` stays text instead of a hexadecimal number. The differences of older versions are listed in `tagpack/docs/README.md` ("How TagPack files are parsed"). Validation of a 300-pack repository below a `header.yaml`: 74 s → 42 s (one job), 21 s (two jobs).
+- **`tagpack-tool` disappeared after a fresh install.** SQLAlchemy 2.1 no longer installs `greenlet` by default, and the tagstore's asyncio engine needs it; the `tagstore` extra now declares `sqlalchemy[asyncio]`. When an optional CLI (`tagpack-tool`, `tagstore`) cannot be imported, `graphsense-cli` now reports the import error and the extra to install instead of "No such command".
+- **Claude Code sees the whole MCP server instructions and every tool description.** Claude Code cuts both at 2048 characters without telling the server. The instructions were 7.4k characters, so only the first rules reached the model and the Pathfinder link and tag field guidance never did; `build_pathfinder_file` (5.4k) and `lookup_tx_details` (3.1k) lost their ends too. The instructions now hold only cross-tool rules (1.9k); per-tool guidance moved into the tool descriptions, argument detail into the input schema, and the tag field fallback order into `list_tags_by_address`. A test keeps everything under 2048.
+- **Investigations start with an investigator, not with `trace-funds`.** With the Claude Code plugin, Claude picked the shared `trace-funds` skill directly for "trace the funds from …" and skipped the investigators, so no investigator set how far to go. The shared skills' descriptions now say an investigator loads them and to pick one first.
+- **A tagpack the fast YAML parser rejects no longer aborts with a bare `ExceptionParse`.** rapidyaml's exception carries no message (it prints line and column to stderr); loading now retries with PyYAML, which either loads the file or fails with the line and column of the error.
+- **Tagpacks and actorpacks are read as UTF-8 whatever the machine's locale.** Files were opened with the platform default encoding, so on a non-UTF-8 locale an insert stored UTF-8 text as mojibake.
+- **tagpack-tool reads `POSTGRES_PORT`.** The URL built from `POSTGRES_*` environment variables used to hard-code port 5432; it now uses `POSTGRES_PORT` when set.
+- **`tagpack add-actors` keeps `!include`d headers and the file's formatting (#33).** It used to write back the merged in-memory pack, inlining the header's fields along with defaults filled in on load (`confidence`, `network`) and JSON-encoded `context` values. It now edits the file as written: it inserts the new `actor` lines and updates `lastmod`, and leaves everything else, including comments and the `header: !include …` reference, unchanged. When a change can't be made as a line edit (tags in `{…}` flow style), it warns and rewrites the whole file: the header stays an `!include`, but comments are lost.
+- **`tagpack add-actors` no longer moves a shared actor to pack level.** When every tag it asked about got the same actor, it moved that actor to the pack and removed `actor` from all tags. That also hit tags it hadn't asked about: with `--categories` it raised `KeyError` on tags outside the filter, and it silently replaced an actor a tag already had. Each tag now keeps the actor assigned to it.
+- **UTXO ingest fails loudly instead of reading a missing amount as 0 (#182).** Hardening only; no node emits these shapes and the parsed output is unchanged on all mainnet ZEC blocks. A ZEC transaction or Orchard/Ironwood bundle with spends, outputs or actions but no `valueBalanceZat`, a Sprout joinsplit with `vpub_old`/`vpub_new` but no `*Zat` integer, and a vout without `value` (any network) now raise. ZEC Sprout amounts and outputs are read from the integers (`vpub_*Zat`, `valueZat`). zcashd < 2.0.7 is no longer accepted for transactions with joinsplits.
+- **UTXO ingest with `resolve_inputs_via_cassandra` recomputes `fee` after resolving inputs (#183).** It was left at the exporter's value, which leaves out the transparent inputs and is usually negative. Only the Delta lake stores the UTXO fee, and nothing reads it; the default configuration was not affected.
+- **UTXO ingest with `resolve_inputs_via_cassandra` can write to the Delta lake (#189).** Inputs resolved from Cassandra carried the stored integer address type, which the parquet schema rejects (`ArrowTypeError`), so the batch reached neither sink. The resolver now returns the type name, as for outputs seen in the same run. The default configuration was not affected.
+- **A delta update whose worker is killed (e.g. by the OOM killer) now fails instead of hanging with its locks held.** With `--parallel-workers` > 1, the pool waited for the surviving workers on its way out, and one still busy with its chunk ignored the executor's SIGTERM (workers ignore it on purpose), so the run hung without logging anything: its lock heartbeat kept going, so no stale-lock alert fired either. On an error the pool now kills its workers and the exception reaches the caller, which releases the locks; the next run replays the torn batch from the WAL. A run that ends normally or after Ctrl-C still lets every chunk finish. The pool also starts all its workers up front: started on demand, a worker that died right after starting could go unnoticed, with the same hang.
+- **`ingest from-node` with an exchange-rates provider no longer warns `Token-rate pre-ingest … failed: table token_configuration does not exist` on UTXO networks.** The token-rate step ran for every network, but only account-based networks (ETH, TRX) have tokens; it now runs only there. Nothing else changes: the warning was the only effect, and block ingest always continued.
+- **The UTXO delta update needs far less memory and time for batches with large CoinJoins**, which create one address relation per input/output pair. Writes are now sent 10,000 at a time without keeping each statement and result (about 5 KB → 0.15 KB per change; a timeout retries only the failing chunk), merging the per-transaction deltas is linear instead of quadratic, and the cluster delta no longer deep-copies the address delta. What gets written is unchanged.
+- **`tagpack-tool` no longer hangs forever after a network outage.** A tagstore connection whose server side was gone (e.g. after a VPN drop) looked open, so a `quality` run waited for an answer that never came, without an error. Connections now use TCP keepalive and a TCP user timeout, so a dead one fails within about two minutes, and the `quality` commands' pool replaces a connection that died while idle (`pool_pre_ping`). Long queries on a live server are not affected.
+- **An outage of an external backend alerts once instead of once per request.** Its first failure logs at ERROR (the Slack level), later ones at WARNING, and the first answer after it logs how long it lasted. MCP tools no longer alert per call on the backend's 503. Each worker process alerts once.
+- **MCP tool results that leave out the externally served networks say so.** During an outage `search`, `get_statistics` and `lookup_address` with cross-chain addresses start with a note naming the missing networks, so a missing hit reads as not checked instead of not found.
+
+#### Changed
+- **MCP `lookup_address` reads the cluster from `/addresses/{address}/cluster`** instead of the deprecated `/addresses/{address}/entity`, which is sunset on 2026-10-31. The response is unchanged.
+- **MCP clients without the plugin now find the investigation skills.** The server instructions name the investigators and say to pick one before any tracing, read from `skill://<name>/SKILL.md` when the skills aren't installed. The model does this only when the user asks for an investigation, so a single lookup costs no extra tokens.
+- **`investigate-strict` is the default investigator** (was `investigate-advisor`). Without a hint on how far to go, an investigation answers what was asked and stops. Ask for next steps to get the advisor.
+- **Tagpack and actorpack validation reports mis-encoded and non-printable text (warning for now).** A field is reported if it contains UTF-8 that was read as Latin-1/cp1252, also when only part of it is damaged (e.g. `Ð\x9bÐ\x98Ð¤` for `ЛИФ`, `MÃ¼nchen` for `München`; the message names the probably intended text), or if it contains control characters other than tab and line breaks. Each pack logs one summary warning; the values are still inserted, because some generated packs carry many of them and are being repaired at their generators. A later release will reject them (`TEXT_PROBLEMS_ARE_ERRORS`). Null characters are still rejected. The check now covers actorpacks and looks inside lists; `quality list-bad-text` lists what is already in the tagstore and `scripts/one-off-fixes/fix_tagpack_mojibake.py` repairs pack files.
+- **sqlmodel is no longer capped `<0.0.45`.** The tagstore's datetime columns (`lastmod` on tagpack, actorpack, actor and tag; `created` on address) are now declared as `DateTime(timezone=False)` explicitly, so sqlmodel 0.0.45+ no longer maps them to `timestamptz` and rejects naive values. The generated column type is unchanged (`TIMESTAMP WITHOUT TIME ZONE`), so existing tagstores need no migration.
+
+### Web API + Python client
+
+The API and client versions move to 2.18.0, in line with the library.
+
+#### Changed
+- **The `actors` lists of addresses and clusters count only actor-type tags,** the same tags the tag summary's best actor is chosen from. A mention or event tag keeps its actor as a link (it still appears in the tag list and under the actor), but no longer lists that actor as one of the address's or cluster's actors: a forum post about a gambling site or a ransom payment to an exchange deposit address names whom the label refers to, not who controls the address. REST ties this to the tag summary's setting `tag_summary_only_propagate_high_confidence_actors` (on by default): with it off, the lists show every tag's actor as before. `quality actor-conflicts` always applies the rule.
+- **`POST /graph/summary` and `POST /graph/compare` carry request body examples** in the OpenAPI spec, with real BTC transactions and addresses, so the generated Python client docs show a working call instead of an empty `Model()`.
+
+#### Fixed
+- **A mistyped BCH CashAddr or TRX address in a REST request is rejected with 400 instead of resolving to a different address.** Neither checksum was verified, and a truncated or extended CashAddr decoded to an unrelated legacy address. User input now goes through a checked conversion (checksum, hash length, padding); ingest keeps the unchecked fast path for node data. The same lookups now also accept a CashAddr with an uppercase or missing `bitcoincash:` prefix or an all-uppercase payload, all-uppercase bech32 on BTC and LTC, and the `41…` hex form of TRX addresses. Tagpack import verifies CashAddr checksums too, and keeps a mistyped one as written (with a warning) instead of converting it.
+- **A BTC, LTC, BCH (legacy) or ZEC address with a wrong checksum that is not indexed now gets 400 instead of 404,** naming the checksum mismatch as a probable typo. Before, a mistyped base58 or bech32 address looked like a valid address that has no transactions yet. The check runs only after the lookup found nothing, so an indexed address is never rejected whatever its checksum, and it only judges the checksum (either bech32 constant counts, any witness version), so unusual but real outputs are never called typos. `nonstandard` placeholders and unrecognised formats still get 404.
+- **An outage of the external backend (the lite networks' service) no longer takes the core networks down with it.** `/stats`, `/capabilities`, `/search` and twin lists failed with 500 for every network, so the dashboard did not start and MCP `search` and `get_statistics` failed for everyone; a hung backend held each of them for 60 s first. They now answer the core networks' part: in under 0.1 s with the backend down, after `merge_timeout_s` (5 s) with it hung. A request on one of its networks gets a 503 the browser can read (the generic 500 carried no CORS headers).
+- **The headers the dashboard reads are named in `Access-Control-Expose-Headers`** (`X-Ikn-Backends-Declined`, `Retry-After`, `X-Served-By`): on a request with credentials browsers read the `*` wildcard as a header named `*`.
+
+## [2.17.0] - 2026-09-30
+
+### Upgrade notes
+- **Full transforms now honour `data_configuration`.** `transformation raw-to-transformed` passes the keyspace layout to the Spark job instead of letting the job use its own defaults. A configured value that differs from graphsense-lib's defaults now fails the command unless `--override-defaults` is given. Use Spark pipeline `spark-v26.09.1` or later.
+- **Tagstore:** existing databases need `GRANT INSERT ON TABLE public.address TO userinsertedtags;` (new databases get it from `tagpack/init.sh`). To give already-reported tags cluster mappings, run `scripts/one-off-fixes/backfill_tag_addresses.py apply`, then a cluster-mapping run and `tagstore refresh-views`.
+- **REST with external backends:** currency role gating is on by default for externally served networks. Deployments without a gateway that sets the roles header must set `auth.enforce_currency_roles: false`.
+- **Dependencies:** fastmcp `>=4.0`; sqlmodel is capped `<0.0.45`.
+
+### Library
+
+#### Added
+- **CoW Protocol swaps in tx conversions.** Every order in a CoW settlement is reported as its own `dex_swap`. ETH sell orders placed through the eth-flow contract are linked from the placement tx to the settlement that filled them. Turn it off with `cow_protocol_swaps: false` (`GSREST_COW_PROTOCOL_SWAPS=false`).
+- **`graphsense-cli monitoring check-consistency`** checks that raw, Delta Lake and transformed keyspaces agree over the last N blocks (default 100). It covers bookkeeping (pending WAL, interrupted batches), per-block tx, trace and log counts, exchange rates, and a sampled recount of UTXO address counters. It is read-only and exits 92 on failure, so it can gate cron jobs. `--topic` sends failures to a notification topic.
+- **Direction-aware Pathfinder layout** and the new `graphsense-cli convert gs-files layout` command. Each tx's inputs and outputs are looked up through the REST API: senders go left, receivers right, and swaps and bridges are arranged the way Pathfinder shows them. Without lookups it falls back to the previous layout. MCP `build_pathfinder_file` uses the new layout. New public helpers: `layout_metrics`, `spec_from_pathfinder`, `annotate_tx_flows`, `annotate_conversions`.
+- **MCP investigation skills.** The MCP server serves agent skills as `skill://` resources (`GS_MCP_SKILLS_ENABLED`, `GS_MCP_SKILLS_DIR`). The repository is also a Claude Code plugin marketplace: `claude plugin marketplace add graphsense/graphsense-lib`.
+- **Named and hex colors in Pathfinder files.** `build_pathfinder_file` (MCP) and `builder_from_spec` accept a node `color` as a Pathfinder annotation palette name (`green`, `red`, `orange`, `blue`, `purple`, `pink`, `yellow`, `gold`, `cyan`, `dark_green`, exported as `ANNOTATION_PALETTE`), a `#rrggbb` / `#rrggbbaa` hex string, or RGBA floats as before. Palette colors, including a hex that matches a swatch, keep the dashboard's exact values, so the annotation dialog shows them as selected. The tool description now tells agents to color nodes by their role in the case.
+- Tx identifiers accept lowercase sub-tx markers (`…_t1` as well as `…_T1`).
+
+#### Changed
+- The default transformed `data_configuration` for trx and eth now matches the Spark job defaults: trx `bucket_size` 25000, `block_bucket_size_address_txs` 150000 (eth) / 50000 (trx), `addressrelations_ids_nbuckets` 100.
+- Dependencies: fastmcp 4, deltalake 1.6.6, bcprov-jdk18on 1.85 for the slim Spark submit path.
+
+#### Fixed
+- **Delta updater:** batch writes are applied in dependency order (entities, lookup prefixes, relations, deletes, then the checkpoint). REST no longer briefly sees an address whose cluster row is not written yet, which used to cause HTTP 500s. The rows written are the same as before.
+- Addresses of user-reported tags are registered in the tagstore, so they get cluster mappings.
+- The MCP server sends its instructions again when run from the Docker image; the file was missing from the wheel.
+- A malformed `GRAPHSENSE_SLACK_TOPICS` is now logged at startup instead of silently disabling Slack notifications.
+
+### Web API + Python client
+
+The API and client versions move to 2.17.0, in line with the library.
+
+#### Added
+- **External backends.** A network without a Cassandra keyspace can be served by a GraphSense-API-compatible backend, configured under `external_backends` (`enabled`, `networks: {code: {url, api_key}}`). Requests for that network are proxied to the backend. Tags stay local, and `/stats`, `/search`, `/capabilities` and pubkey `related_addresses` merge the backend's entries into the local answer. Clients can opt out per request with `X-Ikn-Currency-Opt-Out: all-light`.
+- **Currency role gating** for externally served networks, configured under `auth` (`roles_header`, `currency_role_prefix`, `gated_currencies`, `enforce_currency_roles`). A request needs the `currency-<code>` role, otherwise it gets a 403. Listings leave out the currencies the caller cannot access.
+- **`GET /capabilities`** lists, per network, the feature families that are not available there (`relations`, `clusters`, `tags`, `conversions`, `exact_stats`).
+- **`is_possible_service`** on address detail responses, a structural heuristic for exchanges and other services.
+- **`qualifiers`** on `Address`, marking lower-bound (`gt`) or approximate (`approx`) values. Only external backends set it.
+
+#### Changed
+- `/{currency}/txs/{tx_hash}/conversions` returns CoW Protocol swaps (see Library).
+
+#### Fixed
+- `POST /tags/report-tag` for an already reported tag returns the existing report id instead of a 500, and no longer sends a duplicate notification.
+
+## [2.16.4] - 2026-09-22
+
+### Library
+
+#### Added
+- **ZEC transactions now carry a per-pool breakdown of their shielded value.** `sapling_value_balance`, `orchard_value_balance` and `ironwood_value_balance` are emitted on every transaction record in zatoshi, positive when value left that pool. They exist because the pool is *not* recoverable downstream: every shielded input and output is address-less and identical once emitted, and the bundle that produced it is not stored anywhere, so attributing a shielded row to Sapling, Orchard or Ironwood after the fact would need another node read. Two of three pools would be no use either — the remaining rows would stay ambiguous between Sprout and Sapling — so Sapling is reported alongside the two new ones. Nothing consumes them yet: the parquet sink builds its table with `pa.Table.from_pylist(mapping=data, schema=...)` and logs uncovered fields at debug, and the Cassandra sink prepares its insert from the table's own columns, so both ignore the three keys until the parquet schema declares them. The Cassandra raw schema does not change and the graph output is unaffected.
 - **`spark/build.sbt` is now the single source of truth for the Scala job's
   dependencies.** `DEFAULT_SCALA_JOB_PACKAGES` mirrors its compile-scope
   entries so the `slim` artifact can pass them to `spark-submit --packages`,
@@ -71,6 +290,136 @@ Use one changelog file, but separate entries by track in each release window.
   locally at all, that list was the only thing standing between a new file
   feeding the delta/Spark contract and an unnoticed drift, so it now runs on
   every push and PR.
+- **Dependency bumps: the `uv-minor-patch` group (22 packages), setuptools
+  84.0.0, the `docker-images` group (uv 0.12.9, a new temurin 11 digest) and
+  arrow 59.3.0 in `rust/gs_clustering`.** Notable inside the group: fastapi
+  0.136.3 -> 0.141.1, sqlmodel 0.0.38 -> 0.0.42, rapidyaml 0.13.0 -> 0.15.2,
+  redis 8.0.0 -> 8.1.0, cassandra-driver 3.30.0 -> 3.30.1, ty 0.0.73 -> 0.0.79.
+  **`ruff` is deliberately held at 0.15.17**: 0.16 widens the default rule set
+  and reports 3442 findings (2741 autofixable) on a tree that is clean today,
+  which is what failed every job on the group's PR -- the tests passed there.
+  Adopting it is a separate change, either the autofixes or an explicit
+  `lint.select`.
+- **A second round of bumps taken from the open Dependabot PRs: `anyio` 4.13.0
+  -> 4.14.2 (#170), the `uv` build image 0.12.9 -> 0.12.16 (#165) and `arrow`
+  59.3.0 -> 60.0.0 in `rust/gs_clustering` (#164).** All seven open Dependabot
+  PRs are based on `master`, which is 32 commits behind this release window, so
+  none could be merged as it stands: `develop` already carries most of the
+  `uv-minor-patch` group, and the "from" versions in those PR tables are
+  master's, not this branch's. The three above were applied by hand instead, as
+  in 2.16.3, and verified here rather than on the PR — the full Python suite
+  (2397 passed, 1 skipped, containers and `slow` included), `ruff`, `ty` and
+  `cargo test` (22 passed) against the updated locks. `arrow` 60 is a major
+  bump, but confined to the clustering extension: it adds `arrow-cmp`, moves
+  the transitive `atoi` to 3.1.0, and needed no source change in the crate.
+- **The github-actions group (#167) and the `clients/python` group (#166) were
+  applied as well.** #167 pins `docker/setup-buildx-action` to v4.4.0 and
+  `docker/build-push-action` to v7.4.0 across the three image workflows and
+  moves `actions/setup-java` v5 -> v6 in the three Scala ones; both SHAs were
+  re-verified against their tags before pinning. Its red `spark-test` job was
+  **not** the bump: the failure is a JVM `OutOfMemoryError: Java heap space` in
+  `org.graphsense.utxo.TransformationTest`, `spark_tests.yml` is green on every
+  recent `develop` run, the sbt heap options are identical on both branches,
+  and re-running that exact job on that exact commit passed. setup-java v6
+  changes distribution handling, caching and the Zulu/Azul API — nothing that
+  touches heap.
+- **#166 was not a lockfile-only bump, and hid a real bug.** `click` 8.4.2 ->
+  8.5.0 moved `get_text_stream` behind a module-level `__getattr__` that raises
+  a `DeprecationWarning` (removal in Click 9.0), and the CLI resolved its
+  stderr through it on every write. The deprecation hook resolves that stream
+  inside a `try/except Exception`, so under the client's `-W error` suite the
+  warning *became* the exception the hook swallows and every "endpoint is
+  deprecated" message vanished —
+  `test_deprecation_header_triggers_stderr_warning` is what caught it, and no
+  amount of bumping `ty` fixed the matching `call-non-callable` diagnostic,
+  because the annotation really is `-> object`. `graphsense/cli/context.py` now
+  resolves `sys.stderr` directly, which is what the helper returned anyway and
+  what the hook already does for `stream=None`. The client is **not**
+  re-released in this window: on click 8.x the bug is invisible under Python's
+  default warning filters, so the fix rides the next `webapi-v*` release.
+  Verified with the client's own gate — `lint`, `type-check`, `test-ci` (122
+  passed, `-W error`) and `test-compat`.
+- **Two Dependabot PRs are deliberately left for their own change.** `fastmcp`
+  3.4.2 -> 4.0.3 (#169) is a major carrying `mcp` 1.28.1 -> 2.2.0, and it fails
+  `tests/mcp/test_server_integration.py::test_tool_surface_shape`, where
+  `Tool.inputSchema` is now the deprecated spelling of `input_schema`; it also
+  crosses the DNS-rebinding host check that made `GS_MCP_ALLOWED_HOSTS`
+  necessary in the first place, so it wants a deployment check rather than a
+  same-day bugfix slot. `ruff` 0.16.7 stays held for the reason above, and that
+  keeps the rest of #168 with it: `filelock` 3.32.6, `grpcio` and
+  `grpcio-tools` 1.84.0, `psycopg2-binary` 2.9.13, `build` 1.6.1 and `ty`
+  0.0.81.
+
+#### Fixed
+- **Tagstore: `0x` hex addresses are lowercased on every network, not just
+  ETH.** A token tag without an explicit `network` (e.g. `currency: USDT`)
+  gets the currency as its network, which skipped the ETH-only lowercasing, so
+  checksummed addresses were stored verbatim and never matched the exact,
+  lowercase lookup the API does. The insert path and the validation
+  duplicate-key check now share one normalizer (`tagpack.utils.
+  normalize_tag_address`), and the tagstore lookups (single and batch
+  subject-id queries, user-reported tags) normalize incoming `0x` ids the same
+  way; batch results stay keyed by the ids the caller passed. Validation now
+  warns when a tag's network is a token rather than a chain. Existing rows are
+  not rewritten; fix them with
+  `UPDATE tag SET identifier = lower(identifier) WHERE identifier ~ '^0x[0-9a-fA-F]+$' AND identifier <> lower(identifier);`
+  after removing rows whose lowercase twin already exists, or by reimporting
+  the affected tagpacks with `--force` (which drops their old rows).
+- **UTXO ingest no longer aborts on transaction versions >= 2^31 from
+  Bitcoin Core >= 28.0.** Core 28.0 changed the tx version to `uint32`
+  (bitcoin/bitcoin#29325), so its RPC reports the two negative-version txs in
+  BTC block 256818 as 2591798512 and 2187681472. The raw `transaction.version`
+  column is `int`, and the bind failed (`'i' format requires -2147483648 <=
+  number <= 2147483647`), stopping any BTC ingest that reaches that block. The
+  parser now wraps such versions to the signed int32 older nodes returned, so
+  the stored value matches keyspaces ingested from pre-28 nodes and no schema
+  change is needed.
+- **`transformation raw-to-transformed --local` keeps a configured
+  `local[N]` master.** The flag used to force `spark.master=local[*]`
+  unconditionally, so a `spark.master: local[1]` in the `spark_config`
+  profile was silently widened to all cores. A local master from the config
+  is now kept; a non-local master (e.g. `spark://…`) is still replaced by
+  `local[*]`, now with a warning.
+- **Every `ArrowInvalid` from the delta sink took the shrink-the-row-group
+  retry, not just the two it was meant for.** The guard read
+  `if "large_binary" in ste or "named input expected length":` -- the second
+  operand is a bare string literal, so the condition is always true and the
+  `else: raise e` beneath it was dead code. An unrelated Arrow error therefore
+  spent up to 20 attempts halving `max_row_group_size` before surfacing as
+  "Could not write delta-file after 20 attempts", which names neither the real
+  error nor the file. Found by the `ty` bump below, which is the entire reason
+  that bump is worth taking.
+- **Running the suite without a Docker daemon now skips the container-backed
+  tests instead of erroring ~1000 times.** #160 made a daemon-less machine
+  *collect*, but every test requesting the Cassandra/Postgres/Redis fixtures
+  still failed at setup with a full urllib3 traceback each. The session
+  fixtures now ping the daemon once (5s timeout, so a dead `DOCKER_HOST` is
+  cheap) and skip with one reason plus a summary banner when it does not answer.
+  On CI (`CI` set) an unreachable daemon stays a hard error -- skipping there
+  would turn a broken runner green while covering nothing. (#161)
+- **ZEC Orchard and Ironwood value balances are accounted as shielded inputs and outputs.** The parser recorded shielded flows from Sprout `vjoinsplit` and Sapling `valueBalance` only; the NU5 `orchard` and NU6.3 `ironwood` bundles were blacklisted wholesale, so every transparent↔Orchard and transparent↔Ironwood flow was invisible and `input_value`, `output_value` and `fee` were computed from the transparent, Sprout and Sapling sides alone. One code path now loops over both pools and reads the bundle's **`valueBalanceZat`**, which is already in zatoshi and must not go through `_btc_to_satoshi`; the float `valueBalance` beside it is deliberately not read, because Zebra renders it with a helper named `lossy_zec` that its own documentation says must not be used for consensus-critical calculations (`zebra-rpc/src/methods/types/zec.rs`). The sign convention is Sapling's — positive means value left the pool, so it becomes a shielded input; negative becomes a shielded output of the negated amount. A fully-shielded NU5 transaction makes the size of the old error concrete: `bd84ece1a1f9930085768a880d99445ee1ee13686c2e5979b30d920e90866517` at height 1,687,194 moves +89,000 zat out of Sapling and −88,000 zat into Orchard for a 1,000 zat fee, where the parser previously saw the Sapling leg alone and reported a fee 89× too large. **This needs a re-ingest from NU5 activation (height 1,687,104) and a re-transform to take effect**, since shielded I/O is synthesized at ingest time and blocks already in the lake keep their old values.
+- Two consequences of that re-transform are worth stating plainly, because neither is a simple value refresh. **Existing relation values shift**: `totalInput` is the denominator in `inValue / totalInput * outValue`, and it is summed over *all* inputs with no address filter (`Transformator.plainAddressRelations`, mirrored by `get_total_input_sum` in the delta updater), so adding a shielded leg lowers `estimatedValue` on the transparent relations of a mixed transaction rather than only adding rows. And **cluster membership can change**: `is_coinjoin` reads `input_count`, `output_count` and the output-value histogram, and shielded I/O is appended before those counts are taken, so a new leg can flip the `coinjoin` flag — which `computeAddressCluster` consumes. Treat the re-transform as a full cluster rebuild with possible attribution shifts. This is the behaviour Sprout and Sapling legs have always had, not a new hazard, but it now applies to far more transactions.
+- A third point is about reading the result rather than producing it: **a positive shielded balance is usually not an unshielding.** Most often it is the fee of a fully-shielded transaction, paid out of the pool. Mapping it to a shielded input is right for value conservation and matches what Sapling has always done, but a `shielded` input must not be read as a z→t transfer.
+- No `spark/` change accompanies this. `computeRegularInputs` and `computeRegularOutputs` filter `size(col("input.address")) === 1`, so address-less shielded I/O never reaches the address graph, while `plainAddressRelations` explodes every input without that filter and therefore picks the new legs up on its own; the delta updater mirrors both. There is no Scala path that reads shielded I/O by type — the Scala tree contains no occurrence of `shielded` at all.
+- **Sapling now reads its integer `valueBalanceZat` too**, so all three pools take the same field rather than leaving one on a float. On values this is a no-op — `round(float * 1e8)` is exact at ZEC supply scale, and 665,685 mainnet transactions sampled across the whole Sapling range agreed on every one — so it cannot disturb existing Sapling data. It was worth confirming rather than assuming, because both Sapling keys are `Option` fields in Zebra's RPC types and a missing one would drop the shielded row silently rather than raise: the two are written from a single construction site in Zebra (both `Some`, or both `None`) and from adjacent `pushKV` calls inside one guard in zcashd, and a scan of 112,958 blocks — eleven contiguous 10,000-block windows from Sapling activation to the tip, plus a stride sweep of the whole range — found the pair present together on 665,685 of 665,685 transactions, across transaction versions 4, 5 and 6, with no case of the float appearing alone. `valueBalance` and `valueBalanceZat` therefore exchange places between `_TX_KNOWN_KEYS` and `_TX_BLACKLIST`.
+- **The bundle is validated strictly rather than read permissively**, so the next pool Zcash adds fails loudly instead of being silently dropped. `validate_rpc_fields` does not recurse, so the bundle, each of its actions and its `flags` object are enumerated at their own level. `orchard` and `ironwood` move into the transaction's known keys as *optional* entries — validation works by set difference, so an absent known key never raises — deliberately **without** a transaction-version gate: Zebra emits `orchard` on every transaction including pre-NU5 v1–v4 ones, where it is present but empty — confirmed on 328,134 NU6.3 transactions and on pre-NU5 transactions of all four versions down to block 1 — while zcashd gates it on `nVersion >= ZIP225` (v5) and has no Ironwood field at all, so any version gate would be wrong against one node or the other. The transaction-level `valueBalanceZat` is read as Sapling's own balance and is separate from the identically-named key inside each bundle, which is read per pool; the two share a name but not a meaning, and the transaction-level float `valueBalance` beside them is blacklisted. `flags` also lists `enableCrossAddress` in advance: ZIP-229 defines that third bit and Zebra already carries it in its consensus types (`zebra-chain/src/orchard/shielded_data.rs`), but its RPC `OrchardFlags` struct exposes only `enableSpends` and `enableOutputs`, so no node emits it today — listing it now keeps the alert for a genuinely unexpected fourth flag while removing a break that would otherwise hit every Ironwood transaction at once the moment Zebra adds the serde field.
+
+#### Removed
+- **`graphsenselib.utils.pipeline`** and its tests. Nothing has imported the
+  multiprocessing `Pipeline` since the account ingester was rewritten, and its
+  tests failed on every `spawn` platform (macOS, Windows): the stages carried
+  `mp.Queue`/`mp.Event` objects into child processes, which cannot be
+  re-pickled. Linux forks, so only local macOS runs saw it. (#161)
+- **The `exchange-rates coindesk` provider (`fetch`/`ingest`) and
+  `graphsenselib.rates.coindesk`.** It called CoinDesk's old Bitcoin Price
+  Index API (`api.coindesk.com/v1/bpi`), which CoinDesk has shut down: the
+  hostname no longer resolves, so every run died with a bare
+  `NameResolutionError`, and the API had stopped returning recent rates as
+  far back as 2022. CoinDesk's surviving data API is the former CryptoCompare
+  API (CoinDesk acquired CCData/CryptoCompare in 2024), so use
+  `exchange-rates cryptocompare` with a `cryptocompare_api_key` from
+  https://developers.coindesk.com/ instead. `scripts/dev-ingest.sh` no longer
+  calls it.
 
 ## [2.16.3] - 2026-08-28
 

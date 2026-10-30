@@ -338,3 +338,37 @@ def test_sigint_after_first_partition_returns_partial():
 
     assert written_blocks == set(range(100))
     assert 100 not in written_blocks
+
+
+def test_node_behind_raw_is_nothing_to_ingest():
+    """A node whose tip (minus backoff) is below what we already have -- after
+    a restart or resync -- means "nothing new yet", not a failed assertion."""
+    import pytest
+
+    from graphsenselib.ingest.dump import NothingToIngestError
+
+    sink = MagicMock(requires_monotonic_append=False)
+    sink.name = "cassandra"
+    sink.lock_name.return_value = None
+    sink.highest_block.return_value = 250
+    with (
+        patch("graphsenselib.ingest.dump.SourceUTXO") as MockSource,
+        patch("graphsenselib.ingest.dump.TransformerUTXO"),
+        patch("graphsenselib.ingest.dump.IngestRunner") as MockRunner,
+        patch("graphsenselib.ingest.dump.create_lock"),
+    ):
+        MockSource.return_value = FakeSource(max_block=200)
+        MockRunner.return_value = MagicMock(sinks=[sink])
+
+        with pytest.raises(NothingToIngestError):
+            export_delta(
+                currency="btc",
+                sources=["http://localhost:8332"],
+                directory=None,
+                start_block=None,
+                end_block=None,
+                provider_timeout=3600,
+                write_mode="append",
+                reorg_backoff_blocks=3,
+            )
+        MockRunner.return_value.run.assert_not_called()

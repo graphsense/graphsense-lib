@@ -18,7 +18,7 @@ from graphsenselib.db.asynchronous.services.models import (
     GraphNoteCode,
     SignalPerTxValue,
 )
-from graphsenselib.web.models.base import APIModel
+from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.transactions import TxAccount, TxUtxo
 from graphsenselib.web.models.values import Rate, Values
@@ -26,6 +26,31 @@ from graphsenselib.web.models.values import Rate, Values
 CompareComponent = Literal[
     "characteristics", "details", "signals", "lineage", "verdict"
 ]
+
+# Real BTC data: the generated python-client snippets send these bodies to the
+# live API (clients/python `make run-examples`), so invented ids would 400.
+# 756a95ba… spends both addresses into 1P6ZvBft…, which later feeds e67a0550….
+_EXAMPLE_TX_REFS = [
+    {
+        "tx_hash": "756a95ba337d5dab4ee32fb46071e6cdcd78a6dd3970f025b25daae7c67298e5",
+        "network": "btc",
+    },
+    {
+        "tx_hash": "e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114",
+        "network": "btc",
+    },
+]
+GRAPH_SUMMARY_REQUEST_EXAMPLE = {
+    "txs": _EXAMPLE_TX_REFS,
+    "addresses": [
+        {"address": "14QK3yVfakMHD2W5oect54AtCez77wJgGf", "network": "btc"},
+        {"address": "15Lv7zkEtTfTeBvUB9Py7BZQoKKBpFQLsn", "network": "btc"},
+    ],
+}
+GRAPH_COMPARE_REQUEST_EXAMPLE = {
+    "txs": _EXAMPLE_TX_REFS,
+    "include": ["characteristics", "signals", "lineage", "verdict"],
+}
 
 
 class GraphTxRef(APIModel):
@@ -52,6 +77,8 @@ class GraphSummaryRequest(APIModel):
     count once); together they may hold at most 100. Fiat totals always
     carry every rate GraphSense stores (eur, usd)."""
 
+    model_config = api_model_config(GRAPH_SUMMARY_REQUEST_EXAMPLE)
+
     txs: list[GraphTxRef] = Field(default_factory=list, max_length=MAX_GRAPH_NODES)
     addresses: list[GraphAddressRef] = Field(
         default_factory=list, max_length=MAX_GRAPH_NODES
@@ -77,6 +104,8 @@ class GraphCompareRequest(APIModel):
     and verdict are always computed internally (the verdict depends on
     the signals), the list only controls what is returned. ``all``
     expands to every component."""
+
+    model_config = api_model_config(GRAPH_COMPARE_REQUEST_EXAMPLE)
 
     txs: list[GraphTxRef] = Field(min_length=2, max_length=MAX_GRAPH_NODES)
     include: list[Union[Literal["all"], CompareComponent]] = Field(

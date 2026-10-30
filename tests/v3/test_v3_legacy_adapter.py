@@ -50,6 +50,7 @@ def test_an_unconfigured_currency_says_so() -> None:
         "list_entity_links",
         "list_entity_addresses",
         "get_address_entity_id",
+        "get_cluster_stats",
         "get_fresh_cluster_id",
         "new_entity",
         "get_addresses_light",

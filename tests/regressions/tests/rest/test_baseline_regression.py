@@ -84,7 +84,7 @@ def normalize_endpoint_to_pattern(uri: str) -> str:
         (r"/addresses/bc1[a-z0-9]{39,59}(?=/|$)", "/addresses/{btc_bech32}"),
         (r"/addresses/0x[a-fA-F0-9]{40}(?=/|$)", "/addresses/{eth_address}"),
         (r"/addresses/T[a-zA-Z0-9]{33}(?=/|$)", "/addresses/{trx_address}"),
-        (r"/entities/\d+(?=/|$)", "/entities/{entity_id}"),
+        (r"/clusters/\d+(?=/|$)", "/clusters/{cluster_id}"),
         (r"/txs/0x[a-fA-F0-9]{64}(?=/|$)", "/txs/{eth_tx}"),
         (r"/txs/[a-fA-F0-9]{64}(?=/|$)", "/txs/{tx_hash}"),
         (r"/blocks/\d+(?=/|$)", "/blocks/{height}"),
@@ -398,7 +398,7 @@ class TestBaselineRegressionBasic(BaselineRegressionTestBase):
     @pytest.mark.regression
     def test_get_entity_btc(self):
         """Test BTC entity endpoint."""
-        self.assert_endpoint_equal(f"btc/entities/{BTC_ENTITY}")
+        self.assert_endpoint_equal(f"btc/clusters/{BTC_ENTITY}")
 
     @pytest.mark.regression
     def test_get_block(self):
@@ -430,13 +430,13 @@ class TestBaselineRegressionBasic(BaselineRegressionTestBase):
     @pytest.mark.regression
     def test_list_entity_addresses(self):
         """Test entity addresses endpoint."""
-        self.assert_endpoint_equal(f"btc/entities/{BTC_ENTITY}/addresses?pagesize=5")
+        self.assert_endpoint_equal(f"btc/clusters/{BTC_ENTITY}/addresses?pagesize=5")
 
     @pytest.mark.regression
     def test_list_entity_neighbors(self):
         """Test entity neighbors endpoint."""
         self.assert_endpoint_equal(
-            f"btc/entities/{BTC_ENTITY}/neighbors?direction=out&pagesize=5"
+            f"btc/clusters/{BTC_ENTITY}/neighbors?direction=out&pagesize=5"
         )
 
     @pytest.mark.regression
@@ -499,7 +499,7 @@ class TestBaselineRegressionEntityParameters(BaselineRegressionTestBase):
     def test_get_entity_include_actors(self, include_actors):
         """Test get_entity with include_actors parameter."""
         self.assert_endpoint_equal(
-            f"btc/entities/{BTC_ENTITY}?include_actors={str(include_actors).lower()}"
+            f"btc/clusters/{BTC_ENTITY}?include_actors={str(include_actors).lower()}"
         )
 
     @pytest.mark.regression
@@ -507,7 +507,7 @@ class TestBaselineRegressionEntityParameters(BaselineRegressionTestBase):
     def test_list_entity_neighbors_direction(self, direction):
         """Test list_entity_neighbors with direction parameter."""
         self.assert_endpoint_equal(
-            f"btc/entities/{BTC_ENTITY}/neighbors?direction={direction}&pagesize=5"
+            f"btc/clusters/{BTC_ENTITY}/neighbors?direction={direction}&pagesize=5"
         )
 
     @pytest.mark.regression
@@ -515,7 +515,7 @@ class TestBaselineRegressionEntityParameters(BaselineRegressionTestBase):
     def test_list_entity_txs_direction(self, direction):
         """Test list_entity_txs with direction parameter."""
         self.assert_endpoint_equal(
-            f"btc/entities/{BTC_ENTITY}/txs?direction={direction}&pagesize=5"
+            f"btc/clusters/{BTC_ENTITY}/txs?direction={direction}&pagesize=5"
         )
 
 
@@ -578,7 +578,7 @@ class TestBaselineRegressionETHEndpoints(BaselineRegressionTestBase):
     @pytest.mark.regression
     def test_eth_address_entity(self):
         """Test ETH address entity lookup."""
-        self.assert_endpoint_equal(f"eth/addresses/{ETH_ADDRESS}/entity")
+        self.assert_endpoint_equal(f"eth/addresses/{ETH_ADDRESS}/cluster")
 
     @pytest.mark.regression
     def test_eth_address_tags(self):
@@ -618,5 +618,5 @@ class TestBaselineRegressionLinks(BaselineRegressionTestBase):
         """Test entity links endpoint."""
         neighbor_entity = 17642138
         self.assert_endpoint_equal(
-            f"btc/entities/{BTC_ENTITY}/links?neighbor={neighbor_entity}"
+            f"btc/clusters/{BTC_ENTITY}/links?neighbor={neighbor_entity}"
         )

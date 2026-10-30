@@ -151,7 +151,7 @@ Note on terminology: graphsense has both "entity" and "cluster" endpoints, but `
 
 | Tool | Replaces | Why |
 |---|---|---|
-| `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_related_addresses` | "Tell me about this address" is the single most common question. The tag_summary call passes `include_best_cluster_tag=true` (UI parity): when the address has no direct tag, the cluster's best tag is folded into the digest. Optional `include_cross_chain_addresses` uses the pubkey-relation endpoint to find the same address on BCH/LTC/... from a BTC lookup (and vice-versa). |
+| `lookup_address` | `get_address` + `get_address_cluster` + `get_tag_summary_by_address` + `list_related_addresses` | "Tell me about this address" is the single most common question. The tag_summary call passes `include_best_cluster_tag=true` (UI parity): when the address has no direct tag, the cluster's best tag is folded into the digest. Optional `include_cross_chain_addresses` uses the pubkey-relation endpoint to find the same address on BCH/LTC/... from a BTC lookup (and vice-versa). |
 | `lookup_cluster` | `get_entity` + `get_cluster` + `list_address_tags_by_entity` + `list_address_tags_by_cluster` | Cluster-level equivalent. Tag context is intentionally NOT included — call `lookup_address`/`list_tags_by_address` on a member address. |
 | `list_tags_by_address` | `list_tags_by_address` | Raw per-tag detail with `include_best_cluster_tag=true` defaulted on (UI parity) — the cluster's best tag appears on the last page if the address has no direct tag. |
 | `list_neighbors` | `list_address_neighbors` | Address-level only. Cluster-level neighbors are deliberately not exposed — follow counterparty graphs at the address level (on-chain fact) rather than the cluster level (inference stacked on top). |
@@ -262,6 +262,41 @@ re-enable later.
 2. If consolidated, delete the `register_*` function too.
 3. Run the validator.
 
+## Skills
+
+`skills/` holds agent skills (one `<name>/SKILL.md` folder each) that
+teach a client how to *use* the tool surface. They compose: three shared
+skills - `identifier-integrity`, `trace-funds`, `investigation-reporting` -
+carry the rules, and three thin investigators - `investigate-strict` (the default),
+`investigate-advisor`, `investigate-autonomous` - load them
+and add only how far to go beyond the asked task. The three automation
+levels follow the ones AI-Tracer offers. The directory is published two
+ways from one source:
+
+- **MCP resources.** FastMCP's `SkillsDirectoryProvider` serves each skill
+  as `skill://<name>/SKILL.md` plus a `_manifest` listing its supporting
+  files. No client loads these as skills on its own; they are readable
+  like any resource, or synced to disk with
+  `fastmcp.utilities.skills.sync_skills`. Disable with
+  `GS_MCP_SKILLS_ENABLED=false`; override the directory with
+  `GS_MCP_SKILLS_DIR`.
+- **Claude Code plugin.** The directory is also the plugin root
+  (`.claude-plugin/plugin.json`, `"skills": "./"`), listed by the repo-root
+  `.claude-plugin/marketplace.json`. The plugin also registers the
+  GraphSense MCP, prompting for its URL (default: prod) and API key on
+  install:
+
+  ```bash
+  claude plugin marketplace add graphsense/graphsense-lib
+  claude plugin install graphsense@graphsense
+  ```
+
+A skill lists the tools it relies on in its frontmatter
+(`metadata.graphsense-tools`); `tests/mcp/test_skills.py` fails when one of
+them leaves the curated surface, so renaming a tool means updating the
+skills in the same change. Skills are public - served to every MCP client
+and shipped in the wheel - so keep them free of anything internal.
+
 ## Context cost
 
 All 18 tool schemas (19 when `search_neighbors` is configured) fit in roughly
@@ -274,6 +309,15 @@ there.
 The dominant cost scaling factor is **descriptions, not count** — long
 docstrings and verbose schemas are the biggest levers. Keep descriptions
 action-oriented and under ~3 sentences.
+
+**Hard cap: 2048 characters.** Claude Code silently truncates the server
+instructions (`curation/instructions.md`) and every tool description at
+2048 characters before they reach the model. Parameter descriptions in
+the input schema are not cut, so put argument detail there
+(`Annotated[..., Field(description=...)]`), not in the docstring. Keep
+cross-tool guidance in the instructions and per-tool guidance in the
+tool's own description. `tests/mcp/test_client_limits.py` enforces the
+cap for both states of the open-url flag.
 
 ## Tests
 

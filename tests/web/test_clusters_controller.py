@@ -49,7 +49,11 @@ def test_get_cluster(client):
 
     path_actors = path + "?include_actors={include_actors}"
     result = get_json(
-        client, path_actors, currency="eth", cluster=eth_entity2.entity, include_actors=True
+        client,
+        path_actors,
+        currency="eth",
+        cluster=eth_entity2.entity,
+        include_actors=True,
     )
     assert eth_entity2.to_dict() == result
 
@@ -130,6 +134,18 @@ def test_list_cluster_neighbors(client):
     path = basepath + "&include_labels={include_labels}"
     path_actors = path + "&include_actors={include_actors}"
     ewton = entityWithTagsOutNeighbors.to_dict()
+    # labelX and labelY tie at confidence 100; with both groups visible the
+    # tag of the pack whose id sorts first wins
+    ewton_private = copy.deepcopy(ewton)
+    for key in ("entity", "cluster"):
+        ewton_private["neighbors"][0][key]["best_address_tag"].update(
+            label="labelY",
+            tagpack_title="GraphSense Private",
+            tagpack_is_public=False,
+            tagpack_uri=ewton["neighbors"][0][key]["best_address_tag"][
+                "tagpack_uri"
+            ].replace("tagpack_public.yaml", "tagpack_private.yaml"),
+        )
     result = get_json(
         client,
         path,
@@ -138,7 +154,7 @@ def test_list_cluster_neighbors(client):
         include_labels=True,
         direction="out",
     )
-    assert ewton == result
+    assert ewton_private == result
 
     result = get_json(
         client,
@@ -200,10 +216,9 @@ def test_list_cluster_neighbors(client):
         direction="in",
         only_ids="67065,144534",
     )
-    assert (
-        [n.entity.entity for n in entityWithTagsInNeighbors.neighbors]
-        == [n["entity"]["entity"] for n in result["neighbors"]]
-    )
+    assert [n.entity.entity for n in entityWithTagsInNeighbors.neighbors] == [
+        n["entity"]["entity"] for n in result["neighbors"]
+    ]
 
     result = get_json(
         client,
@@ -213,10 +228,9 @@ def test_list_cluster_neighbors(client):
         direction="in",
         only_ids="144534",
     )
-    assert (
-        [entityWithTagsInNeighbors.neighbors[1].entity.entity]
-        == [n["entity"]["entity"] for n in result["neighbors"]]
-    )
+    assert [entityWithTagsInNeighbors.neighbors[1].entity.entity] == [
+        n["entity"]["entity"] for n in result["neighbors"]
+    ]
 
     result = get_json(
         client,
@@ -226,10 +240,9 @@ def test_list_cluster_neighbors(client):
         direction="out",
         only_ids=eth_entityWithTagsOutNeighbors.neighbors[0].entity.entity,
     )
-    assert (
-        [eth_entityWithTagsOutNeighbors.neighbors[0].entity.entity]
-        == [n["entity"]["entity"] for n in result["neighbors"]]
-    )
+    assert [eth_entityWithTagsOutNeighbors.neighbors[0].entity.entity] == [
+        n["entity"]["entity"] for n in result["neighbors"]
+    ]
 
 
 def test_list_cluster_neighbors_invalid_only_ids_returns_400(client):
@@ -253,8 +266,12 @@ def test_list_cluster_addresses(client):
     assert entityWithTagsAddresses.to_dict() == result
 
     result = get_json(client, path, currency="eth", cluster=eth_entity.entity)
+    # listings embed plain address rows: is_possible_service is computed on
+    # the address-detail path only
+    listed_eth_address = eth_address.model_copy(update={"is_possible_service": None})
     assert (
-        EntityAddresses(next_page=None, addresses=[eth_address]).to_dict() == result
+        EntityAddresses(next_page=None, addresses=[listed_eth_address]).to_dict()
+        == result
     )
 
 
@@ -389,9 +406,7 @@ def test_search_cluster_neighbors(client):
     )
     assert 2818641 == result[0]["neighbor"]["entity"]["entity"]
     assert 789 == result[0]["paths"][0]["neighbor"]["entity"]["entity"]
-    assert (
-        10 == result[0]["paths"][0]["neighbor"]["entity"]["total_received"]["value"]
-    )
+    assert 10 == result[0]["paths"][0]["neighbor"]["entity"]["total_received"]["value"]
 
     result = get_json(
         client,
@@ -443,6 +458,24 @@ def test_search_cluster_neighbors(client):
     assert addresses == [
         a["address"] for a in result[0]["paths"][0]["matching_addresses"]
     ]
+
+
+def test_search_cluster_neighbors_unsupported_key_returns_400(client):
+    path = (
+        "/{currency}/clusters/{cluster}/search"
+        "?direction=out&key={key}&value={value}&depth=2&breadth=10"
+    )
+    status, body = raw_request(
+        client,
+        path,
+        currency="btc",
+        cluster=entityWithTags.entity,
+        key="actors",
+        value="some_actor",
+    )
+
+    assert status == 400
+    assert "Unsupported search key 'actors'" in body
 
 
 def test_list_cluster_txs(client):
@@ -590,9 +623,7 @@ def test_list_cluster_txs(client):
     tx2_eth_r = reverse(tx2_eth)
     tx22_eth_r = reverse(tx22_eth)
     txs_eth = AddressTxs(address_txs=[tx4_eth, tx22_eth_r, tx2_eth_r, tx1_eth])
-    result = get_json(
-        client, path, currency="eth", cluster=eth_entityWithTags.entity
-    )
+    result = get_json(client, path, currency="eth", cluster=eth_entityWithTags.entity)
     assert txs_eth.to_dict() == result
 
     result = get_json(
@@ -641,9 +672,7 @@ def test_list_cluster_txs(client):
     )
     assert txs_eth.to_dict()["address_txs"][1:4] == result["address_txs"]
 
-    result = get_json(
-        client, path, currency="eth", cluster=eth_entityWithTokens.entity
-    )
+    result = get_json(client, path, currency="eth", cluster=eth_entityWithTokens.entity)
     assert len(result["address_txs"]) == 5
     assert [x["currency"] for x in result["address_txs"]] == [
         "eth",
@@ -694,9 +723,7 @@ def test_list_cluster_txs_direction_validation(client):
     assert status == 200
 
     # omitting direction is also valid
-    status, _ = raw_request(
-        client, path, currency="btc", cluster=144534
-    )
+    status, _ = raw_request(client, path, currency="btc", cluster=144534)
     assert status == 200
 
     # invalid direction rejected with 422
@@ -706,7 +733,11 @@ def test_list_cluster_txs_direction_validation(client):
     assert status == 422
 
     status, body = raw_request(
-        client, path_with_direction, currency="eth", cluster=eth_entityWithTags.entity, direction="both"
+        client,
+        path_with_direction,
+        currency="eth",
+        cluster=eth_entityWithTags.entity,
+        direction="both",
     )
     assert status == 422
 

@@ -296,7 +296,10 @@ RESULT_CONTRACT: dict = {
     "list_neighbors[0]": {"iterated": ("yes",)},
     "list_rates": {"iterated": ("yes",)},
     "list_token_txs": {"iterated": ("yes",)},
-    "new_address": {"attribute": ("get",), "subscript": ("'address_id'",)},
+    "new_address": {
+        "attribute": ("get",),
+        "subscript": ("'address_id'", "'cluster_id'"),
+    },
 }
 
 

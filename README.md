@@ -160,6 +160,76 @@ uv run graphsense-cli mcp validate-curation
 
 The tool surface is strictly curated — **not** every REST endpoint becomes a tool. Consolidations merge endpoints that LLMs always chain (e.g. one `lookup_address` replaces four address-level calls). See [`src/graphsenselib/mcp/README.md`](src/graphsenselib/mcp/README.md) for the design principles, the full tool catalog, how to add or modify tools, deployment details (transport, lifespan composition), and the proprietary `search_neighbors` forward.
 
+#### Using the GraphSense skills in Claude
+
+The MCP ships agent skills that teach Claude how to run an investigation with
+the GraphSense tools: three investigators, which differ only in how far they
+go beyond the question, and three shared skills they load.
+
+| Skill | What it does |
+| --- | --- |
+| `investigate-strict` | The default. Answers exactly what was asked. No suggestions, no extra leads, no unrequested exports. |
+| `investigate-advisor` | Answers, then suggests one next step or a Pathfinder export. |
+| `investigate-autonomous` | Follows the obvious leads itself, one or two hops beyond the finding, and ends with findings instead of suggestions. |
+| `identifier-integrity` | Shared: never write an address, hash or link from memory or complete a truncated one. |
+| `trace-funds` | Shared: which tools to use and how to follow funds hop by hop without closing a trace on a guess. |
+| `investigation-reporting` | Shared: provenance per fact, High/Medium/Low confidence, no legal judgment, AI-generated disclaimer. |
+
+**Claude Code.** Install the `graphsense` plugin from this repository. It
+brings the skills and registers the GraphSense MCP, so no separate
+`claude mcp add` is needed:
+
+```bash
+claude plugin marketplace add graphsense/graphsense-lib
+claude plugin install graphsense@graphsense
+```
+
+On install, Claude Code asks for the MCP URL (default
+`https://api.iknaio.com/mcp/`, the hosted Iknaio endpoint) and your API key,
+which is sent as the `Authorization` header like for the REST API. Then either
+call an investigator directly:
+
+```text
+/graphsense:investigate-advisor bc1q... where did the funds go after March 2024?
+/graphsense:investigate-strict 0x... is this address tagged?
+```
+
+or just ask ("trace the funds from bc1q..."): Claude picks the investigator
+from the skill descriptions, `investigate-strict` unless you ask for advice on
+next steps or for Claude to keep going on its own. Pull updates with
+`claude plugin marketplace update graphsense`.
+
+**Claude app (claude.ai, Desktop).** Add GraphSense as a connector, then
+upload the skills: zip each skill folder and upload the zips under
+*Settings → Capabilities → Skills* (organization admins can provision them for
+everyone). Upload all six; the investigators load the shared ones by name.
+
+```bash
+cd src/graphsenselib/mcp/skills
+mkdir -p /tmp/gs-skills
+for d in */; do zip -qr "/tmp/gs-skills/${d%/}.zip" "$d"; done
+```
+
+**Other MCP clients.** The skills are also MCP resources
+(`skill://<name>/SKILL.md`), so any client can read them, or sync them to a
+skills directory with FastMCP:
+
+```python
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.utilities.skills import sync_skills
+
+transport = StreamableHttpTransport(
+    "https://api.iknaio.com/mcp/",
+    headers={"Authorization": API_KEY},  # the bare key, no "Bearer"
+)
+async with Client(transport) as client:
+    await sync_skills(client, "~/.claude/skills")
+```
+
+See [`src/graphsenselib/mcp/README.md`](src/graphsenselib/mcp/README.md#skills)
+for how the skills are built and tested.
+
 ### REST API evolution and deprecation policy
 
 The REST API follows semantic versioning via `info.version` in the OpenAPI spec
@@ -194,11 +264,10 @@ Responses from deprecated routes carry:
 - **`Link: </docs#section/Deprecation-policy>; rel="deprecation"; type="text/html"`** —
   points clients at the authoritative policy page.
 - **`Sunset: <HTTP-date>`** — [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594).
-  Announces the committed removal date for the endpoint. For the
-  `/entities/...` endpoints (superseded by `/clusters/...`), the sunset is
-  set to `Sat, 31 Oct 2026 00:00:00 GMT`. After that date the deprecated
-  endpoints may be removed without further notice. Other deprecations may
-  be introduced with different sunset dates in future releases.
+  Announces the committed removal date for the endpoint. After that date
+  the deprecated endpoint may be removed without further notice. The
+  `/entities/...` endpoints (superseded by `/clusters/...`) were removed
+  this way after their sunset on 31 Oct 2026.
 
 To detect deprecation in your own client code, inspect the `Deprecation` and
 `Sunset` response headers and log a warning (or fail CI) when you hit a
@@ -383,7 +452,7 @@ launches the job.
 graphsense-cli transformation raw-to-transformed --help
 
 # Run against a pinned release, creating a fresh dated transformed keyspace
-graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.08.1
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.09.1
 
 # Use the latest stable release (also the default when no version is configured)
 graphsense-cli transformation raw-to-transformed -e prod -c btc --version latest
@@ -417,14 +486,14 @@ full_transform_args:
   release_tag_prefix: spark-
   # Release tag to run. Omit or set to "latest" to resolve the newest stable
   # (non-prerelease) release of that track from the GitHub API at run time.
-  version: spark-v26.08.1
+  version: spark-v26.09.1
   version_overrides: # optional, per-currency
-    eth: spark-v26.08.1
+    eth: spark-v26.09.1
   artifact: fat # "fat" (self-contained assembly, default) or "slim" (+ Maven packages)
   spark_profile: # selects a spark_config profile per currency
     btc: utxo
-  jar_args: # optional, per-currency extra job args
-    btc: ["--bech32-prefix", "bc", "--bucket-size", "5000"]
+  jar_args: # optional, per-currency extra job args (override data_configuration)
+    btc: ["--checkpoint-dir", "file:///data/spark-checkpoint"]
   # Optional Cassandra Sidecar bulk-write path
   sidecar:
     enabled: false
@@ -438,6 +507,21 @@ profile; Cassandra coordinates (host/port/credentials) are taken from the
 environment config. The command is backend-neutral (`backend: scala` today,
 `pyspark` reserved) so a future native implementation can be selected without
 changing how it is invoked.
+
+The layout of the transformed keyspace (`bucket_size`, `address_prefix_length`,
+`bech_32_prefix` and `coinjoin_filtering` for UTXO chains; `tx_prefix_length`,
+`block_bucket_size_address_txs` and `addressrelations_ids_nbuckets` for account
+chains) comes from `keyspace_setup_config.transformed.data_configuration` and is
+passed to the job as `--bucket-size`, `--bech32-prefix`, etc. Keys left out are
+filled from graphsense-lib's per-currency defaults, which are the production
+layout. Passing them explicitly keeps older job releases, whose built-in
+defaults differ, on the same layout. An option set in `jar_args` or after `--`
+takes precedence.
+
+Earlier versions ignored `data_configuration`. So that a stale or mistaken
+value there cannot change the layout unnoticed, the command fails before
+creating the keyspace if a value differs from the default, and lists the
+values that do. Pass `--override-defaults` to use them anyway.
 
 #### Java runtime when submitting from the Docker image
 
@@ -487,6 +571,284 @@ graphsense-cli delta-update patch-exchange-rates \
     --end-block 200000
 ```
 
+### Continuous Sync
+
+`sync run` replaces the per-network cron jobs (`ingest from-node`, then
+`delta-update update`). It is one long-running daemon that polls each node
+and runs ingest and the delta update as soon as there is something new, as
+child processes of the same graphsense-lib version. Claims, pauses and status
+live in Redis when `use_redis_locks`/`redis_url` are set, otherwise in files
+under `/tmp/graphsense-sync/<env>`. Without Redis, daemons in separate
+containers need that directory, and `/tmp` for the jobs' file locks, on a
+shared volume.
+
+#### Configuration
+
+How a network is ingested and updated belongs in its keyspace config, so a
+manual run, a cron job and the daemon all do the same. The flags of the same
+name still override it for one run. When moving a network from cron, every
+flag of its cron command goes here (`--write-mode append` and
+`--updater-version 2` are the defaults and can be dropped):
+
+| cron flag | keyspace config |
+| --- | --- |
+| `--exchange-rates-provider coingecko` | `ingest_config.exchange_rates_provider` |
+| `--sinks cassandra --sinks delta` | `ingest_config.sinks` |
+| `--auto-compact "1w;sunday"`, `--auto-compact-last-n 16` | `ingest_config.auto_compact`, `auto_compact_last_n` |
+| `--write-batch-size`, `--parallel-workers`, `--forward-fill-rates` | `delta_update_config.*` |
+
+A missing `sinks` makes the daemon ingest into Cassandra only, and the Delta
+Lake falls behind silently; a missing `auto_compact` means no compaction.
+
+```yaml
+environments:
+  prod:
+    keyspaces:
+      eth:
+        ingest_config:
+          exchange_rates_provider: coingecko
+          sinks: [cassandra, delta]       # default --sinks
+          auto_compact: "1w;sunday"       # compact on Sundays, at most weekly
+          auto_compact_last_n: 16
+        delta_update_config:
+          forward_fill_rates: true
+          write_batch_size: 60
+          parallel_workers: 8
+      zec:
+        ingest_config:
+          exchange_rates_provider: coingecko
+          sinks: [cassandra, delta]
+          auto_compact: "1w;sat"
+          # reorg_backoff_blocks: 24      # override the built-in backoff (zec: 100)
+        delta_update_config:
+          forward_fill_rates: true
+          write_batch_size: 40
+          parallel_workers: 4
+    sync:
+      rates_every_minutes: 30             # exchange rates with every Nth ingest only
+      stop_grace_seconds: 480             # see "Stopping and switching images"
+      networks:
+        eth:
+          poll_seconds: 600
+          lag_alert_minutes: 60
+        zec:
+          poll_seconds: 600
+          lag_alert_minutes: 300
+```
+
+A network is only run by the daemon if it has an entry under
+`sync.networks`: without one, `sync run -c <net>` warns once and runs nothing
+until the entry appears (the config is re-read on change); with `--once` it
+exits 2. Entries without a daemon are harmless; `sync status` lists them as
+"no daemon", which makes it safe to prepare the config for every network
+while the cron jobs still run (older versions only warn about the keys they
+do not know).
+
+- **`poll_seconds`** (default 30): how often the node is checked. Every check
+  that finds new blocks starts an ingest and a delta update, each a new
+  process with a few seconds of startup, so for fast chains (eth, trx, zec)
+  a few minutes collect several blocks per job instead of one.
+- **`lag_alert_minutes`**: alert when the newest raw block is older than
+  this. Raw always trails the node by the reorg backoff (built in: btc 3,
+  ltc 12, bch 10, zec 100, eth 70, trx 20 blocks; `reorg_backoff_blocks`
+  overrides it), so the threshold must exceed backoff × block time, plus the
+  poll interval and some block-time jitter. It replaces the per-run
+  `raw_ingest_staleness_threshold`, which the daemon turns off.
+- **`rates_every_minutes`**: ingest jobs skip the exchange-rates pre-step
+  except once per interval, and always in the first cycle after a start.
+
+The daemon passes `-e`, `-c`, `--end-block`, `--no-exchange-rates`,
+`--no-staleness-check` and `--no-auto-compact` itself. It compacts in a step
+of its own (`ingest delta-lake auto-compact`, checked every
+`compaction_check_every_minutes`, timeout `compaction_timeout_minutes`), so a
+long compaction does not hit the ingest timeout. `ingest_args` /
+`delta_update_args` take extra flags for the rare case the config has no
+field for. The config file is re-read when it changes, so none of these
+settings needs a restart.
+
+#### Running with docker compose
+
+Run one daemon per network, each in its own container (`-c`). A daemon runs
+its network's jobs one after another, so the container's memory limit works
+like `docker run -m` per job of a cron job. Its version is the image tag, so
+a canary is one service on a newer tag. The shared settings go into one
+block, so a network is four lines:
+
+```yaml
+# compose.yaml
+x-sync: &sync
+  image: ghcr.io/graphsense/graphsense-lib:v2.19.0
+  restart: unless-stopped
+  init: true                      # reaps the jobs' child processes
+  stop_grace_period: 10m          # > sync.stop_grace_seconds (8 min)
+  mem_limit: 45g                  # per running job, like docker run -m
+  environment:
+    AWS_EC2_METADATA_DISABLED: "true"
+  volumes:
+    - ~/.graphsense.yaml:/home/graphsense/.graphsense.yaml:ro
+    - /srv/graphsense-sync:/tmp/graphsense-sync   # only without Redis
+  logging:
+    driver: json-file
+    options: {max-size: 100m, max-file: "5"}
+
+services:
+  sync-btc:
+    <<: *sync
+    container_name: sync-btc
+    command: graphsense-cli -v sync run -e prod -c btc
+  sync-zec:
+    <<: *sync
+    container_name: sync-zec
+    command: graphsense-cli -v sync run -e prod -c zec
+    image: ghcr.io/graphsense/graphsense-lib:v2.20.0-rc.1   # canary
+```
+
+Give the containers the same network setup the cron containers had (e.g.
+`extra_hosts` for node hostnames). A service's own `environment` or `volumes`
+replaces the shared list instead of extending it, so repeat the shared
+entries there. `.graphsense.yaml` is mounted as a single file: an editor
+that saves by writing a new file and renaming it is not seen inside the
+container until it restarts.
+
+The `max_parallel_*` limits count within one daemon, so with one network per
+daemon they limit nothing, and delta updates of different networks can
+overlap, as cron jobs that start at the same minute do. Several networks can
+also share a daemon: give them a `channel` and run `sync run --channel
+<name>`. Its jobs then share one memory limit, so size the container for
+what can run at once. A channel only groups networks onto a daemon; the
+release track is the image tag.
+
+#### Moving a network from cron to the daemon
+
+1. Put its cron flags into the keyspace config and add it to
+   `sync.networks` (see above). `sync status` then lists it as "no daemon".
+2. Comment out its cron line and wait until no job of it is running.
+3. Check that `sync status` shows its WAL as `empty`. A record written by
+   another version blocks the first run (see below).
+4. Run one cycle by hand and watch it:
+   `docker compose run --rm sync-<net> graphsense-cli -v sync run -e prod --once -c <net>`.
+   Expect the reorg check to pass silently, an ingest into both sinks, a
+   delta update, and `finished: ok` for each.
+5. Add its service to the compose file and `docker compose up -d sync-<net>`.
+
+#### Scheduled tasks
+
+Jobs that belong to no single network, such as the cross-chain pubkey
+update, go under `sync.tasks`. Each runs at a time of day, optionally on
+one weekday only:
+
+```yaml
+    sync:
+      tasks:
+        pubkey:
+          args: [transformation, pubkey-update-all, --spark-profile, pubkey,
+                 --sink-type, delta, --s3-config, spark-ingest]
+          weekday: saturday               # unset: every day
+          at: "19:00"                     # UTC
+          channel: tasks
+          timeout_minutes: 720
+          retry_minutes: 60               # after a failure, until it succeeds
+          success_topic: pubkey           # optional; failures go to alert_topic
+```
+
+The daemon appends `-e <env>` to `args`. A task runs on a daemon of its
+`channel` started without `-c`, and on one of them at a time. A run counts
+for the most recent scheduled time, and the last run is kept with the rest
+of the sync state, so a restart neither repeats the run nor drops it. A time
+missed while no daemon ran is caught up when one starts. A failure alerts
+and is retried every `retry_minutes`. A run stopped with the daemon starts
+again on the next daemon. `sync status` lists the tasks, and
+`sync pause/resume --task <name>` work like they do for a network.
+
+Give a Spark task a channel and a container of its own. The Spark driver
+must be reachable from the executors (`network_mode: host`, as for the
+cron container), and the job needs a larger memory limit:
+
+```yaml
+  sync-tasks:
+    <<: *sync
+    container_name: sync-tasks
+    network_mode: host
+    command: graphsense-cli -v sync run -e prod --channel tasks
+```
+
+Spark jobs may read a network's Delta Lake while its compaction runs:
+vacuum keeps replaced files for 48 hours, so a running reader's snapshot
+stays readable.
+
+#### Stopping and switching images
+
+SIGTERM (`docker stop`, `docker compose up -d` with a new tag) stops the
+daemon from starting jobs; a running job finishes its current chunk or batch
+and exits, within `sync.stop_grace_seconds` (default 480) before it is
+killed. A second signal lists what is still running, a third kills the jobs.
+Killing is safe for the data (ingest writes `block` last, the delta update
+replays its WAL), but a killed job's Redis lock, which has no TTL, stays
+behind until `redis-cli DEL`.
+
+So switching a daemon to a new image, or back, is:
+
+```bash
+# change the tag in compose.yaml, then
+docker compose up -d
+```
+
+as long as the container's `stop_grace_period` is longer than
+`stop_grace_seconds`. Compose pulls the new image before it stops the old
+container. Two things to know:
+
+- A Delta Lake compaction cannot stop midway. If one is running (on the day
+  `auto_compact` names), it is killed after the grace period and its lock
+  stays behind; the data is safe.
+- The delta update refuses to replay a WAL record written by another
+  version (`--force-wal-replay` overrides it). A clean stop never leaves
+  one, but a killed one does. When unsure, stop first and check:
+
+  ```bash
+  graphsense-cli sync pause -e prod -c zec --reason "image switch" --for 30m --wait
+  # shows the network once no cycle runs; WAL "empty": change the tag, then
+  docker compose up -d sync-zec
+  graphsense-cli sync resume -e prod -c zec
+  ```
+
+  This is also how to switch away from a daemon older than the version that
+  introduced `stop_grace_seconds` (see CHANGELOG), which stopped jobs after
+  2 minutes and could leave a lock behind.
+
+Go back to an older version only if the newer one's schema migrations are
+backward compatible.
+
+#### Status and day-to-day commands
+
+```bash
+graphsense-cli sync status -e prod
+graphsense-cli sync pause -e prod -c zec --reason "node resync" --for 6h
+graphsense-cli sync resume -e prod -c zec
+graphsense-cli sync run -e prod --once -c zec   # one cycle, then exit
+```
+
+```
+sync prod · 1 daemon
+  zec · daemon f4f1ddc88fb7 on 3a9c2e1d0b7f
+    dev build 817aec8 (2.19.0.dev55), up 25m
+
+zec · idle · next cycle in 6m
+  node         3,526,805  (target 3,526,705, backoff 100)
+  raw          3,526,705  0 behind target
+  transformed  3,526,705
+  WAL          empty
+  last         ok, 15:12 UTC (10m ago)
+```
+
+`sync status` reads the shared state, so it works from any container and
+any version, including a one-off `docker compose run --rm sync-<net> …`
+next to a running daemon. Its WAL line is `empty`, or the pending blocks and
+the version that wrote them, or `?` when the check failed.
+
+Before every ingest, the newest raw block hashes are compared with the
+node's. A mismatch means a reorg went deeper than the reorg backoff, and the
+network is paused until someone has repaired raw and runs `sync resume`.
+
 ### Exchange Rates
 
 Fetch and ingest exchange rates from various sources.
@@ -494,9 +856,6 @@ Fetch and ingest exchange rates from various sources.
 ```bash
 # Show exchange rate options
 graphsense-cli exchange-rates --help
-
-# Fetch from CoinDesk
-graphsense-cli exchange-rates coindesk -e dev -c btc
 
 # Fetch from CoinMarketCap (requires API key in config)
 graphsense-cli exchange-rates coinmarketcap -e dev -c btc
@@ -526,7 +885,10 @@ graphsense-cli monitoring notify \
     --message "BTC ingestion completed"
 ```
 
-### Event Watching (Alpha)
+### Event Watching (Deprecated)
+
+> **Deprecated:** `graphsense-cli watch` will be removed in a release after
+> 2027-04-09.
 
 Watch for cryptocurrency events and generate notifications.
 
@@ -534,12 +896,12 @@ Watch for cryptocurrency events and generate notifications.
 # Show watch options
 graphsense-cli watch --help
 
-# Watch for money flows on specific addresses
+# Watch for money flows on the addresses listed in a watchpoints file
 graphsense-cli watch money-flows \
     -e dev \
     -c btc \
-    --address 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa \
-    --threshold 1000000  # satoshis
+    --watchpoints-file watchpoints.json \
+    --state-file watcher-state.json
 ```
 
 ### File Conversion Tools
@@ -738,7 +1100,8 @@ if parsed:
 
 ## Development
 
-**Important:** Requires Python >=3.10, <3.13.
+**Important:** Requires Python >=3.11, <3.14 and [uv](https://docs.astral.sh/uv/) >=0.13
+(`required-version` in `pyproject.toml`; run `uv self update` if uv refuses to start).
 
 ### Setup Development Environment
 
@@ -794,6 +1157,14 @@ make test-spark
 | `make test` | as `test-ci`, plus coverage and a forced dependency sync | ~145s |
 | `make test-rust` | `cargo test` | 3.3s cold, 0.06s warm |
 | `make test-spark` | `sbt test` | minutes |
+
+#### Without a Docker daemon
+
+The suite collects and runs without one. Tests that need a Cassandra, Postgres
+or Redis container (`tests/web`, `tests/db`, `tests/tagstore`,
+`tests/integration`) are skipped with a single reason and a banner in the
+summary. On CI (`CI` set) an unreachable daemon is a hard error instead, so a
+broken runner cannot pass while covering nothing.
 
 #### Podman Notes
 
@@ -885,7 +1256,7 @@ Some components use OpenSSL hash functions that aren't available by default in O
 1. **Connection Refused**: Verify Cassandra is running and accessible
 2. **Schema Validation Errors**: Ensure database schema matches expected version
 3. **Import Errors**: Install with `[all]` option for complete feature set
-4. **Python Version**: Requires Python >=3.10, <3.13
+4. **Python Version**: Requires Python >=3.11, <3.14
 
 ### Getting Help
 

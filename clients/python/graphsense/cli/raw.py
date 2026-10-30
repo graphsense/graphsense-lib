@@ -18,10 +18,11 @@ import rich_click as click
 import graphsense
 from graphsense.cli.context import CliContext
 from graphsense.ext import output as out_mod
+from graphsense.removed import REMOVED_NAMES
 
 pass_ctx = click.make_pass_decorator(CliContext)
 
-_DEPRECATED_APIS = {"EntitiesApi"}
+_DEPRECATED_APIS: set[str] = set()
 _INTERNAL_SUFFIXES = ("_with_http_info", "_without_preload_content")
 _PRIVATE_PREFIXES = ("_",)
 
@@ -49,7 +50,26 @@ def build_raw_group() -> click.Group:
         subgroup = _make_api_subgroup(cls_name, cls)
         raw_group.add_command(subgroup)
 
+    for cls_name, message in REMOVED_NAMES.items():
+        if cls_name.endswith("Api"):
+            raw_group.add_command(_make_removed_group(cls_name, message))
+
     return raw_group
+
+
+def _make_removed_group(cls_name: str, message: str) -> click.Command:
+    """Hidden stand-in for a removed API group: fails with what replaces it."""
+
+    @click.command(
+        name=cls_name[: -len("Api")].lower(),
+        hidden=True,
+        context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+        add_help_option=False,
+    )
+    def removed() -> None:
+        raise click.UsageError(message)
+
+    return removed
 
 
 def _iter_api_class_names() -> t.Iterator[str]:

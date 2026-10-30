@@ -1,0 +1,11 @@
+{
+  "C5_B5_A6-A8_THORChainToBitcoin.gs": [
+    {
+      "type": "bridge_tx",
+      "input_tx": "6b16c29fc5c1161c3efd01874cc4e2c8104a7772b8fd9c7c70f8b747d3398a6f_I1405",
+      "output_tx": "ac71843d9edfe199de6f4d47ce4d8cb9d68e35c0ced593a9ed18d5a11008c316",
+      "edge_from": "0xd37bbe5744d730a1d98d8dc97c42f0ca46ad7146",
+      "edge_to": "bc1q43727w99qpg58ykswgzvfth7skvaagd9l03ppp"
+    }
+  ]
+}

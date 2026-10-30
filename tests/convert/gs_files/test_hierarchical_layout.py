@@ -398,3 +398,29 @@ def test_multiline_label_widens_row_spacing() -> None:
     assert wrapped["bot"][1] - wrapped["mid"][1] == wide_step
     # The middle node stays centred on y = 0 either way.
     assert plain["mid"][1] == wrapped["mid"][1] == 0.0
+
+
+def test_multi_tx_edge_keeps_endpoint_addresses_on_one_row() -> None:
+    """N txs between one address pair: only the first tx discovers the
+    destination; the other N-1 are leaf txs whose y is overwritten by
+    the snap step. They must not take tidy-tree rows, or the source is
+    centred over N rows while the destination sits on the first one.
+    """
+    spec = {
+        "addresses": [
+            {"id": "src", "starting_point": True},
+            {"id": "dst"},
+        ],
+        "txs": [{"id": f"tx{i}"} for i in range(11)],
+        "agg_edges": [
+            {"a": "src", "b": "dst", "tx_ids": [f"tx{i}" for i in range(11)]},
+        ],
+    }
+    out = apply_hierarchical_layout(spec)
+    addrs = _xy_by_id(out["addresses"])
+    txs = _xy_by_id(out["txs"])
+    assert addrs["src"] == (0.0, 0.0)
+    assert addrs["dst"] == (2 * _HIER_X_STEP, 0.0)
+    # The tx pile is centred on the shared row.
+    ys = [txs[f"tx{i}"][1] for i in range(11)]
+    assert sum(ys) / len(ys) == 0.0

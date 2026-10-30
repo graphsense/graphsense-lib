@@ -58,6 +58,8 @@ class _FakeDb:
         self.captured.append((query, params))
         return _EmptyResult()
 
+    _list_matching_addresses_for = Cassandra._list_matching_addresses_for
+
 
 def _run(coro):
     return asyncio.run(coro)

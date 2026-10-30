@@ -30,7 +30,6 @@ def get_channel(url: str, enable_retries: bool = True):
             [
                 ("grpc.enable_retries", 1),
                 ("grpc.service_config", service_config),
-                ("grpc.max_retry_attempts", 9),
                 ("grpc.keepalive_time_ms", 30000),
                 ("grpc.keepalive_timeout_ms", 5000),
                 ("grpc.keepalive_permit_without_calls", True),
@@ -80,12 +79,21 @@ def get_channel(url: str, enable_retries: bool = True):
         raise ValueError(f"Unsupported URL scheme: {parsed_url.scheme}")
 
 
+# gRPC core caps retryPolicy.maxAttempts at 5 (and logs "clamped
+# retryPolicy.maxAttempts" on every channel above that); no channel arg
+# raises the cap.
+MAX_GRPC_RETRY_ATTEMPTS = 5
+
+
 def get_retry_service_config():
     """
-    Returns a gRPC service configuration with retry policy for RESOURCE_EXHAUSTED.
+    Returns a gRPC service configuration with retry policy for
+    RESOURCE_EXHAUSTED and UNAVAILABLE.
 
-    Total backoff window covers ~5 minutes so calls survive a node restart:
-    3+6+12+24+48+60+60+60 ≈ 273s across 9 attempts.
+    The 4 backoffs are capped at 20+40+80+120 = 260s so a call can ride out a
+    node restart. gRPC draws each wait uniformly between 0 and its cap, so
+    on average the window is about half that. The exporters' own per-block
+    retries come on top.
     """
     return json.dumps(
         {
@@ -93,9 +101,9 @@ def get_retry_service_config():
                 {
                     "name": [{}],  # Apply to all methods
                     "retryPolicy": {
-                        "maxAttempts": 9,
-                        "initialBackoff": "3s",
-                        "maxBackoff": "60s",
+                        "maxAttempts": MAX_GRPC_RETRY_ATTEMPTS,
+                        "initialBackoff": "20s",
+                        "maxBackoff": "120s",
                         "backoffMultiplier": 2.0,
                         "retryableStatusCodes": ["RESOURCE_EXHAUSTED", "UNAVAILABLE"],
                     },

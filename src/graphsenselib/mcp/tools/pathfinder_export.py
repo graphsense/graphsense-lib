@@ -15,7 +15,9 @@ Layout policy: pathfinder ``.gs`` files commit coordinates at save time
 layout. By default it uses :func:`apply_hierarchical_layout` whenever the
 spec marks at least one node ``starting_point=true`` (the typical agent
 case — anchors are known), and falls back to the existing columnar
-defaults in :class:`GsBuilder` otherwise.
+defaults in :class:`GsBuilder` otherwise. Before a hierarchical layout
+the tool asks the backend which way money flows through each tx, so
+inflows are drawn left of the address they pay into.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import inspect
 import logging
 import re
 from contextlib import AsyncExitStack
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 
 import httpx
 from fastapi import FastAPI
@@ -37,12 +39,15 @@ from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, Field
 
 from graphsenselib.convert.gs_files import (
+    ANNOTATION_PALETTE,
     apply_hierarchical_layout,
     builder_from_spec,
 )
 from graphsenselib.mcp.tools.consolidated import _make_client
 from graphsenselib.pathfinder import (
     RestBackend,
+    annotate_conversions,
+    annotate_tx_flows,
     verify_against_backend,
     verify_structural,
 )
@@ -79,7 +84,15 @@ def _resolve_open_url_docs(doc: str, *, enabled: bool) -> str:
     return _OPEN_URL_DOC_RE.sub(lambda m: m.group(1) if enabled else "", doc)
 
 
-Color = tuple[float, float, float, float]
+Color = Union[str, tuple[float, float, float, float]]
+
+_COLOR_DESCRIPTION = (
+    "Node highlight color. Prefer one of the Pathfinder annotation "
+    f"palette names ({', '.join(ANNOTATION_PALETTE)}) — these are the "
+    "swatches the user can pick in the UI. Also accepted: a '#rrggbb' / "
+    "'#rrggbbaa' hex string, or an [r, g, b, a] list with each component "
+    "in [0, 1]."
+)
 
 
 class _AddressSpec(BaseModel):
@@ -101,9 +114,7 @@ class _AddressSpec(BaseModel):
             "'first hop after the hack')."
         ),
     )
-    color: Optional[Color] = Field(
-        default=None, description="RGBA tuple, each component in [0, 1]."
-    )
+    color: Optional[Color] = Field(default=None, description=_COLOR_DESCRIPTION)
     starting_point: bool = Field(
         default=False,
         description=(
@@ -164,7 +175,7 @@ class _TxSpec(BaseModel):
             "visible from the transaction data itself."
         ),
     )
-    color: Optional[Color] = Field(default=None)
+    color: Optional[Color] = Field(default=None, description=_COLOR_DESCRIPTION)
     starting_point: bool = Field(default=False)
     x: Optional[float] = Field(default=None)
     y: Optional[float] = Field(default=None)
@@ -313,10 +324,50 @@ class _PathfinderBuildResult(BaseModel):
     summary: _PathfinderBuildSummary
 
 
+async def _lookup_tx_flows(
+    spec_dict: dict[str, Any],
+    default_network: str,
+    app: FastAPI,
+    tx_cache: dict,
+) -> dict[str, Any]:
+    """Add ``senders`` / ``receivers`` to the spec's txs, so the layout can
+    draw inflows left of the address they pay into, and ``conversions``,
+    so swaps and bridges get the U-turn Pathfinder moves them into.
+
+    Best effort: a failed lookup only costs direction, and the layout
+    falls back to hop distance. Failures are logged, not returned as
+    warnings — the warnings tell the agent to fix its spec, and a
+    backend hiccup here is nothing the spec can fix (a tx that really
+    doesn't exist is reported by the verifier).
+    """
+    client = _make_client(app)
+    try:
+        async with client:
+            backend = RestBackend(client, tx_cache=tx_cache)
+            spec_dict, problems = await annotate_tx_flows(
+                spec_dict, default_network=default_network, backend=backend
+            )
+            spec_dict, more = await annotate_conversions(
+                spec_dict, default_network=default_network, backend=backend
+            )
+            problems += more
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        logger.warning(
+            "build_pathfinder_file: tx direction lookup failed (%s); "
+            "laying out without direction",
+            exc,
+        )
+        return spec_dict
+    for problem in problems:
+        logger.info("build_pathfinder_file: %s", problem)
+    return spec_dict
+
+
 async def _run_verifier(
     spec_dict: dict[str, Any],
     default_network: str,
     app: FastAPI,
+    tx_cache: Optional[dict] = None,
 ) -> list[str]:
     """Backend-aware checks for the build tool. Wraps
     :func:`verify_against_backend` with the existing MCP httpx client
@@ -326,7 +377,7 @@ async def _run_verifier(
     client = _make_client(app)
     try:
         async with client:
-            backend = RestBackend(client)
+            backend = RestBackend(client, tx_cache=tx_cache)
             return await verify_against_backend(
                 spec_dict, default_network=default_network, backend=backend
             )
@@ -352,118 +403,90 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
     """
 
     async def build_pathfinder_file(
-        name: str,
-        default_network: str,
-        spec: PathfinderSpec,
-        layout: Literal["auto", "hierarchical", "columnar"] = "auto",
-        verify: bool = True,
+        name: Annotated[
+            str,
+            Field(description="Graph name embedded in the .gs file (shown in the UI)."),
+        ],
+        default_network: Annotated[
+            str,
+            Field(
+                description=(
+                    "Network ticker for items that don't carry an explicit "
+                    "network (e.g. 'btc', 'eth')."
+                )
+            ),
+        ],
+        spec: Annotated[
+            PathfinderSpec,
+            Field(description="Addresses, txs, and aggregated edges of the graph."),
+        ],
+        layout: Annotated[
+            Literal["auto", "hierarchical", "columnar"],
+            Field(
+                description=(
+                    "'auto' picks hierarchical when at least one starting_point "
+                    "is set, else columnar. 'hierarchical' forces the "
+                    "BFS-by-hop layout; 'columnar' forces addresses, txs and "
+                    "side-aware columns."
+                )
+            ),
+        ] = "auto",
+        verify: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Cross-check the spec against the backend: look up every "
+                    "address and tx hash, and verify that each agg_edge.tx_ids "
+                    "entry mediates the claimed a<->b relationship on chain. "
+                    "Findings go to summary.warnings and the text block. Adds "
+                    "one backend call per address and tx. Pass false to skip "
+                    "while drafting; backend hiccups during verify become a "
+                    "soft warning."
+                )
+            ),
+        ] = True,
     ) -> ToolResult:
         """Build a Pathfinder .gs save file from an investigation graph.
 
-        Pass the addresses, transactions, and address↔address relationships
-        you discovered. The tool encodes them into a Pathfinder ``.gs``
-        file; the user opens that file in the Pathfinder UI to verify your
+        Pass the addresses, transactions and address↔address relationships
+        you found. The user opens the file in Pathfinder to check your
         findings visually.
 
-        YOU DO NOT RECEIVE THE FILE CONTENT. The ``.gs`` payload is binary
-        and is deliberately kept out of your context. Do not try to read,
-        decode, reconstruct, or base64-encode it, and never invent a
-        download link or a ``data:`` URL of your own.
+        YOU DO NOT RECEIVE THE FILE CONTENT. Never read, decode, rebuild
+        or base64-encode it, and never invent a download link or a
+        ``data:`` URL of your own.
 
         Once the tool succeeds, tell the user where their file is:
 
-        [[open-url]]* If the result has a non-null ``open_url``, give that link to the
-          user verbatim — clicking it opens the graph directly in the
-          Pathfinder web app (no manual download/import needed). It is
-          time-limited like the download link.
-        [[/open-url]]* If the result has a non-null ``download_url``, give that link to
-          the user verbatim — it is a real, time-limited download link
-          for the ``.gs`` file itself.
-        * Otherwise the file is delivered as an attachment embedded in this
-          tool's result; tell the user to open or save it from their
-          client (the file is named ``filename``).
+        [[open-url]]* ``open_url`` set: give it verbatim. It opens the graph directly
+          in Pathfinder, no download or import needed (time-limited).
+        [[/open-url]]* ``download_url`` set: give it verbatim. It is a real,
+          time-limited download link for the ``.gs`` file.
+        * Otherwise the file is an attachment embedded in this result,
+          named ``filename``; tell the user to open or save it.
 
-        Either way, surface any ``summary.warnings`` to the user.
+        Always surface ``summary.warnings``; they flag authoring mistakes.
 
-        IMPORTANT — how transactions render in pathfinder: to make a
-        transaction appear you must do TWO things. (1) list it as an
-        entry in ``txs`` and (2) reference its hash from
-        ``agg_edges.tx_ids`` on the edge(s) it mediates. An ``agg_edge``
-        without ``tx_ids`` becomes an abstract a↔b line and no
-        transactions are shown for it. If you provide ``agg_edges`` but
-        leave ``txs`` empty, the response includes a warning and the
-        resulting .gs renders only abstract relationship lines.
+        A transaction renders only if it is listed in ``txs`` AND its id
+        is in the ``tx_ids`` of an ``agg_edge`` from its sender (``a``) to
+        its receiver (``b``). An edge without ``tx_ids`` is an abstract
+        a↔b line; a tx on no edge floats unconnected.
 
-        For every tx you include, provide at least one source and one
-        destination address — i.e. add an ``agg_edge`` with the tx's
-        ``from``-address as ``a`` and the tx's ``to``-address as ``b``,
-        with the tx hash in ``tx_ids``. Optional but strongly
-        recommended for proper visualisation: a tx not referenced from
-        any ``agg_edge`` renders as a floating node, and on ETH the
-        renderer can silently drop edges whose tx node is off-line.
+        ``label`` is for case context such as "victim wallet", not for
+        tags, dates or amounts, which Pathfinder already shows. ``color``
+        groups nodes by role: one color per role, the same mapping across
+        the graph, explained to the user, uninvolved nodes left plain.
+        Prefer the palette names, the swatches users pick in Pathfinder:
+        [[palette]]. Mark the node(s) you started from with
+        ``starting_point=true`` so the layout anchors them.
 
-        Labels — keep ``label`` (on addresses and txs) for case context
-        the UI cannot already show. Pathfinder renders attribution tags
-        on address nodes, and the date and value on transaction nodes,
-        by itself — so do NOT copy tag names, exchange names, dates or
-        amounts into ``label``; that is redundant. Reserve ``label`` for
-        context that comes from the investigation itself and is not
-        derivable from tags or transaction data, e.g. "victim wallet",
-        "attacker cash-out", "first hop after the hack".
+        Example (one tx between two addresses, anchored at addrA)::
 
-        Mark the address(es) or tx(s) you started from with
-        ``starting_point=true`` so the layout can place anchors at column
-        0 and arrange the rest by hop distance.
-
-        Example (a single tx between two addresses, anchored at addrA)::
-
-            {
-              "addresses": [
-                {"id": "addrA", "starting_point": true, "label": "anchor"},
-                {"id": "addrB"}
-              ],
-              "txs": [{"id": "txhash1"}],
-              "agg_edges": [
-                {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}
-              ]
-            }
-
-        Args:
-            name: Graph name embedded in the .gs file (shown in the UI).
-            default_network: Network ticker for items that don't carry an
-                explicit network (e.g. "btc", "eth").
-            spec: Addresses, txs, and aggregated edges of the graph.
-            layout: "auto" (default) picks hierarchical when at least one
-                starting_point is set, else columnar. "hierarchical" forces
-                BFS-by-hop layout; "columnar" forces the GsBuilder default
-                (addresses, txs, side-aware columns).
-            verify: When True (the default), additionally cross-check
-                the spec against the backend: every address and tx hash
-                is looked up, and each agg_edge.tx_ids reference is
-                verified to actually mediate the claimed a↔b
-                relationship on chain. Findings are appended to
-                ``summary.warnings`` and to the text content block.
-                Adds N+M backend calls (capped by an internal
-                concurrency limit). Pass False to skip for fast
-                iteration while drafting; backend hiccups during verify
-                are downgraded to a soft warning so a flaky backend
-                cannot sink a structurally valid file.
-
-        Returns:
-            A tool result whose structured content carries
-            ``{filename, download_url,[[open-url]] open_url,[[/open-url]] summary}`` — this, and
-            only this, is what you can read. ``download_url`` is either a
-            real, time-limited download link or null (null when the server
-            has no file store configured, or could not address the link);
-            the file is then delivered as an embedded attachment instead.
-            [[open-url]]``open_url`` is a deep link that opens the graph directly in
-            the Pathfinder web app (null when no file store is
-            configured); prefer surfacing it first when present.
-            [[/open-url]]Inspect ``summary.warnings`` (it flags common authoring
-            mistakes) and mention any to the user. The .gs bytes travel
-            as an embedded MCP resource and/or via the download link;
-            they never enter your context, so do not expect to access or
-            relay the file's contents.
+            {"addresses": [{"id": "addrA", "starting_point": true,
+                            "label": "victim wallet", "color": "red"},
+                           {"id": "addrB", "color": "orange"}],
+             "txs": [{"id": "txhash1"}],
+             "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}]}
         """
         _validate_spec(spec, default_network)
 
@@ -479,7 +502,13 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             chosen = "hierarchical" if _should_use_hierarchical(spec) else "columnar"
 
         spec_dict = _spec_to_dict(spec)
+        # Tx bodies fetched for the direction lookup are reused by the
+        # verifier below.
+        tx_cache: dict = {}
         if chosen == "hierarchical":
+            spec_dict = await _lookup_tx_flows(
+                spec_dict, default_network, app, tx_cache
+            )
             spec_dict = apply_hierarchical_layout(spec_dict)
 
         try:
@@ -559,7 +588,9 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         # Chat is the known offender — show the user something usable.
         warnings = verify_structural(spec_dict)
         if verify:
-            warnings.extend(await _run_verifier(spec_dict, default_network, app))
+            warnings.extend(
+                await _run_verifier(spec_dict, default_network, app, tx_cache)
+            )
         if download_url is not None:
             text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
         else:
@@ -619,5 +650,5 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         description=_resolve_open_url_docs(
             inspect.cleandoc(build_pathfinder_file.__doc__ or ""),
             enabled=open_url_enabled,
-        ),
+        ).replace("[[palette]]", ", ".join(ANNOTATION_PALETTE)),
     )(build_pathfinder_file)

@@ -36,8 +36,8 @@ graphsense raw addresses list-address-txs btc 1A1z... --pagesize 20
   `--no-bulk` override.
 - **Deprecation-aware**: RFC 8594 `Deprecation` / `Sunset` headers from
   the server trigger a one-line stderr warning (silence with `--quiet`).
-- **Non-deprecated endpoints only** on the flat commands. Deprecated APIs
-  (`EntitiesApi`) are hidden under `graphsense raw` unless
+- **Non-deprecated endpoints only** on the flat commands. Wholly deprecated
+  API groups are hidden under `graphsense raw` unless
   `GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` is set.
 - **`graphsense gs`** reads `.gs` save files (Pathfinder / Graph dashboards)
   and emits `{network, id}` records that pipe straight into the lookup

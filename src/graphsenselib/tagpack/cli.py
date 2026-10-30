@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import time
+from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Pool, cpu_count
 
 import click
@@ -18,6 +19,7 @@ from tabulate import tabulate
 from yaml.parser import ParserError, ScannerError
 
 from graphsenselib.tagpack import UniqueKeyLoader, get_version
+from graphsenselib.tagpack.address_check import REPORT_HEADER
 from graphsenselib.tagpack.actorpack import Actor, ActorPack
 from graphsenselib.tagpack.actorpack_schema import ActorPackSchema
 from graphsenselib.tagpack.graphsense import GraphSense
@@ -94,7 +96,8 @@ def read_url_from_env():
     ev = dict(os.environ)
     try:
         url = f"postgresql://{ev['POSTGRES_USER']}:{ev['POSTGRES_PASSWORD']}"
-        url += f"@{ev['POSTGRES_HOST']}:5432/{ev['POSTGRES_DB']}"
+        port = ev.get("POSTGRES_PORT") or "5432"
+        url += f"@{ev['POSTGRES_HOST']}:{port}/{ev['POSTGRES_DB']}"
         msg = ""
     except KeyError:
         fields = ["USER", "PASSWORD", "HOST", "DB"]
@@ -654,16 +657,80 @@ def _sync_impl(
         logger.error(f"Repos to sync file {repos} does not exist.")
 
 
+ADDRESS_VALIDATION_MODES = ("off", "warn", "error")
+
+
+def _validate_tagpack_file(
+    tagpack_file,
+    headerfile_dir,
+    schema,
+    taxonomies,
+    address_validation,
+    use_pyyaml,
+    with_hints=False,
+) -> tuple:
+    """Load and validate one tagpack file; returns the actors it references
+    and its invalid addresses (``AddressFinding``s, hinted if ``with_hints``).
+    Raises ValidationError / TagPackFileError if the pack is invalid; invalid
+    addresses are left to the caller."""
+    tagpack = TagPack.load_from_file(
+        tagpack_file, tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
+    )
+    logger.info(f"Validating {tagpack_file}")
+    tagpack.validate()
+    findings = []
+    if address_validation != "off":
+        findings = tagpack.verify_addresses(with_hints=with_hints)
+    actors = set()
+    header_actor = tagpack.all_header_fields.get("actor")
+    if header_actor:
+        actors.add(header_actor)
+    for tag in tagpack.tags:
+        tag_actor = tag.all_fields.get("actor")
+        if tag_actor:
+            actors.add(tag_actor)
+    return actors, findings
+
+
+# Per-process state of the parallel validation (set once per worker).
+_validation_worker_args: tuple = ()
+
+
+def _init_validation_worker(*args):
+    global _validation_worker_args
+    _validation_worker_args = args
+
+
+def _validate_tagpack_file_in_worker(item):
+    """(actors, findings, None) or (set(), [], error message); errors are
+    returned, not raised, so one invalid pack does not stop the others."""
+    tagpack_file, headerfile_dir = item
+    try:
+        actors, findings = _validate_tagpack_file(
+            tagpack_file, headerfile_dir, *_validation_worker_args
+        )
+        return actors, findings, None
+    except (ValidationError, TagPackFileError) as e:
+        return set(), [], str(e)
+
+
 def validate_tagpack(
     config,
     path,
-    no_address_validation,
+    address_validation="warn",
     check_actor_references=False,
     strict_actor_references=True,
     actorpack_path=None,
     use_pyyaml=False,
+    jobs=1,
+    invalid_addresses_report=None,
 ):
+    """``address_validation``: off, warn (log invalid addresses) or error
+    (a pack with invalid addresses fails). ``invalid_addresses_report``: path
+    of a TSV file listing every invalid address with a hint."""
     t0 = time.time()
+    if jobs < 1:
+        jobs = os.cpu_count() or 1
     logger.info("TagPack validation starts")
     logger.info(f"Path: {path}")
 
@@ -709,80 +776,112 @@ def validate_tagpack(
     unique_known_actors = set()
     unique_unknown_actors = {}  # {actor: [(similar_id, score), ...]}
 
+    def check_actors(tagpack_file, actors_to_check) -> bool:
+        """Resolve a pack's actors; False if strict mode rejects the pack."""
+        file_ok = True
+        for actor in actors_to_check:
+            if actorpack.resolve_actor(actor) is not None:
+                unique_known_actors.add(actor)
+                continue
+            if actor not in unique_unknown_actors:
+                similar = find_similar_actors(
+                    actor, existing_actor_ids, similarity_threshold
+                )
+                unique_unknown_actors[actor] = similar
+                msg = f"  Actor '{actor}' NOT FOUND in actorpack"
+                if similar:
+                    suggestions = ", ".join(
+                        [f"{sid} ({score}%)" for sid, score in similar[:3]]
+                    )
+                    msg += f" (existing actors with similar names: {suggestions})"
+                else:
+                    msg += " (no existing actors with similar names found)"
+                if strict_actor_references:
+                    logger.error(msg)
+                else:
+                    logger.warning(msg)
+            if strict_actor_references:
+                file_ok = False
+        if not file_ok:
+            logger.error(
+                f"FAILED: {tagpack_file} - Actor validation failed in strict mode"
+            )
+        return file_ok
+
+    work = [
+        (tagpack_file, headerfile_dir)
+        for headerfile_dir, files in tagpack_files.items()
+        for tagpack_file in files
+    ]
+    check = check_actor_references and actorpack is not None
+    with_hints = invalid_addresses_report is not None
+    all_findings = []
+
+    def addresses_ok(tagpack_file, findings) -> bool:
+        """Collect a pack's invalid addresses; False if they fail it."""
+        all_findings.extend(findings)
+        if findings and address_validation == "error":
+            logger.error(
+                f"FAILED: {tagpack_file} - {len(findings)} invalid address(es)"
+            )
+            return False
+        return True
+
     no_passed = 0
-    try:
-        for headerfile_dir, files in tagpack_files.items():
-            for tagpack_file in files:
-                strict_file_failed = False
-                tagpack = TagPack.load_from_file(
+    if jobs == 1:
+        # Sequential: stops at the first pack that fails validation (invalid
+        # addresses fail a pack, but do not stop the run).
+        try:
+            for tagpack_file, headerfile_dir in work:
+                actors, findings = _validate_tagpack_file(
                     tagpack_file,
-                    tagpack_file,
+                    headerfile_dir,
                     schema,
                     taxonomies,
-                    headerfile_dir,
+                    address_validation,
                     use_pyyaml,
+                    with_hints,
                 )
-
-                logger.info(f"Validating {tagpack_file}")
-
-                tagpack.validate()
-                # verify valid blocknetwork addresses using internal checksum
-                if not no_address_validation:
-                    tagpack.verify_addresses()
-
-                # Check actors if enabled
-                if check_actor_references and actorpack:
-                    # Collect actors from header level and tag level
-                    actors_to_check = set()
-                    header_actor = tagpack.all_header_fields.get("actor")
-                    if header_actor:
-                        actors_to_check.add(header_actor)
-                    for tag in tagpack.tags:
-                        tag_actor = tag.all_fields.get("actor")
-                        if tag_actor:
-                            actors_to_check.add(tag_actor)
-
-                    for actor in actors_to_check:
-                        resolved = actorpack.resolve_actor(actor)
-                        if resolved is None:
-                            # Unknown actor
-                            if actor not in unique_unknown_actors:
-                                similar = find_similar_actors(
-                                    actor, existing_actor_ids, similarity_threshold
-                                )
-                                unique_unknown_actors[actor] = similar
-                                msg = f"  Actor '{actor}' NOT FOUND in actorpack"
-
-                                if similar:
-                                    suggestions = ", ".join(
-                                        [
-                                            f"{sid} ({score}%)"
-                                            for sid, score in similar[:3]
-                                        ]
-                                    )
-                                    msg += f" (existing actors with similar names: {suggestions})"
-                                else:
-                                    msg += (
-                                        " (no existing actors with similar names found)"
-                                    )
-                                if strict_actor_references:
-                                    logger.error(msg)
-                                else:
-                                    logger.warning(msg)
-                            if strict_actor_references:
-                                strict_file_failed = True
-                        else:
-                            unique_known_actors.add(actor)
-
-                if strict_file_failed:
-                    logger.error(
-                        f"FAILED: {tagpack_file} - Actor validation failed in strict mode"
-                    )
-                else:
+                addr_ok = addresses_ok(tagpack_file, findings)
+                if (not check or check_actors(tagpack_file, actors)) and addr_ok:
                     logger.info(f"PASSED: {tagpack_file}")
                     no_passed += 1
-    except (ValidationError, TagPackFileError) as e:
-        logger.error(f"FAILED: {e}")
+        except (ValidationError, TagPackFileError) as e:
+            logger.error(f"FAILED: {e}")
+    else:
+        # Parallel: every pack is validated, every failure reported. Results
+        # are consumed in input order, so the log reads like a sequential run.
+        logger.info(f"Validating with {jobs} worker processes")
+        with ProcessPoolExecutor(
+            max_workers=jobs,
+            initializer=_init_validation_worker,
+            initargs=(
+                schema,
+                taxonomies,
+                address_validation,
+                use_pyyaml,
+                with_hints,
+            ),
+        ) as pool:
+            results = pool.map(_validate_tagpack_file_in_worker, work, chunksize=1)
+            for (tagpack_file, _), (actors, findings, error) in zip(work, results):
+                if error is not None:
+                    logger.error(f"FAILED: {error}")
+                    continue
+                addr_ok = addresses_ok(tagpack_file, findings)
+                if (not check or check_actors(tagpack_file, actors)) and addr_ok:
+                    logger.info(f"PASSED: {tagpack_file}")
+                    no_passed += 1
+
+    if invalid_addresses_report is not None:
+        with open(invalid_addresses_report, "w", encoding="utf-8") as f:
+            f.write(REPORT_HEADER + "\n")
+            for finding in all_findings:
+                f.write(finding.as_row() + "\n")
+        logger.info(
+            f"Wrote {len(all_findings)} invalid address(es) to "
+            f"{invalid_addresses_report}"
+        )
 
     failed = no_passed < n_tagpacks
 
@@ -915,14 +1014,10 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                     else tagpack_file
                 )
                 click.secho(f"Writing updated Tagpack {updated_file}", fg="green")
-                with open(updated_file, "w") as outfile:
-                    tagpack.contents["tags"] = tagpack.contents.pop(
-                        "tags"
-                    )  # re-insert tags
-                    tagpack.update_lastmod()
-                    yaml.dump(
-                        tagpack.contents, outfile, sort_keys=False
-                    )  # write in order of insertion
+                tagpack.update_lastmod()
+                updated_yaml = tagpack.dump_actor_updates(tagpack_file)
+                with open(updated_file, "w", encoding="utf-8") as outfile:
+                    outfile.write(updated_yaml)
             else:
                 click.secho("No actors added, moving on.", fg="green")
 
@@ -1109,9 +1204,25 @@ def tagpack():
 @tagpack.command("validate")
 @click.argument("path", default=os.getcwd())
 @click.option(
+    "--address-validation",
+    type=click.Choice(ADDRESS_VALIDATION_MODES),
+    default="warn",
+    show_default=True,
+    help="Invalid addresses (checksum, version byte, length; tags with "
+    "'address_validation: skip' excepted): off, warn, or error (the pack "
+    "fails). Unsupported networks are only counted.",
+)
+@click.option(
     "--no-address-validation",
     is_flag=True,
-    help="Disables checksum validation of addresses",
+    help="Same as --address-validation off (deprecated).",
+)
+@click.option(
+    "--invalid-addresses-report",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Write every invalid address (file, line, network, address, hint) "
+    "to this TSV file.",
 )
 @click.option(
     "--check-actor-references",
@@ -1134,26 +1245,44 @@ def tagpack():
     is_flag=True,
     help="Use PyYAML instead of rapidyaml for YAML parsing",
 )
+@click.option(
+    "--jobs",
+    "-j",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Validate this many packs in parallel (0 = one per CPU). With 1 the "
+    "run stops at the first invalid pack; with more, every pack is validated "
+    "and every failure reported. Each process holds one pack in memory, up to "
+    "1-2 GB for packs of several 100k tags, so prefer a small number locally.",
+)
 @click.pass_context
 def validate_tagpack_cli(
     ctx,
     path,
+    address_validation,
     no_address_validation,
+    invalid_addresses_report,
     check_actor_references,
     strict_actor_references,
     actorpack_path,
     use_pyyaml,
+    jobs,
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
+    if no_address_validation:
+        address_validation = "off"
     validate_tagpack(
         config,
         path,
-        no_address_validation,
+        address_validation,
         check_actor_references,
         strict_actor_references,
         actorpack_path,
         use_pyyaml,
+        jobs,
+        invalid_addresses_report,
     )
 
 
@@ -2563,6 +2692,266 @@ def list_labels_without_actor(ctx, category, max, csv):
 def list_addresses_with_actor_collisions(ctx, csv):
     """List actors with address collisions."""
     list_addresses_with_actor_collisions_impl(ctx.obj["url"], ctx.obj["schema"], csv)
+
+
+def _run_on_async_tagstore(ctx, fn):
+    """Run ``fn(TagstoreDbAsync)`` against the quality group's --url/--schema."""
+    import asyncio
+
+    from graphsenselib.tagstore.db.database import (
+        enable_tcp_keepalive,
+        get_db_engine_async,
+    )
+    from graphsenselib.tagstore.db.queries import TagstoreDbAsync
+
+    url = ctx.obj["url"]
+    for prefix in ("postgresql://", "postgres://", "postgresql+psycopg2://"):
+        if url.startswith(prefix):
+            url = "postgresql+asyncpg://" + url[len(prefix) :]
+    # Quality runs hold pooled connections idle through long client-side
+    # phases. pool_pre_ping replaces one that died meanwhile (e.g. over a VPN
+    # outage), and keepalive fails a dead one mid-query instead of hanging.
+    engine = enable_tcp_keepalive(
+        get_db_engine_async(
+            url,
+            pool_pre_ping=True,
+            connect_args={
+                "server_settings": {"search_path": ctx.obj["schema"]},
+                "timeout": 30,
+            },
+        )
+    )
+
+    async def run():
+        try:
+            return await fn(TagstoreDbAsync(engine))
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
+
+
+def _network_or_fail(ctx, network):
+    network = network or ctx.obj["network"]
+    if not network:
+        raise click.UsageError("--network is required")
+    return network
+
+
+def _groups_list(groups):
+    return [g.strip() for g in groups.split(",")] if groups else None
+
+
+def _run_conflict_detection(
+    ctx,
+    network,
+    groups,
+    clustering,
+    limit,
+    addresses,
+    check,
+    relations,
+):
+    from graphsenselib.tagstore.ranking_conflicts import detect
+
+    network = _network_or_fail(ctx, network)
+    result = _run_on_async_tagstore(
+        ctx,
+        lambda db: detect(
+            db,
+            network,
+            groups=_groups_list(groups),
+            clustering=clustering,
+            limit=limit,
+            addresses=list(addresses) or None,
+            ranking=check == "ranking",
+            actors=check == "actors",
+            relations=relations,
+        ),
+    )
+    for key in sorted(result.n_candidates):
+        click.echo(
+            f"{key}: checked {result.n_candidates[key]} addresses "
+            f"({result.n_mapped[key]} with a cluster mapping) and "
+            f"{result.n_clusters[key]} clusters",
+            err=True,
+        )
+    return result
+
+
+def _emit_conflict_rows(rows, columns, fmt, out):
+    from graphsenselib.tagstore.ranking_conflicts import reason_counts, write_rows
+
+    if out:
+        with open(out, "w", encoding="utf-8", newline="") as f:
+            write_rows(rows, columns, fmt, f)
+    else:
+        write_rows(rows, columns, fmt, sys.stdout)
+
+    for level, counts in sorted(reason_counts(rows).items()):
+        summary = ", ".join(
+            f"{k}={v}" for k, v in sorted(counts.items()) if k != "rows"
+        )
+        click.echo(f"{level}: {counts['rows']} findings ({summary})", err=True)
+
+
+def _conflict_options(f):
+    from graphsenselib.tagstore.ranking_conflicts import CLUSTERING_CHOICES
+
+    options = [
+        click.option(
+            "--network", default="", help="Network to check, e.g. BTC (required)."
+        ),
+        click.option(
+            "--groups",
+            default="",
+            help="Comma-separated ACL groups to read tags from "
+            "(default: all groups, i.e. the internal view).",
+        ),
+        click.option(
+            "--clustering",
+            type=click.Choice(CLUSTERING_CHOICES),
+            default="auto",
+            show_default=True,
+            help="Address->cluster mapping to use. auto = v2 where the network "
+            "has v2 mappings (what REST reads), legacy otherwise.",
+        ),
+        click.option(
+            "--format",
+            "fmt",
+            type=click.Choice(["csv", "json"]),
+            default="csv",
+            show_default=True,
+        ),
+        click.option("--out", default=None, help="Output file (default: stdout)."),
+        click.option(
+            "--limit",
+            type=int,
+            default=None,
+            help="Check at most this many candidate addresses, and only their "
+            "clusters (for a quick trial run).",
+        ),
+        click.option(
+            "--address",
+            "addresses",
+            multiple=True,
+            help="Check only this address and its cluster (repeatable).",
+        ),
+    ]
+    for option in reversed(options):
+        f = option(f)
+    return f
+
+
+@quality.command("ranking-conflicts")
+@_conflict_options
+@click.pass_context
+def ranking_conflicts(
+    ctx,
+    network,
+    groups,
+    clustering,
+    fmt,
+    out,
+    limit,
+    addresses,
+):
+    """Exchange attributions hidden in the tag summary (read-only).
+
+    Runs every exchange-tagged address through the same tag digest REST
+    serves, and reports those whose best_actor/best_label is not one of their
+    exchange tags (or the same organisation, declared as same_as or
+    sub_service_of in the actorpacks, or a service nested_in it), with reason
+    codes. Also checks each multi-address cluster's
+    selected definer against the confidence-weighted majority of its definers.
+    """
+    from graphsenselib.tagstore.ranking_conflicts import (
+        RANKING_COLUMNS,
+        ranking_rows,
+    )
+
+    result = _run_conflict_detection(
+        ctx,
+        network,
+        groups,
+        clustering,
+        limit,
+        addresses,
+        "ranking",
+        None,
+    )
+    _emit_conflict_rows(ranking_rows(result), RANKING_COLUMNS, fmt, out)
+
+
+@quality.command("actor-conflicts")
+@_conflict_options
+@click.pass_context
+def actor_conflicts(
+    ctx,
+    network,
+    groups,
+    clustering,
+    fmt,
+    out,
+    limit,
+    addresses,
+):
+    """Addresses and clusters attributed to more than one actor (read-only).
+
+    Actor pairs declared as same_as, sub_service_of, nested_in or
+    related_actors in the actorpacks are not reported.
+    """
+    from graphsenselib.tagstore.ranking_conflicts import ACTOR_COLUMNS, actor_rows
+
+    result = _run_conflict_detection(
+        ctx,
+        network,
+        groups,
+        clustering,
+        limit,
+        addresses,
+        "actors",
+        None,
+    )
+    _emit_conflict_rows(actor_rows(result), ACTOR_COLUMNS, fmt, out)
+
+
+@quality.command("list-bad-text")
+@click.option(
+    "--network",
+    default="",
+    help="Limit the tag scan to one network (pack headers and actors are "
+    "always scanned).",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["csv", "json"]),
+    default="csv",
+    show_default=True,
+)
+@click.option("--out", default=None, help="Output file (default: stdout).")
+@click.pass_context
+def list_bad_text(ctx, network, fmt, out):
+    """Mis-encoded or non-printable text already in the tagstore (read-only).
+
+    Lists every distinct value in tag, tagpack, actor and actorpack fields
+    that tagpack validation now rejects, with the pack it comes from and, for
+    mis-encoded text, the probably intended text. Fix it in the pack.
+    """
+    from graphsenselib.tagstore.ranking_conflicts import write_rows
+    from graphsenselib.tagstore.text_checks import BAD_TEXT_COLUMNS, find_bad_text
+
+    rows = _run_on_async_tagstore(
+        ctx, lambda db: find_bad_text(db, network or ctx.obj["network"] or None)
+    )
+    if out:
+        with open(out, "w", encoding="utf-8", newline="") as f:
+            write_rows(rows, BAD_TEXT_COLUMNS, fmt, f)
+    else:
+        write_rows(rows, BAD_TEXT_COLUMNS, fmt, sys.stdout)
+    packs = {r["pack_uri"] for r in rows}
+    click.echo(f"{len(rows)} bad values in {len(packs)} packs", err=True)
 
 
 def main():

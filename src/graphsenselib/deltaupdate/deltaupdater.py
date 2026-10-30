@@ -1,11 +1,11 @@
 import logging
 import sys
 from contextlib import nullcontext
-from typing import Optional
+from typing import Optional, Tuple
 
 from graphsenselib.db.parallel import ParallelDbPool, init_worker
 
-from ..config import get_config
+from ..config import DeltaUpdateConfig, get_config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.console import console
@@ -41,7 +41,7 @@ def _recover_pending_writes(db, pedantic: bool, force_wal_replay: bool = False) 
     wal.ensure_schema()
 
     def apply_fn(changes):
-        apply_changes(db, changes, pedantic, try_atomic_writes=False)
+        apply_changes(db, changes, pedantic)
 
     try:
         wal.recover(apply_fn)
@@ -254,24 +254,58 @@ def _log_batch_timing(updater):
             )
 
 
+def resolve_settings(
+    du_settings: DeltaUpdateConfig,
+    write_batch_size: Optional[int],
+    parallel_workers: Optional[int],
+    forward_fill_rates: Optional[bool],
+    pedantic: Optional[bool],
+) -> Tuple[int, int, bool, bool]:
+    """A flag (not None) wins over delta_update_config, which wins over the
+    built-in default."""
+
+    def pick(flag, configured, default):
+        if flag is not None:
+            return flag
+        return configured if configured is not None else default
+
+    return (
+        pick(write_batch_size, du_settings.write_batch_size, 10),
+        pick(parallel_workers, du_settings.parallel_workers, 1),
+        pick(forward_fill_rates, du_settings.forward_fill_rates, False),
+        pick(pedantic, du_settings.pedantic, False),
+    )
+
+
 def update(
     env: str,
     currency: str,
     start_block: Optional[int],
     end_block: Optional[int],
-    write_new: bool,
-    write_dirty: bool,
-    write_batch_size: int,
-    updater_version: int,
-    pedantic: bool,
-    forward_fill_rates: bool,
+    write_batch_size: Optional[int] = None,
+    pedantic: Optional[bool] = None,
+    forward_fill_rates: Optional[bool] = None,
     disable_safety_checks: bool = False,
-    parallel_workers: int = 1,
+    parallel_workers: Optional[int] = None,
     enable_wal: Optional[bool] = None,
     force_wal_replay: bool = False,
 ):
     with DbFactory().from_config(env, currency) as db:
         config = get_config()
+        write_batch_size, parallel_workers, forward_fill_rates, pedantic = (
+            resolve_settings(
+                config.get_keyspace_config(env, currency).delta_update_config,
+                write_batch_size,
+                parallel_workers,
+                forward_fill_rates,
+                pedantic,
+            )
+        )
+        logger.info(
+            f"Delta update settings: write_batch_size={write_batch_size}, "
+            f"parallel_workers={parallel_workers}, "
+            f"forward_fill_rates={forward_fill_rates}, pedantic={pedantic}"
+        )
         # Flag overrides config; config (default True) decides when unset.
         wal_enabled = (
             enable_wal if enable_wal is not None else config.delta_updater_wal_enabled
@@ -394,9 +428,6 @@ def update(
                             UpdaterFactory().get_updater(
                                 du_config,
                                 db,
-                                updater_version,
-                                write_new,
-                                write_dirty,
                                 pedantic,
                                 write_batch_size,
                                 patch_mode=patch_mode,

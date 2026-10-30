@@ -6,6 +6,7 @@ replacing the generated OpenAPI models with a clean, minimal implementation.
 
 from graphsenselib.web.models.addresses import (
     Address,
+    AggregateCutoff,
     NeighborAddress,
     NeighborAddresses,
 )
@@ -25,12 +26,15 @@ from graphsenselib.web.models.entities import (
 from graphsenselib.web.models.general import (
     Actor,
     ActorContext,
+    Capabilities,
     Concept,
     CurrencyStats,
+    NetworkCapabilities,
     ExternalConversion,
     Rates,
     RelatedAddress,
     RelatedAddresses,
+    ServiceInfo,
     Stats,
     Taxonomy,
     TokenConfig,
@@ -138,6 +142,7 @@ __all__ = [
     "UserTagReportResponse",
     # Addresses
     "Address",
+    "AggregateCutoff",
     "NeighborAddress",
     "NeighborAddresses",
     # Entities (deprecated names, kept for backwards compatibility)
@@ -164,7 +169,10 @@ __all__ = [
     "SearchResultLevel5",
     "SearchResultLevel6",
     # General
+    "Capabilities",
     "CurrencyStats",
+    "NetworkCapabilities",
+    "ServiceInfo",
     "Stats",
     "Rates",
     "Taxonomy",

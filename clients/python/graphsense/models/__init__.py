@@ -20,8 +20,10 @@ from graphsense.models.address_tags import AddressTags
 from graphsense.models.address_tx import AddressTx
 from graphsense.models.address_tx_utxo import AddressTxUtxo
 from graphsense.models.address_txs import AddressTxs
+from graphsense.models.aggregate_cutoff import AggregateCutoff
 from graphsense.models.block import Block
 from graphsense.models.block_at_date import BlockAtDate
+from graphsense.models.capabilities import Capabilities
 from graphsense.models.change_heuristics import ChangeHeuristics
 from graphsense.models.cluster import Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses
@@ -32,7 +34,6 @@ from graphsense.models.consensus_entry import ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats
 from graphsense.models.direct_change_heuristic import DirectChangeHeuristic
 from graphsense.models.entity import Entity
-from graphsense.models.entity_addresses import EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion
 from graphsense.models.graph_address_network_summary import GraphAddressNetworkSummary
 from graphsense.models.graph_address_overall import GraphAddressOverall
@@ -67,8 +68,8 @@ from graphsense.models.neighbor_address import NeighborAddress
 from graphsense.models.neighbor_addresses import NeighborAddresses
 from graphsense.models.neighbor_cluster import NeighborCluster
 from graphsense.models.neighbor_clusters import NeighborClusters
-from graphsense.models.neighbor_entities import NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity
+from graphsense.models.network_capabilities import NetworkCapabilities
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic
 from graphsense.models.per_tx_inner import PerTxInner
 from graphsense.models.rate import Rate
@@ -83,6 +84,7 @@ from graphsense.models.search_result_level3 import SearchResultLevel3
 from graphsense.models.search_result_level4 import SearchResultLevel4
 from graphsense.models.search_result_level5 import SearchResultLevel5
 from graphsense.models.search_result_level6 import SearchResultLevel6
+from graphsense.models.service_info import ServiceInfo
 from graphsense.models.stats import Stats
 from graphsense.models.tag import Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry

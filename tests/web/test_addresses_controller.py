@@ -698,8 +698,8 @@ def test_list_address_neighbors(client):
     assert status == 200, body
 
 
-def test_get_address_entity(client):
-    path = "/{currency}/addresses/{address}/entity"
+def test_get_address_cluster(client):
+    path = "/{currency}/addresses/{address}/cluster"
     result = get_json(
         client, path, currency="btc", address=address.address, include_tags=True
     )

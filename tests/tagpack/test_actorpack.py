@@ -307,3 +307,141 @@ def test_get_resolve_mapping_handles_invalid_json_context(schema, taxonomies):
     assert mapping["valid"] == "valid"
     assert mapping["valid_alias"] == "valid"
     assert "broken_alias" not in mapping  # no alias for broken actor
+
+
+def test_validate_warns_on_mojibake_in_actor_label(actorpack, caplog):
+    actorpack.contents["actors"][0]["label"] = "MÃ¼nchen Nodes"
+    actorpack.validate()
+    assert "'München Nodes'" in caplog.text
+
+
+def test_validate_fail_bad_text_when_errors(actorpack, monkeypatch):
+    import graphsenselib.tagpack.tagpack as tp
+
+    monkeypatch.setattr(tp, "TEXT_PROBLEMS_ARE_ERRORS", True)
+    actorpack.contents["title"] = "Actors\x1b[31m"
+    with pytest.raises(ValidationError, match="Field 'title' contains non-printable"):
+        actorpack.validate()
+
+
+def test_validate_actor_relations(actorpack, caplog):
+    a = actorpack.contents["actors"][0]
+    a["context"] = '{"same_as": ["other_pack_actor"], "related_actors": ["x"]}'
+    actorpack.validate()
+    assert "refers to actors not in this pack" in caplog.text
+    assert actorpack.actors[0].same_as == ["other_pack_actor"]
+
+
+@pytest.mark.parametrize(
+    "context,match",
+    [
+        ('{"same_as": ["0xnodes"]}', "lists itself"),
+        ('{"same_as": ["x"], "related_actors": ["x"]}', "in both"),
+    ],
+)
+def test_validate_actor_relations_errors(actorpack, context, match):
+    actorpack.contents["actors"][0]["context"] = context
+    with pytest.raises(ValidationError, match=match):
+        actorpack.validate()
+
+
+def test_validate_sub_service_of(actorpack, caplog):
+    actorpack.contents["actors"][0]["context"] = '{"sub_service_of": "parent"}'
+    actorpack.validate()
+    assert actorpack.actors[0].sub_service_of == "parent"
+    assert "refers to actors not in this pack: ['parent']" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "context,match",
+    [
+        ('{"sub_service_of": "0xnodes"}', "sub_service_of itself"),
+        ('{"sub_service_of": ["a", "b"]}', "sub_service_of must be of type text"),
+    ],
+)
+def test_validate_sub_service_of_errors(actorpack, context, match):
+    actorpack.contents["actors"][0]["context"] = context
+    with pytest.raises(ValidationError, match=match):
+        actorpack.validate()
+
+
+def test_validate_nested_in(actorpack, caplog):
+    actorpack.contents["actors"][0]["context"] = '{"nested_in": ["host_a", "host_b"]}'
+    actorpack.validate()
+    assert actorpack.actors[0].nested_in == ["host_a", "host_b"]
+    assert "refers to actors not in this pack: ['host_a', 'host_b']" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "context,match",
+    [
+        ('{"nested_in": ["0xnodes"]}', "nested_in itself"),
+        ('{"sub_service_of": "x", "nested_in": ["x"]}', "both sub_service_of and"),
+        ('{"nested_in": "host"}', "nested_in must be of type list"),
+    ],
+)
+def test_validate_nested_in_errors(actorpack, context, match):
+    actorpack.contents["actors"][0]["context"] = context
+    with pytest.raises(ValidationError, match=match):
+        actorpack.validate()
+
+
+def test_merge_hint_kept_for_nested_service(actorpack, caplog):
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xnodesclient",
+            "label": "0x nodes client",
+            "uri": "https://www.0xnodes.io/client",
+            "context": '{"nested_in": ["0xnodes"]}',
+        }
+    )
+    actorpack.validate()
+    assert "share the same domain" in caplog.text
+
+
+def test_validate_sub_service_of_cycle(actorpack):
+    actorpack.contents["actors"][0]["context"] = '{"sub_service_of": "0xchild"}'
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xchild",
+            "label": "0x child",
+            "uri": "https://child.example.com",
+            "context": '{"sub_service_of": "0xnodes"}',
+        }
+    )
+    with pytest.raises(ValidationError, match="cycle"):
+        actorpack.validate()
+
+
+def test_no_merge_hint_for_sub_service(actorpack, caplog):
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xnodespool",
+            "label": "0x nodes pool",
+            "uri": "https://www.0xnodes.io/pool",
+            "context": '{"sub_service_of": "0xnodes"}',
+        }
+    )
+    actorpack.validate()
+    assert "share the same domain" not in caplog.text
+
+
+def test_no_merge_hint_for_actors_declared_same_as(actorpack, caplog):
+    first = actorpack.contents["actors"][0]
+    actorpack.contents["actors"].append(
+        {
+            "id": "0xnodesold",
+            "label": "0x nodes (old)",
+            "uri": "https://www.0xnodes.io/old",
+            "context": '{"same_as": ["0xnodes"]}',
+        }
+    )
+    actorpack.validate()
+    assert "share the same domain" not in caplog.text
+
+    # without the declaration the shared domain is still reported
+    caplog.clear()
+    actorpack.contents["actors"][1]["context"] = "{}"
+    actorpack.validate()
+    assert "share the same domain 0xnodes.io" in caplog.text
+    assert first["id"] == "0xnodes"

@@ -95,7 +95,27 @@ _TX_KNOWN_KEYS = frozenset(
         "vout",
         # ZCash shielded I/O
         "vjoinsplit",
-        "valueBalance",
+        # Sapling's value balance. Both this and the "valueBalance" float
+        # beside it are Option fields in Zebra's RPC types, but every node
+        # emits the pair from a single construction site, so they are always
+        # present or absent together — the integer is therefore no less
+        # available than the float, and avoids the lossy float round-trip.
+        "valueBalanceZat",
+        # Sapling spend and output descriptions. Only their emptiness is read:
+        # a transaction that has any must also carry valueBalanceZat (see
+        # _value_balance_zat). The descriptions themselves are not parsed.
+        "vShieldedSpend",
+        "vShieldedOutput",
+        # NU5 Orchard and NU6.3 Ironwood bundles. Optional: validate_rpc_fields
+        # works by set difference, so a known key that is absent never raises.
+        # Zebra emits "orchard" on every transaction, including pre-NU5 v1-v4
+        # ones where it is present but empty, and "ironwood" only when the
+        # transaction carries one; zcashd instead gates "orchard" on
+        # nVersion >= ZIP225 (v5) and has no Ironwood field at all. Gating on
+        # transaction version would therefore be wrong for one node or the
+        # other, which is why both keys are optional rather than conditional.
+        "orchard",
+        "ironwood",
     }
 )
 
@@ -106,19 +126,17 @@ _TX_BLACKLIST = frozenset(
         "hex",  # raw transaction hex, not stored
         "fee",  # convenience field at verbosity 3, we compute it ourselves
         # ZCash extras we don't parse
-        "vShieldedSpend",
-        "vShieldedOutput",
         "bindingSig",
         "overwintered",
         "expiryheight",
-        "valueBalanceZat",
+        # Float ZEC rendering of the Sapling "valueBalanceZat" this parser
+        # reads; same lossy_zec helper as the bundle-level float.
+        "valueBalance",
         "authDigest",
         "authdigest",  # same as authDigest, lowercase in some ZEC block ranges
         "versiongroupid",  # ZEC Overwinter/Sapling version group ID
         "joinSplitPubKey",  # ZEC Sprout joinsplit public key
         "joinSplitSig",  # ZEC Sprout joinsplit signature
-        "orchard",  # ZEC NU5 Orchard bundle (actions, proof, etc.)
-        "ironwood",  # ZEC NU6.3 Ironwood bundle, same shape as orchard (v6 txs)
         # Zebra adds these per-transaction lookup fields that zcashd does not
         # emit inside getblock; none carry parser-relevant data.
         "blockhash",
@@ -184,6 +202,7 @@ _PREVOUT_BLACKLIST = frozenset(
 _VOUT_KNOWN_KEYS = frozenset(
     {
         "value",
+        "valueZat",  # ZEC: integer zatoshi value, preferred to value when present
         "n",
         "scriptPubKey",
     }
@@ -193,7 +212,6 @@ _VOUT_BLACKLIST = frozenset(
     {
         "ismweb",  # LTC: flags vout from MimbleWimble Extension Block
         "valueSat",  # ZEC: integer satoshi value, redundant with value
-        "valueZat",  # ZEC: integer zatoshi value, redundant with value
         "tokenData",  # BCH: CashTokens data (category, amount, nft)
     }
 )
@@ -221,8 +239,8 @@ _SCRIPT_PUB_KEY_BLACKLIST = frozenset(
 
 _JOINSPLIT_KNOWN_KEYS = frozenset(
     {
-        "vpub_old",
-        "vpub_new",
+        "vpub_oldZat",
+        "vpub_newZat",
     }
 )
 
@@ -236,12 +254,120 @@ _JOINSPLIT_BLACKLIST = frozenset(
         "randomSeed",
         "macs",
         "proof",
-        "vpub_oldZat",
-        "vpub_newZat",
+        # Float ZEC renderings of the "vpub_oldZat" and "vpub_newZat" this
+        # parser reads, as with the "valueBalance" floats.
+        "vpub_old",
+        "vpub_new",
         "anchor",  # Sprout anchor hash
         "ciphertexts",  # encrypted note ciphertexts
     }
 )
+
+# -- Orchard-shaped bundle (ZCash NU5 Orchard, NU6.3 Ironwood) ---------------
+#
+# Zebra types both pools as Option<Orchard> and serializes them through one
+# shared helper, so a single set of key sets covers both. validate_rpc_fields
+# does not recurse, so the bundle, its actions and its flags are each validated
+# explicitly at their own level.
+
+_ORCHARD_BUNDLE_KNOWN_KEYS = frozenset(
+    {
+        "valueBalanceZat",
+        "actions",
+        "flags",
+    }
+)
+
+_ORCHARD_BUNDLE_BLACKLIST = frozenset(
+    {
+        # Float ZEC rendering of valueBalanceZat. Zebra produces it with a
+        # helper named lossy_zec, documented as unfit for consensus-critical
+        # use, so the integer field is the one this parser reads.
+        "valueBalance",
+        "anchor",  # Orchard note commitment tree anchor
+        "proof",  # Halo 2 proof
+        "bindingSig",  # bundle binding signature
+    }
+)
+
+# The parser reads no field of an individual action; they are enumerated only
+# so that a new one fails loudly rather than being silently dropped.
+_ORCHARD_ACTION_KNOWN_KEYS = frozenset()
+
+_ORCHARD_ACTION_BLACKLIST = frozenset(
+    {
+        "cv",
+        "nullifier",
+        "rk",
+        "cmx",
+        "ephemeralKey",
+        "encCiphertext",
+        "outCiphertext",
+        "spendAuthSig",
+    }
+)
+
+_ORCHARD_FLAGS_KNOWN_KEYS = frozenset()
+
+_ORCHARD_FLAGS_BLACKLIST = frozenset(
+    {
+        "enableSpends",
+        "enableOutputs",
+        # ZIP-229 defines a third flag bit, set on Ironwood-pool actions. It is
+        # already carried in Zebra's consensus types but its RPC flags struct
+        # exposes only the two above, so no node emits it today. Listed in
+        # advance because a Zebra release that adds the serde field would
+        # otherwise break every Ironwood transaction at once.
+        "enableCrossAddress",
+    }
+)
+
+
+def _value_balance_zat(obj, context, content_keys):
+    """Return ``obj``'s integer ``valueBalanceZat``, or 0 for an empty bundle.
+
+    Every node emits the float ``valueBalance`` and ``valueBalanceZat``
+    together, and only the integer is read. A float without its integer would
+    otherwise pass validation (the float is blacklisted, and a missing known
+    key never raises) and turn a real shielded amount into 0, so that case
+    raises instead.
+
+    So does a bundle that is not empty but has no integer, whether the float
+    is absent or null. ``content_keys`` names the lists that make it non-empty:
+    the Sapling spends and outputs of a transaction, or the actions of an
+    Orchard or Ironwood bundle. Its balance is then unknown rather than 0.
+    Only an empty or absent bundle has no amount to lose, and reads as 0.
+    """
+    balance = obj.get("valueBalanceZat")
+    if balance is None:
+        if obj.get("valueBalance") is not None:
+            raise ValueError(
+                f"{context} has valueBalance but no valueBalanceZat; "
+                "refusing to drop the shielded amount."
+            )
+        content = [key for key in content_keys if obj.get(key)]
+        if content:
+            raise ValueError(
+                f"{context} has {' and '.join(content)} but no valueBalanceZat; "
+                "refusing to drop the shielded amount."
+            )
+    return balance or 0
+
+
+def _vpub_zat(joinsplit, key):
+    """Return a joinsplit's integer ``<key>Zat``, or 0 if it has none.
+
+    Same rule as ``_value_balance_zat``: only the integer is read, and a
+    joinsplit that carries the float ``<key>`` without it raises instead of
+    turning a Sprout amount into 0.
+    """
+    amount = joinsplit.get(f"{key}Zat")
+    if amount is None and key in joinsplit:
+        raise ValueError(
+            f"vjoinsplit has {key} but no {key}Zat; "
+            "refusing to drop the shielded amount."
+        )
+    return amount or 0
 
 
 def _btc_to_satoshi(value):
@@ -262,6 +388,19 @@ def _nonce_to_hex(nonce):
     if isinstance(nonce, str):
         return nonce
     return format(nonce, "x")
+
+
+def _tx_version_to_int32(version):
+    """Map a tx version to the signed int32 the raw schema stores.
+
+    Bitcoin Core >= 28.0 reports the version as uint32 (bitcoin/bitcoin#29325);
+    older nodes, and every keyspace ingested from them, carry it as int32. A
+    version >= 2**31 (e.g. the two txs in BTC block 256818) therefore wraps to
+    the negative value an older node would have returned.
+    """
+    if version is None or version < 2**31:
+        return version
+    return version - 2**32
 
 
 def _script_hex_to_non_standard_address(script_hex):
@@ -438,6 +577,16 @@ def _parse_output(vout_entry, network="btc"):
             output_type = "nonstandard"
             addresses = [_script_hex_to_non_standard_address(script_hex)]
 
+    # No node omits "value" on an output that passes the validation above. One
+    # without it would not fail there either (a missing known key never
+    # raises) and would then be skipped by the None-tolerant sums, so it
+    # raises instead. A value of 0 is valid.
+    value = vout_entry.get("value")
+    if value is None:
+        raise ValueError("vout has no value; refusing to drop the output amount.")
+    # ZEC nodes also give the amount as an integer, which avoids the float.
+    value_zat = vout_entry.get("valueZat") if network == "zec" else None
+
     return {
         "index": vout_entry.get("n"),
         "script_asm": script_pub_key.get("asm"),
@@ -445,7 +594,7 @@ def _parse_output(vout_entry, network="btc"):
         "required_signatures": required_signatures,
         "type": output_type,
         "addresses": addresses,
-        "value": _btc_to_satoshi(vout_entry.get("value")),
+        "value": value_zat if value_zat is not None else _btc_to_satoshi(value),
     }
 
 
@@ -519,6 +668,8 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
         # vpub_old = value from transparent → shielded (consumed) = OUTPUT
         # vpub_new = value from shielded → transparent (produced) = INPUT
         # Same convention as Sapling valueBalance: z→t = input, t→z = output
+        # Both are read from the integer vpub_oldZat/vpub_newZat, already in
+        # zatoshi like the value balances below.
         vjoinsplit = raw_tx.get("vjoinsplit")
         if vjoinsplit:
             for js in vjoinsplit:
@@ -528,21 +679,62 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                     _JOINSPLIT_BLACKLIST,
                     "vjoinsplit",
                 )
-                vpub_old = _btc_to_satoshi(js.get("vpub_old")) or 0
-                vpub_new = _btc_to_satoshi(js.get("vpub_new")) or 0
+                vpub_old = _vpub_zat(js, "vpub_old")
+                vpub_new = _vpub_zat(js, "vpub_new")
                 if vpub_new > 0:
                     inputs.append(_make_shielded_input(len(inputs), vpub_new))
                 if vpub_old > 0:
                     outputs.append(_make_shielded_output(len(outputs), vpub_old))
 
-        # ZCash: Sapling value balance
-        value_balance = raw_tx.get("valueBalance")
-        if value_balance is not None and value_balance != 0:
-            value_balance_sat = _btc_to_satoshi(value_balance)
-            if value_balance_sat > 0:
-                inputs.append(_make_shielded_input(len(inputs), value_balance_sat))
-            elif value_balance_sat < 0:
-                outputs.append(_make_shielded_output(len(outputs), -value_balance_sat))
+        # ZCash: Sapling value balance, already in zatoshi like the bundles below.
+        sapling_value_balance = _value_balance_zat(
+            raw_tx, "transaction", ("vShieldedSpend", "vShieldedOutput")
+        )
+        if sapling_value_balance > 0:
+            inputs.append(_make_shielded_input(len(inputs), sapling_value_balance))
+        elif sapling_value_balance < 0:
+            outputs.append(_make_shielded_output(len(outputs), -sapling_value_balance))
+
+        # ZCash: Orchard (NU5) and Ironwood (NU6.3) bundle value balances.
+        # Same convention as Sapling — positive means value left the pool — but
+        # read from the bundle's integer valueBalanceZat, which is already in
+        # zatoshi and must not be passed through _btc_to_satoshi. The float
+        # sibling is deliberately not read; see _ORCHARD_BUNDLE_BLACKLIST.
+        pool_value_balance = {}
+        for pool in ("orchard", "ironwood"):
+            bundle = raw_tx.get(pool)
+            if bundle is None:
+                pool_value_balance[pool] = 0
+                continue
+            validate_rpc_fields(
+                bundle.keys(),
+                _ORCHARD_BUNDLE_KNOWN_KEYS,
+                _ORCHARD_BUNDLE_BLACKLIST,
+                f"{pool} bundle",
+            )
+            for action in bundle.get("actions") or []:
+                validate_rpc_fields(
+                    action.keys(),
+                    _ORCHARD_ACTION_KNOWN_KEYS,
+                    _ORCHARD_ACTION_BLACKLIST,
+                    f"{pool} action",
+                )
+            # anchor/proof/bindingSig/flags are emitted only alongside a
+            # non-empty actions list, so an empty bundle has no flags to check.
+            flags = bundle.get("flags")
+            if flags is not None:
+                validate_rpc_fields(
+                    flags.keys(),
+                    _ORCHARD_FLAGS_KNOWN_KEYS,
+                    _ORCHARD_FLAGS_BLACKLIST,
+                    f"{pool} flags",
+                )
+            balance = _value_balance_zat(bundle, f"{pool} bundle", ("actions",))
+            pool_value_balance[pool] = balance
+            if balance > 0:
+                inputs.append(_make_shielded_input(len(inputs), balance))
+            elif balance < 0:
+                outputs.append(_make_shielded_output(len(outputs), -balance))
 
         # Calculate values AFTER adding shielded I/O so totals include
         # both transparent and shielded amounts (matching bitcoin-etl).
@@ -560,7 +752,7 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                 "hash": raw_tx.get("txid"),
                 "size": raw_tx.get("size"),
                 "virtual_size": raw_tx.get("vsize"),
-                "version": raw_tx.get("version"),
+                "version": _tx_version_to_int32(raw_tx.get("version")),
                 "lock_time": raw_tx.get("locktime"),
                 "block_number": block_number,
                 "block_hash": block_hash,
@@ -574,6 +766,14 @@ def _parse_btc_block_and_txs(raw_block, network="btc"):
                 "input_value": input_value,
                 "output_value": output_value,
                 "fee": fee,
+                # Per-pool shielded balances in zatoshi, positive when value
+                # left the pool. Every shielded input/output is address-less
+                # and indistinguishable once emitted, and the bundle itself is
+                # not stored, so without these the pool behind a shielded row
+                # can only be recovered by re-reading the node.
+                "sapling_value_balance": sapling_value_balance,
+                "orchard_value_balance": pool_value_balance["orchard"],
+                "ironwood_value_balance": pool_value_balance["ironwood"],
             }
         )
 

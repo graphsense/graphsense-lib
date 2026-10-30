@@ -187,6 +187,45 @@ def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
     ]
 
 
+def _create_app_logs(monkeypatch, caplog, slack_topics_env):
+    monkeypatch.setenv("GRAPHSENSE_SLACK_TOPICS", slack_topics_env)
+    monkeypatch.setattr("graphsenselib.web.app.setup_logging", lambda *args: None)
+    cfg = GSRestConfig.from_dict({"database": {"nodes": ["localhost"]}})
+
+    with caplog.at_level("INFO", logger="graphsenselib.web.app"):
+        create_app(config=cfg)
+
+    return [r.getMessage() for r in caplog.records]
+
+
+def test_create_app_logs_slack_notification_status(monkeypatch, caplog):
+    messages = _create_app_logs(
+        monkeypatch, caplog, '{"info": {"hooks": ["https://hooks.slack.com/x"]}}'
+    )
+
+    assert any(
+        m.startswith("Slack user-reported tag notifications enabled (hooks=1")
+        for m in messages
+    )
+    assert any(
+        m.startswith("Slack exception notifications disabled (no 'exceptions'")
+        for m in messages
+    )
+
+
+def test_create_app_warns_about_malformed_slack_topics_env(monkeypatch, caplog):
+    # used to be dropped silently, leaving every Slack notification off
+    messages = _create_app_logs(monkeypatch, caplog, "{not json")
+
+    assert any(
+        m.startswith("Ignoring invalid gslib config setting: GRAPHSENSE_SLACK_TOPICS")
+        for m in messages
+    )
+    assert any(
+        m.startswith("Slack user-reported tag notifications disabled") for m in messages
+    )
+
+
 def test_report_tag_does_not_expose_internal_username_header_in_openapi():
     app = create_spec_app()
     with TestClient(app) as client:
@@ -231,23 +270,23 @@ def test_openapi_examples_are_normalized_for_generated_client_snippets():
     assert address_neighbors_parameters["only_ids"].get("example") == "1,2,3"
     assert address_neighbors_parameters["page"].get("example") is None
 
-    entity_neighbors_operation = spec["paths"][
-        "/{currency}/entities/{entity}/neighbors"
+    cluster_neighbors_operation = spec["paths"][
+        "/{currency}/clusters/{cluster}/neighbors"
     ]["get"]
-    entity_neighbors_parameters = {
-        p["name"]: p for p in entity_neighbors_operation.get("parameters", [])
+    cluster_neighbors_parameters = {
+        p["name"]: p for p in cluster_neighbors_operation.get("parameters", [])
     }
 
-    assert entity_neighbors_parameters["only_ids"].get("example") is None
-    assert entity_neighbors_parameters["page"].get("example") is None
+    assert cluster_neighbors_parameters["only_ids"].get("example") is None
+    assert cluster_neighbors_parameters["page"].get("example") is None
 
-    entity_txs_operation = spec["paths"]["/{currency}/entities/{entity}/txs"]["get"]
-    entity_txs_parameters = {
-        p["name"]: p for p in entity_txs_operation.get("parameters", [])
+    cluster_txs_operation = spec["paths"]["/{currency}/clusters/{cluster}/txs"]["get"]
+    cluster_txs_parameters = {
+        p["name"]: p for p in cluster_txs_operation.get("parameters", [])
     }
 
-    assert entity_txs_parameters["min_date"].get("example") is None
-    assert entity_txs_parameters["max_date"].get("example") is None
+    assert cluster_txs_parameters["min_date"].get("example") is None
+    assert cluster_txs_parameters["max_date"].get("example") is None
 
     tx_operation = spec["paths"]["/{currency}/txs/{tx_hash}"]["get"]
     tx_parameters = {p["name"]: p for p in tx_operation.get("parameters", [])}

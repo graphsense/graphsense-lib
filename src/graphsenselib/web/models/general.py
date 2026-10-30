@@ -2,6 +2,8 @@
 
 from typing import Literal, Optional
 
+from pydantic import Field
+
 from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.values import RATE_EXAMPLE, Rate
@@ -41,6 +43,105 @@ class CurrencyStats(APIModel):
     no_tagged_addresses: int
     timestamp: int
     network_type: str
+
+
+NETWORK_CAPABILITIES_EXAMPLE = {
+    "network": "eth",
+    "disabled": [],
+}
+
+
+class NetworkCapabilities(APIModel):
+    """Feature availability of one network in this deployment."""
+
+    model_config = api_model_config(NETWORK_CAPABILITIES_EXAMPLE)
+
+    network: str
+    disabled: list[str] = Field(
+        description="Feature families NOT served for this network, from the "
+        'vocabulary "relations" (neighbors/links counterparty enumeration), '
+        '"clusters" (address clustering), "tags" (TagStore data), '
+        '"conversions" (DEX-swap/bridge resolution on txs), "exact_stats" '
+        "(the per-currency /stats numbers are placeholders, not "
+        "pipeline-exact). Routes of a disabled family answer 501. Unknown "
+        "flags must be ignored (forward-extensible). Core route families "
+        "(address/tx/block detail, search, rates) are never listed here — "
+        "they work on every served network."
+    )
+
+
+SERVICE_INFO_EXAMPLE = {
+    "name": "notifications",
+    "available": True,
+    "version": "26.10.0rc1",
+    "api": 1,
+    "beta": True,
+    "limits": {"instant_mail_interval_minutes": 5, "subscriptions_per_user": 100},
+    "networks": ["btc", "eth"],
+}
+
+
+class ServiceInfo(APIModel):
+    """An optional service of this deployment behind this API."""
+
+    model_config = api_model_config(SERVICE_INFO_EXAMPLE)
+
+    name: str = Field(
+        description='The feature it serves, e.g. "notifications" for the '
+        "/notifications/* routes."
+    )
+    available: bool = Field(
+        description="Whether the service answered just now. False: it is "
+        "enabled but unreachable; its routes answer 502 until it is back."
+    )
+    version: Optional[str] = Field(
+        default=None, description="The service's release, when it answered."
+    )
+    api: Optional[int] = Field(
+        default=None,
+        description="Contract version of its routes; rises only on a breaking change.",
+    )
+    beta: bool = Field(default=False, description="Its routes may still change.")
+    limits: Optional[dict[str, int]] = Field(
+        default=None,
+        description="Configured limits a client can show, by name, as the "
+        "service reports them, e.g. instant_mail_interval_minutes (at most one "
+        "instant email per user in that time) or subscriptions_per_user. "
+        "Unknown names must be ignored.",
+    )
+    networks: Optional[list[str]] = Field(
+        default=None,
+        description="Networks the service can watch (lowercase), as it reports "
+        "them; gated ones included, access is checked per user. Clients offer "
+        "only these.",
+    )
+
+
+class Capabilities(APIModel):
+    """Per-network feature availability and the optional services of this
+    deployment."""
+
+    model_config = api_model_config(
+        {
+            "networks": [
+                NETWORK_CAPABILITIES_EXAMPLE,
+                {"network": "arb", "disabled": ["relations", "clusters"]},
+            ],
+            "services": [SERVICE_INFO_EXAMPLE],
+        }
+    )
+
+    networks: list[NetworkCapabilities] = Field(
+        description="One entry per served network. A network ABSENT from the "
+        "list is fully enabled; so is every network of a deployment old "
+        "enough to 404 this endpoint."
+    )
+    services: list[ServiceInfo] = Field(
+        default_factory=list,
+        description="Optional services enabled in this deployment, e.g. "
+        "address notifications. A service ABSENT from the list is not "
+        "offered. Unknown names must be ignored (forward-extensible).",
+    )
 
 
 class Stats(APIModel):

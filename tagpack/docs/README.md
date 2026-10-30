@@ -1,17 +1,17 @@
 # GraphSense TagPack Management Tool
 
-[![Test and Build Status](https://github.com/graphsense/graphsense-tagpack-tool/actions/workflows/test_and_build.yaml/badge.svg)](https://github.com/graphsense/graphsense-tagpack-tool/actions) [![PyPI version](https://badge.fury.io/py/tagpack-tool.svg)](https://badge.fury.io/py/graphsense-lib) [![Python](https://img.shields.io/pypi/pyversions/tagpack-tool)](https://pypi.org/project/tagpack-tool/) [![Downloads](https://static.pepy.tech/badge/tagpack-tool)](https://pepy.tech/project/tagpack-tool)
+[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions) [![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib) [![Python](https://img.shields.io/pypi/pyversions/graphsense-lib)](https://pypi.org/project/graphsense-lib/) [![Downloads](https://static.pepy.tech/badge/graphsense-lib)](https://pepy.tech/project/graphsense-lib)
 
-This repository provides a command line tool for managing [GraphSense TagPacks](https://github.com/graphsense/graphsense-tagpacks/wiki/GraphSense-TagPacks). It can be used for
+`graphsense-cli tagpack-tool`, part of [graphsense-lib](https://github.com/graphsense/graphsense-lib), manages [GraphSense TagPacks](https://github.com/graphsense/graphsense-tagpacks/wiki/GraphSense-TagPacks). It can be used for
 
 1. [validating TagPacks against the TagPack schema](#validation)
 2. [finding suitable actors for tags](#actors-for-tags-and-tagpacks)
 3. [validating ActorPacks against the ActorPack schema](#actorpack_validation)
 4. [handling taxonomies and concepts](#taxonomies)
 5. [ingesting TagPacks and related data into a TagStore](#tagstore)
-6. [calculating the quality of the tags in the TagStore](#quality)
+6. [checking the quality of the tags in the TagStore](#quality)
 
-Please note that the last feature requires (installation of) a [Postgresql](https://www.postgresql.org/) database.
+Suggesting actors and the last two features require a [PostgreSQL](https://www.postgresql.org/) database with a TagStore.
 
 # Quickstart
 
@@ -24,10 +24,10 @@ Check out the options as described [below](#prerequisites-tagstore---postgresql-
 
 Create a file containing the repositories you want to manage, one repository per line (commenting out lines is possible):
 
-    git@github.com:graphsense/graphsense-tagpacks.git develop public
+    git@github.com:graphsense/graphsense-tagpacks.git master public
     # git@github.com:mycompany/graphsense-tagpacks-special.git master
 
-If you want to import a certain branch add the branch name separated by a white-space as shown above. To indicate that the repository should be imported to seen by everybody then add the keyword after the branch specification. If no branch or public keyword is specified the default branch is used and the tags are treated as private.
+To import a certain branch, add the branch name separated by a space as shown above. To make the repository's tags visible to everybody, add the keyword `public` after the branch. Without a branch the default branch is used; without `public` the tags are private.
 
 Then run
 
@@ -35,7 +35,7 @@ Then run
 
 to populate the TagStore with Actors and TagPacks.
 
-Re-run the command to add newly aundded tagpack files from the repositories.
+Re-run the command to add new or changed tagpack files from the repositories.
 
 Add the `--force` option to re-insert TagPacks.
 
@@ -55,12 +55,57 @@ TagPacks are validated against the [tagpack schema](../../src/graphsenselib/tagp
 
 Confidence settings are validated against a set of acceptable [confidence](../../src/graphsenselib/tagpack/db/confidence.csv) values.
 
+Validate many packs in parallel with `--jobs N` (`0` = one process per CPU).
+With more than one job every pack is validated and every failure reported; the
+default `1` stops at the first invalid pack. Each process holds one pack in
+memory, up to 1–2 GB for packs of several 100k tags, so prefer a small number
+on a laptop.
+
+    graphsense-cli tagpack-tool tagpack validate --jobs 4 packs/
+
+### How TagPack files are parsed <a name="yaml-parsers"></a>
+
+TagPack files are read with **rapidyaml** (fast) if it is installed, for
+`validate` as for `insert`/`sync`. Only packs with an `!include` and runs with
+`--use-pyyaml` use **PyYAML**. Both give the same result: rapidyaml only
+parses, and every unquoted value is then interpreted with PyYAML's YAML 1.1
+rules, so `yes`/`no`, `~`, `.inf`, `2025-03-24` and so on mean the same in
+both. Quoted values and block scalars (`|`, `>`) are always text. Files with
+other YAML tags, merge keys (`<<`) or several documents, and files rapidyaml
+cannot parse, are handed to PyYAML.
+
+One rule differs from plain YAML 1.1, in both loaders: an unquoted `0x…` stays
+text (an address or hash), where YAML 1.1 would read a hexadecimal number.
+
+Still, quote every string that is not plain text (addresses, hashes, labels
+that look like numbers): an unquoted `1_000`, `012` or `1.5` is a number,
+as in any YAML 1.1 reader. Compare a pack with `validate` and `validate --use-pyyaml`.
+
+**Older graphsense-lib versions** read files differently: PyYAML for every
+pack in a directory tree with a `header.yaml`, rapidyaml (through JSON) for
+all others, and that rapidyaml path differed from PyYAML for some unquoted
+values. Tags inserted by those versions from packs without a `header.yaml`
+may carry these readings:
+
+| In the file (unquoted) | PyYAML | old rapidyaml path |
+| --- | --- | --- |
+| `12E34` or `12e345678` (digits with an `e`, no dot) | text | a number, or `inf` |
+| `inf`, `nan` / `.inf`, `.nan` | text / float | text `".inf"`, `".nan"` |
+| `yes`, `no`, `on`, `off` | `True` / `False` | text |
+| `012`, `1_000` | the numbers 10, 1000 | text |
+| `0x1A` | the number 26 (now text in both) | text |
+| `~` | `None` | text `"~"` |
+| an alias `*id001` | the anchored value | the text `"*id001"` |
+| `'2025-03-24'` (a quoted date) | text | a date |
+
 ## Actors for tags and TagPacks
 
-[Actors](https://github.com/graphsense/graphsense-tagpacks/wiki/Graphsense-Actors) are defined in a curated actor tagpack.
+[Actors](https://github.com/graphsense/graphsense-tagpacks/wiki/Graphsense-Actors) are defined in a curated ActorPack, [`actors/graphsense.actorpack.yaml`](https://github.com/graphsense/graphsense-tagpacks/blob/master/actors/graphsense.actorpack.yaml) in graphsense-tagpacks.
 
 It is highly encouraged to add suitable actors to TagPacks whenever possible,
-and the tagpack-tool offers support for doing so.
+and the tagpack-tool offers support for doing so. Both commands below look up
+the actors in a TagStore (`-u`/`--url` or the `POSTGRES_*` variables, see
+[below](#export-env-variables)).
 
 ### List suitable actors for a tag
 
@@ -92,9 +137,9 @@ File by file, for each label, the tagpack-tool will suggest suitable actors if a
 
 The ``--max`` option is available again to limit the number of candidate suggestions:
 
-    graphsense-cli tagpack-tool tagpack add_actors --max 1 path/to/tagpacks
+    graphsense-cli tagpack-tool tagpack add-actors --max 1 path/to/tagpacks
 
-If any actors have been selected, an updated TagPack is written that contains the users' selected actors:
+If any actors have been selected, an updated TagPack is written next to the original, with the selected actors (`--inplace` overwrites the original instead):
 
     Writing updated Tagpack defi-protocols_instadapp_with_actors.yaml
 
@@ -103,15 +148,120 @@ If any actors have been selected, an updated TagPack is written that contains th
 
 Validate a single ActorPack file
 
-    graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/ex_actorpack.yaml
+    graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/ex.actorpack.yaml
 
-Recursively validate all TagPacks in (a) given folder(s).
+Recursively validate all ActorPacks in (a) given folder(s).
 
     graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/
 
 Actorpacks are validated against the [actorpack schema](../../src/graphsenselib/tagpack/conf/actorpack_schema.yaml).
 
 Values in the field jurisdictions are validated against a set of [country codes](../../src/graphsenselib/tagpack/db/countries.csv).
+
+### Aliases
+
+`aliases` lists other ids or spellings under which **this same actor
+entry** appears in tagpacks, e.g. after a rename or for common variants:
+
+```yaml
+- id: woonetwork
+  label: Woo Network
+  aliases:
+  - woofi
+  - woox
+  ...
+```
+
+When a tagpack is inserted, a tag whose `actor` is an alias is stored with
+the actor's id (`woofi` → `woonetwork`), so all its tags end up on one
+actor. `aliases` can be written at actor level (as above) or inside
+`context`; both are read. An alias must not be the id of another actor:
+validation rejects that ("Collision detected: Actor ids and aliases share
+…").
+
+### Relations between actors
+
+Four optional `context` fields record that two actor entries may tag the
+same addresses without that being a conflict. Unlike aliases, both entries
+stay separate actors with their own tags:
+
+- `same_as`: the other actor is the same organisation, e.g. after a rebrand
+  or for a duplicate entry. Use it instead of deleting the old entry: tags
+  still refer to it by id.
+- `sub_service_of`: this actor is a product or division of another one, i.e.
+  the same organisation, e.g. an exchange's mining pool. Takes one actor id.
+- `nested_in`: this actor is a separate organisation that runs on the
+  addresses or accounts of the listed ones, e.g. an exchange that keeps its
+  funds with a custodian, or a service that operates through accounts at an
+  exchange. Takes a list.
+- `related_actors`: the other actor is a different organisation that
+  legitimately appears on the same addresses for another reason, e.g. the
+  custodian of a wrapped token and the token.
+
+```yaml
+- id: oldname
+  label: Old Name
+  ...
+  context:
+    same_as:
+    - newname         # rebranded
+- id: exchangepool
+  label: Exchange Pool
+  ...
+  context:
+    sub_service_of: exchange   # the exchange's own mining pool
+- id: smallexchange
+  label: Small Exchange
+  ...
+  context:
+    nested_in:
+    - custodian       # keeps its funds with this custodian
+    notes:
+    - 'nested_in custodian: deposits swept into the custodian''s wallets'
+- id: wrappedtoken
+  label: Wrapped Token
+  ...
+  context:
+    related_actors:
+    - custodian       # holds the token's reserves
+```
+
+Relations must name **actor ids, not aliases**: tags are stored with the
+resolved actor id, so a relation to an alias never matches a tag.
+
+Declaring a pair on one of the two actors is enough; `sub_service_of` and
+`nested_in` go on the product or the nested service. Validation rejects an
+actor that lists itself, lists the same actor in both `same_as` and
+`related_actors` or in both `sub_service_of` and `nested_in`, gives
+`sub_service_of` more than one id, or makes `sub_service_of` go round in a
+cycle; it warns about ids that are not in the same actorpack (they may be
+defined in another one). Actors declared `same_as` or `sub_service_of` get no
+"consider merging" warning for a shared domain or handle; `nested_in` ones
+do, since they are different organisations.
+
+`graphsense-cli tagpack-tool quality actor-conflicts` does not report pairs
+declared in any of the four fields. `quality ranking-conflicts` accepts a tag
+summary that shows the same organisation (`same_as`, `sub_service_of`) or a
+service nested in it instead of the address's exchange tag; a summary that
+shows the host and hides the nested service is still reported. None of the
+fields changes the tag summary itself.
+
+Like all context fields, they are only read by tools that know them: older
+graphsense-lib versions ignore them, so adding them to an actorpack does not
+break validation or insertion anywhere.
+
+### Which one to use
+
+| Situation | Use |
+|---|---|
+| Same entry, other spelling or old id; tags should merge onto one actor | `aliases` on the actor that stays |
+| Rebrand or duplicate where both entries are kept (each has tags, history) | `same_as` |
+| A product or division of the same company (mining pool, wallet product) | `sub_service_of` on the product |
+| A separate company running on another's addresses or accounts (exchange at a custodian, service using exchange accounts) | `nested_in` on that company |
+| Separate companies legitimately on the same addresses for another reason (token and its custodian) | `related_actors` |
+
+Record the evidence for a relation next to it, e.g. in `context.notes` and
+`context.refs`.
 
 ## View available taxonomies and concepts <a name="taxonomies"></a>
 
@@ -175,6 +325,7 @@ Or just export each variable using:
     export POSTGRES_PASSWORD=VALUE
     export POSTGRES_HOST=VALUE
     export POSTGRES_DB=VALUE
+    export POSTGRES_PORT=VALUE   # optional, default 5432
 
     GS_TAGSTORE_DB_URL=value # For the newer tagstore cli
 
@@ -190,7 +341,7 @@ If a config.yaml already exists, it will not be replaced.
 
 Show the contents of the config file:
 
-   graphsense-cli tagpack-tool config -v
+    graphsense-cli tagpack-tool config -v
 
 To use a specific config file pass the file's location:
 
@@ -198,20 +349,21 @@ To use a specific config file pass the file's location:
 
 ### Initialize the tagstore database
 
-To initialize the database with all the taxonomies needed for ingesting the tagpacks, use:
+Create the tables and views with `graphsense-cli tagstore init` (see
+[above](#option-1-start-a-dockerized-postgresql-database)). It reads the
+database URL from `GS_TAGSTORE_DB_URL` or `--db-url`:
 
-    graphsense-cli tagpack-tool tagstore init
+    graphsense-cli tagstore init --db-url "postgresql://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@localhost:5432/tagstore"
 
-set the db to connect to via the environment variable
-
-    GS_TAGSTORE_DB_URL='postgresql://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@localhost:5432/tagstore'
+The older `graphsense-cli tagpack-tool tagstore init` is retired and only
+points to this command.
 
 ### Ingest taxonomies and confidence scores
 To insert all configured taxonomies at once, simply omit taxonomy name
 
     graphsense-cli tagpack-tool taxonomy insert
 
-Not tagpack-tool sync inserts taxonomies automatically
+Note: `tagpack-tool sync` inserts the taxonomies automatically.
 
 ### Ingest TagPacks
 
@@ -232,28 +384,28 @@ To force **re-insertion** (if tagpack file contents have been modified), add the
 
     graphsense-cli tagpack-tool tagpack insert --force tests/testfiles/
 
-To ingest **new** tagpacks and **skip** over already ingested tagpacks, add the `--add_new` flag to  your arguments:
+To ingest **new** tagpacks and **skip** over already ingested tagpacks, add the `--add-new` flag to your arguments:
 
-    graphsense-cli tagpack-tool tagpack insert --add_new tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --add-new tests/testfiles/
 
 By default, trying to insert tagpacks from a repository with **local** modifications will **fail**.
-To force insertion despite local modifications, add the ``--no_strict_check`` command-line parameter
+To force insertion despite local modifications, add the ``--no-strict-check`` command-line parameter
 
-    graphsense-cli tagpack-tool tagpack insert --no_strict_check tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --no-strict-check tests/testfiles/
 
 By default, tagpacks in the TagStore provide a backlink to the original tagpack file in their remote git repository.
-To write local file paths instead, add the ``--no_git`` command-line parameter
+To write local file paths instead, add the ``--no-git`` command-line parameter
 
-    graphsense-cli tagpack-tool tagpack insert --no_git --add_new tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --no-git --add-new tests/testfiles/
 
 ### Ingest ActorPacks
 
 Insert a single ActorPack file or all ActorPacks from a given folder:
 
-    graphsense-cli tagpack-tool actorpack insert tests/testfiles/simple/ex_addr_actorpack.yaml
-    graphsense-cli tagpack-tool actorpack insert tests/testfiles/
+    graphsense-cli tagpack-tool actorpack insert tests/testfiles/actors/ex.actorpack.yaml
+    graphsense-cli tagpack-tool actorpack insert tests/testfiles/actors/
 
-You can use the parameters `--force`, `--add_new`, `--no_strict_check` and `--no_git` options in the same way as with the `tagpack` command.
+You can use the options `--force`, `--add-new`, `--no-strict-check` and `--no-git` in the same way as with the `tagpack` command.
 
 ### Align ingested attribution tags with GraphSense cluster Ids
 
@@ -331,7 +483,7 @@ to update all materialized views.
 Depending on the amount of tags contained in the tagstore, this may take a while.
 
 
-## Calculate the quality of the tags in the TagStore <a name="quality"></a>
+## Check the quality of the tags in the TagStore <a name="quality"></a>
 
 To assess on the quality of address tags we define a quality measure.
 For an address tag, it is calculated as the **weighted similarity distance** between all pairs of distinct tags assigned to the same address.
@@ -342,15 +494,30 @@ To calculate the quality measure for all the tags in the database, run:
 
     graphsense-cli tagpack-tool quality calculate
 
-To show the quality measures of all the tags in the database, or those of a specific crypto-currency, run:
+To show the quality measures of all the tags in the database, or those of a specific network, run:
 
-    graphsense-cli tagpack-tool quality show [--network [BCH|BTC|ETH|LTC|ZEC|...]]
+    graphsense-cli tagpack-tool quality [--network BTC] show
+
+Further read-only checks under `graphsense-cli tagpack-tool quality`:
+
+- `ranking-conflicts --network BTC`: exchange-tagged addresses whose tag
+  summary shows something other than their exchange tag, with a reason per
+  address, and clusters whose label goes against their own tags.
+- `actor-conflicts --network BTC`: addresses and clusters attributed to more
+  than one actor (pairs declared in the actorpack, see
+  [Relations between actors](#relations-between-actors), are skipped).
+- `list-bad-text`: garbled (mis-encoded) or non-printable text in tags and
+  actors, with the probably intended text.
+- `list-labels-without-actor`, `list-actors-without-jur`,
+  `list-addresses-with-actor-collisions`, `list-addresses-with-low-quality`.
+
+The checks write CSV or JSON (`--format`, `--out`); see `--help` of each.
 
 ## Show tagstore contents/contributions
 
 To list all tagpack creators and their contributions to a tagstore's content use:
 
-    graphsense-cli tagpack-tool tagstore show_composition
+    graphsense-cli tagpack-tool tagstore show-composition
 
 # For developers
 
@@ -367,7 +534,7 @@ Create and activate a python environment for required dependencies and activate 
 
 ### Linting and Formatting
 
-The code in this repos will be autoformated via black and linted via a pre-commit hook. To manually format and lint the code run:
+The code is formatted and linted with ruff in a pre-commit hook (`make dev` installs it). To format and lint manually run:
 
     make format && make pre-commit
 
@@ -378,13 +545,12 @@ The code in this repos will be autoformated via black and linted via a pre-commi
 
 ### Testing
 
-Run tests
+Run the fast subset (what the pre-commit hook runs) or the whole suite, which
+needs Docker for the database tests:
 
-    make test
+    make test-fast
+    make test-ci
 
-Check test coverage (optional)
-
-    make test
-    coverage report
+`make test` runs the whole suite with coverage.
 
 [docker]: https://www.docker.com

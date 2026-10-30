@@ -59,7 +59,7 @@ from graphsenselib.deltaupdate.update.account.modelsraw import (
 )
 from graphsenselib.deltaupdate.update.account import parallelio
 from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder
-from graphsenselib.deltaupdate.update.generic import Action, ApplicationStrategy, Tx
+from graphsenselib.deltaupdate.update.generic import Action, Tx
 from graphsenselib.deltaupdate.update.utxo.update import apply_changes
 from graphsenselib.schema.schema import GraphsenseSchemas
 from graphsenselib.utils import DataObject as MutableNamedTuple
@@ -70,7 +70,6 @@ from graphsenselib.utils.account import (
     get_tx_id,
 )
 from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
-from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
@@ -126,8 +125,6 @@ class UpdateStrategyAccount(UpdateStrategy):
         db,
         du_config: DeltaUpdaterConfig,
         pedantic: bool,
-        # BATCH is the only strategy process_batch_impl_hook implements.
-        application_strategy: ApplicationStrategy = ApplicationStrategy.BATCH,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
         parallel_pool=None,
@@ -136,11 +133,6 @@ class UpdateStrategyAccount(UpdateStrategy):
         super().__init__(db, du_config.currency, forward_fill_rates=forward_fill_rates)
         self._wal_enabled = wal_enabled
         self.du_config = du_config
-        crash_file = (
-            "/tmp/account_deltaupdate_"
-            f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
-            "_crashreport.err"
-        )
         stats_value = self._db.transformed.get_summary_statistics()
         """ Make statistics row mutable"""
         self._statistics = (
@@ -154,9 +146,6 @@ class UpdateStrategyAccount(UpdateStrategy):
         self.changes = None
         self.bookkeeping_changes = None
         self._parallel_pool = parallel_pool
-        self.application_strategy = application_strategy
-        logger.info(f"Updater running in {application_strategy} mode.")
-        self.crash_recoverer = CrashRecoverer(crash_file)
 
     def consume_transaction_id_composite(self, block_id, transaction_index):
         return get_tx_id(block_id, transaction_index)
@@ -164,35 +153,23 @@ class UpdateStrategyAccount(UpdateStrategy):
     def persist_updater_progress(self):
         if self.changes is not None:
             t_start = time.time()
-            atomic = ApplicationStrategy.TX == self.application_strategy
             bookkeeping = self.bookkeeping_changes or []
             # Stage the full resolved change set durably before applying any of
             # it; on a crash the next run replays this verbatim (never
             # recomputes) so read-modify-write aggregates are not double-counted.
             # No-op when the WAL is disabled.
             self._stage_wal(self.changes, bookkeeping)
-            if self._parallel_pool is not None and not atomic:
+            if self._parallel_pool is not None:
                 # Shard the data writes across the worker pool; only write
                 # the bookkeeping rows (summary statistics, delta history)
                 # after every data shard has been acked, so a torn batch can
                 # never look completed.
                 apply_changes(
-                    self._db,
-                    self.changes,
-                    self._pedantic,
-                    try_atomic_writes=False,
-                    pool=self._parallel_pool,
+                    self._db, self.changes, self._pedantic, pool=self._parallel_pool
                 )
-                apply_changes(
-                    self._db, bookkeeping, self._pedantic, try_atomic_writes=False
-                )
+                apply_changes(self._db, bookkeeping, self._pedantic)
             else:
-                apply_changes(
-                    self._db,
-                    self.changes + bookkeeping,
-                    self._pedantic,
-                    try_atomic_writes=atomic,
-                )
+                apply_changes(self._db, self.changes + bookkeeping, self._pedantic)
             if self._wal_enabled:
                 # Whole set acked -> discard the WAL (the commit point).
                 self.wal.clear()
@@ -287,23 +264,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             Read transaction and exchange rates data
         """
 
-        with LoggerScope.debug(logger, "Checking recovery state.") as lg:
-            if self.crash_recoverer.is_in_recovery_mode():
-                """
-                If we are in recovery mode we start with a block earlier to catch up
-                the delta otherwise would start with whats in the db +1
-                In case of an error in between blocks this would mean skipping to
-                the next block
-                """
-                mb = max(0, min(batch) - 1)
-                lg.warning(
-                    "Delta update is in crash recovery mode. Crash hint is "
-                    f"{self.crash_recoverer.get_recovery_hint()} in "
-                    f"{self.crash_recoverer.get_recovery_hint_filename()} "
-                    f" restarting at block {mb}."
-                )
-                batch = [mb] + batch
-
         with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
             missing_rates_in_block = False
             tableconnector = DeltaTableConnector(
@@ -344,114 +304,105 @@ class UpdateStrategyAccount(UpdateStrategy):
             if missing_rates_in_block:
                 log.warning("Block Range has missing exchange rates. Using Zero.")
 
-        if self.application_strategy == ApplicationStrategy.BATCH:
-            if self.crash_recoverer.is_in_recovery_mode():
-                raise Exception("Batch mode is not allowed in recovery mode.")
+        if self.currency == "trx":
+            trace_adapter = TrxTraceAdapter()
+            transaction_adapter = TrxTransactionAdapter()
 
-            if self.currency == "trx":
-                trace_adapter = TrxTraceAdapter()
-                transaction_adapter = TrxTransactionAdapter()
+            t_fetch_start = time.time()
+            fees = self.get_fee_data(tableconnector, batch)
+            self._timing_delta_lake += time.time() - t_fetch_start
+            # merge fees into transactions
+            # cast tx_hash of both to bytes so it can be hashed
+            assert fees.empty == transactions.empty
+            # to be 100% clean would have to add empty fee fields in the case where
+            # there are transactions but no fees
 
-                t_fetch_start = time.time()
-                fees = self.get_fee_data(tableconnector, batch)
-                self._timing_delta_lake += time.time() - t_fetch_start
-                # merge fees into transactions
-                # cast tx_hash of both to bytes so it can be hashed
-                assert fees.empty == transactions.empty
-                # to be 100% clean would have to add empty fee fields in the case where
-                # there are transactions but no fees
-
-                if not transactions.empty:
-                    transactions["tx_hash"] = transactions["tx_hash"].apply(
-                        lambda x: bytes(x)
-                    )
-                    fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
-                    # assuming no fees -> no transactions
-                    transactions = pd.merge(
-                        transactions,
-                        fees,
-                        on="tx_hash",
-                        how="left",
-                        suffixes=("", "_y"),
-                    )
-
-            elif self.currency == "eth":
-                trace_adapter = EthTraceAdapter()
-                transaction_adapter = AccountTransactionAdapter()
-
-            # preprocess
-            if not logs.empty:
-                logs["topics"] = logs["topics"].apply(
-                    lambda x: list(x) if x is not None else []
+            if not transactions.empty:
+                transactions["tx_hash"] = transactions["tx_hash"].apply(
+                    lambda x: bytes(x)
                 )
-            # replace np.nan with None
-            transactions.replace({pd.NA: None}, inplace=True)
-            traces.replace({pd.NA: None}, inplace=True)
+                fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
+                # assuming no fees -> no transactions
+                transactions = pd.merge(
+                    transactions,
+                    fees,
+                    on="tx_hash",
+                    how="left",
+                    suffixes=("", "_y"),
+                )
 
-            # i havent found out why in some cases pd.NA doesnt work
-            blocks[["base_fee_per_gas"]] = blocks[["base_fee_per_gas"]].replace(
-                {np.nan: None}
+        elif self.currency == "eth":
+            trace_adapter = EthTraceAdapter()
+            transaction_adapter = AccountTransactionAdapter()
+
+        # preprocess
+        if not logs.empty:
+            logs["topics"] = logs["topics"].apply(
+                lambda x: list(x) if x is not None else []
             )
-            logger.debug("Converting to dataclasses")
-            # convert dictionaries to dataclasses and unify naming
-            log_adapter = AccountLogAdapter()
-            block_adapter = AccountBlockAdapter()
-            traces = trace_adapter.df_to_renamed_dataclasses(traces)
-            traces = trace_adapter.process_fields_in_list(traces)
-            if self.currency == "eth":
-                # EIP-4895 validator withdrawals live on the lake's block
-                # table; credit them like pre-merge reward traces.
-                traces.extend(eth_withdrawal_traces_from_lake_blocks(blocks))
-            transactions = transaction_adapter.df_to_dataclasses(transactions)
+        # replace np.nan with None
+        transactions = transactions.replace({pd.NA: None})
+        traces = traces.replace({pd.NA: None})
 
-            logs = log_adapter.df_to_dataclasses(logs)
-            blocks = block_adapter.df_to_dataclasses(blocks)
-            blocks = block_adapter.process_fields_in_list(blocks)
-            logger.debug("Converting to dataclasses done")
+        # i havent found out why in some cases pd.NA doesnt work
+        blocks[["base_fee_per_gas"]] = blocks[["base_fee_per_gas"]].replace(
+            {np.nan: None}
+        )
+        logger.debug("Converting to dataclasses")
+        # convert dictionaries to dataclasses and unify naming
+        log_adapter = AccountLogAdapter()
+        block_adapter = AccountBlockAdapter()
+        traces = trace_adapter.df_to_renamed_dataclasses(traces)
+        traces = trace_adapter.process_fields_in_list(traces)
+        if self.currency == "eth":
+            # EIP-4895 validator withdrawals live on the lake's block
+            # table; credit them like pre-merge reward traces.
+            traces.extend(eth_withdrawal_traces_from_lake_blocks(blocks))
+        transactions = transaction_adapter.df_to_dataclasses(transactions)
 
-            changes = []
+        logs = log_adapter.df_to_dataclasses(logs)
+        blocks = block_adapter.df_to_dataclasses(blocks)
+        blocks = block_adapter.process_fields_in_list(blocks)
+        logger.debug("Converting to dataclasses done")
 
-            (tx_changes, nr_new_addresses, nr_new_address_relations) = self.get_changes(
-                transactions, traces, logs, blocks, rates
-            )
+        changes = []
 
-            changes.extend(tx_changes)
+        (tx_changes, nr_new_addresses, nr_new_address_relations) = self.get_changes(
+            transactions, traces, logs, blocks, rates
+        )
 
-            if self.currency == "trx":
-                nr_new_tx = len([tx for tx in transactions if tx.receipt_status == 1])
-            else:
-                nr_new_tx = len(transactions)
+        changes.extend(tx_changes)
 
-            runtime_seconds = int(time.time() - self.batch_start_time)
-
-            logger.debug("Getting bookkeeping changes")
-            bookkeeping_changes = get_bookkeeping_changes(
-                self._statistics,
-                self._db.transformed.get_summary_statistics(),
-                final_block,
-                nr_new_address_relations,
-                nr_new_addresses,
-                nr_new_tx,
-                self.highest_address_id,
-                runtime_seconds,
-                bts,
-                len(blocks),
-                patch_mode=self._patch_mode,
-            )
-            logger.debug("Bookkeeping changes done")
-
-            # Store changes to be written
-            # They are applied at the end of the batch in
-            # persist_updater_progress; bookkeeping is kept separate so the
-            # parallel persist can write it strictly after the data changes.
-            self.changes = changes
-            self.bookkeeping_changes = bookkeeping_changes
-            return Action.CONTINUE, final_block
-
+        if self.currency == "trx":
+            nr_new_tx = len([tx for tx in transactions if tx.receipt_status == 1])
         else:
-            raise ValueError(
-                f"Unknown application strategy {self.application_strategy}"
-            )
+            nr_new_tx = len(transactions)
+
+        runtime_seconds = int(time.time() - self.batch_start_time)
+
+        logger.debug("Getting bookkeeping changes")
+        bookkeeping_changes = get_bookkeeping_changes(
+            self._statistics,
+            self._db.transformed.get_summary_statistics(),
+            final_block,
+            nr_new_address_relations,
+            nr_new_addresses,
+            nr_new_tx,
+            self.highest_address_id,
+            runtime_seconds,
+            bts,
+            len(blocks),
+            patch_mode=self._patch_mode,
+        )
+        logger.debug("Bookkeeping changes done")
+
+        # Store changes to be written
+        # They are applied at the end of the batch in
+        # persist_updater_progress; bookkeeping is kept separate so the
+        # parallel persist can write it strictly after the data changes.
+        self.changes = changes
+        self.bookkeeping_changes = bookkeeping_changes
+        return Action.CONTINUE, final_block
 
     def _load_token_rates(self, supported_tokens, token_transfers):
         """Load per-block fiat rates for the unpegged tokens in this batch.

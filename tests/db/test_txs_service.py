@@ -1001,3 +1001,59 @@ class TestGetAssetFlowsWithinTxEth:
         identifiers = [t.identifier for t in result.txs]
         assert identifiers == ["base"]
         db.get_tx.assert_awaited_once()
+
+
+def make_raw_trx_trace(index, block_id=BLOCK_ID):
+    return {
+        "tx_hash": TX_HASH,
+        "block_id": block_id,
+        "trace_index": index,
+        "caller_address": b"\x41" + bytes([index % 255]) * 19,
+        "transferto_address": b"\x41" + b"\x02" * 19,
+        "call_value": 1000 + index,
+        "note": "transfer",
+    }
+
+
+class TestGetAssetFlowsWithinTxPagination:
+    """Paging must actually reach the tail of a fan-out tx.
+
+    The MCP now forces a pagesize on list_tx_flows (see mcp/pagesize.py), so
+    every call takes the paginated branch. That is only safe if the cursor
+    walks: without pagination this returned the whole list in one response.
+    """
+
+    def make_service(self, n_traces):
+        db = MagicMock()
+        db.get_tx = AsyncMock(return_value=make_raw_trx_tx())
+        db.get_token_configuration = MagicMock(return_value={})
+        db.list_token_txs = AsyncMock(return_value=[])
+        db.fetch_transaction_traces = AsyncMock(
+            return_value=[make_raw_trx_trace(i) for i in range(n_traces)]
+        )
+        return TxsService(db=db, rates_service=make_rates_service(), logger=MagicMock())
+
+    async def test_cursor_walks_to_the_last_page(self):
+        svc = self.make_service(60)
+
+        async def page(cursor):
+            return await svc.get_asset_flows_within_tx(
+                "trx", TX_HASH.hex(), page=cursor, page_size=25
+            )
+
+        first = await page(1)
+        assert len(first.txs) == 25
+        assert first.next_page == 2
+
+        second = await page(first.next_page)
+        assert len(second.txs) == 25
+        assert second.next_page == 3
+        # Distinct slice, not the same page handed back.
+        assert second.txs[0].value.value != first.txs[0].value.value
+
+        third = await page(second.next_page)
+        assert len(third.txs) == 10
+        assert third.next_page is None
+
+        values = [t.value.value for t in first.txs + second.txs + third.txs]
+        assert len(set(values)) == 60  # every flow reachable, none duplicated

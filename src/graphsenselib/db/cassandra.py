@@ -701,13 +701,18 @@ class CassandraDb:
     @needs_session
     def execute_statements(
         self, statements: List[BoundStatement], concurrency: int = 100
-    ):
-        return execute_concurrent(
+    ) -> None:
+        # Writes only: stream the results and drop them. Without
+        # results_generator the driver keeps every statement's result (and with
+        # it the request) until the last one completes.
+        for _ in execute_concurrent(
             self.session,
             [(stmt, None) for stmt in statements],
             raise_on_first_error=True,
             concurrency=concurrency,
-        )
+            results_generator=True,
+        ):
+            pass
 
     @needs_session
     def execute_statements_async(

@@ -3,6 +3,12 @@
 
 version: 2
 updates:
+  # Every entry sets `target-branch: "develop"`: work lands on develop and
+  # reaches master only through a release, so PRs against master (the default
+  # branch) duplicated bumps develop already had and could not be merged in
+  # flow (#176-#179 were all superseded on develop when they arrived).
+  # target-branch applies to version updates only; security-fix PRs still
+  # open against master.
   # Root project. Version updates are grouped: without a group each bump is its
   # own PR, the default open-pull-requests-limit of 5 fills up, and Dependabot
   # then stops opening uv PRs entirely (that is how gitpython/aiohttp sat on
@@ -10,6 +16,7 @@ updates:
   # minor+patch keeps the slot free; majors still come individually.
   - package-ecosystem: "uv"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:
@@ -26,6 +33,7 @@ updates:
   # requests, pytest) only ever got a one-shot security PR.
   - package-ecosystem: "uv"
     directory: "/clients/python"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:
@@ -40,6 +48,7 @@ updates:
   # Nightly regression harness — own uv project, own lockfile.
   - package-ecosystem: "uv"
     directory: "/tests/regressions"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:
@@ -57,6 +66,7 @@ updates:
   # Dependabot proposes the pair.
   - package-ecosystem: "cargo"
     directory: "/rust/gs_clustering"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:
@@ -74,6 +84,7 @@ updates:
   # the PR, so a bad bump is visible before merge.
   - package-ecosystem: "docker"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:
@@ -81,7 +92,7 @@ updates:
         patterns:
           - "*"
     # Two of the three pinned images must not move on their own:
-    #   * python — the project is `requires-python = ">=3.10, <3.14"`, the
+    #   * python — the project is `requires-python = ">=3.11, <3.14"`, the
     #     runtime stage prunes a hardcoded /usr/local/lib/python3.13 path, and
     #     psycopg2-binary/pyspark have no wheels beyond 3.13. A 3.14 bump fails
     #     the image build (PR #127); raise it deliberately together with
@@ -114,6 +125,7 @@ updates:
   # and minor are ignored here too and only the tag's digest may move.
   - package-ecosystem: "docker"
     directory: "/spark"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:
@@ -128,8 +140,13 @@ updates:
 
   # Workflow actions are pinned to commit SHAs (supply-chain hardening);
   # without this they would silently rot at whatever SHA they were pinned to.
+  # Dependabot keeps a ref's precision: `@v7` is only ever bumped to another
+  # major-only tag. astral-sh/setup-uv stopped publishing those with v8, so
+  # `@v7` sat three majors behind with no PR. Pin actions by SHA with a
+  # `# vX.Y.Z` comment (as the docker/* actions are) so every release is seen.
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     groups:

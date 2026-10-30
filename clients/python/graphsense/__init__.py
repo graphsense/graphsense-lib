@@ -12,7 +12,7 @@
 """
 
 
-__version__ = "2.15.3"
+__version__ = "2.19.0"
 
 # Define package exports
 __all__ = [
@@ -20,7 +20,6 @@ __all__ = [
     "BlocksApi",
     "BulkApi",
     "ClustersApi",
-    "EntitiesApi",
     "GeneralApi",
     "GraphApi",
     "RatesApi",
@@ -45,8 +44,10 @@ __all__ = [
     "AddressTx",
     "AddressTxUtxo",
     "AddressTxs",
+    "AggregateCutoff",
     "Block",
     "BlockAtDate",
+    "Capabilities",
     "ChangeHeuristics",
     "Cluster",
     "ClusterAddresses",
@@ -57,7 +58,6 @@ __all__ = [
     "CurrencyStats",
     "DirectChangeHeuristic",
     "Entity",
-    "EntityAddresses",
     "ExternalConversion",
     "GraphAddressNetworkSummary",
     "GraphAddressOverall",
@@ -92,8 +92,8 @@ __all__ = [
     "NeighborAddresses",
     "NeighborCluster",
     "NeighborClusters",
-    "NeighborEntities",
     "NeighborEntity",
+    "NetworkCapabilities",
     "OneTimeChangeHeuristic",
     "PerTxInner",
     "Rate",
@@ -108,6 +108,7 @@ __all__ = [
     "SearchResultLevel4",
     "SearchResultLevel5",
     "SearchResultLevel6",
+    "ServiceInfo",
     "Stats",
     "Tag",
     "TagCloudEntry",
@@ -139,7 +140,6 @@ from graphsense.api.addresses_api import AddressesApi as AddressesApi
 from graphsense.api.blocks_api import BlocksApi as BlocksApi
 from graphsense.api.bulk_api import BulkApi as BulkApi
 from graphsense.api.clusters_api import ClustersApi as ClustersApi
-from graphsense.api.entities_api import EntitiesApi as EntitiesApi
 from graphsense.api.general_api import GeneralApi as GeneralApi
 from graphsense.api.graph_api import GraphApi as GraphApi
 from graphsense.api.rates_api import RatesApi as RatesApi
@@ -168,8 +168,10 @@ from graphsense.models.address_tags import AddressTags as AddressTags
 from graphsense.models.address_tx import AddressTx as AddressTx
 from graphsense.models.address_tx_utxo import AddressTxUtxo as AddressTxUtxo
 from graphsense.models.address_txs import AddressTxs as AddressTxs
+from graphsense.models.aggregate_cutoff import AggregateCutoff as AggregateCutoff
 from graphsense.models.block import Block as Block
 from graphsense.models.block_at_date import BlockAtDate as BlockAtDate
+from graphsense.models.capabilities import Capabilities as Capabilities
 from graphsense.models.change_heuristics import ChangeHeuristics as ChangeHeuristics
 from graphsense.models.cluster import Cluster as Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddresses
@@ -180,7 +182,6 @@ from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
 from graphsense.models.direct_change_heuristic import DirectChangeHeuristic as DirectChangeHeuristic
 from graphsense.models.entity import Entity as Entity
-from graphsense.models.entity_addresses import EntityAddresses as EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion as ExternalConversion
 from graphsense.models.graph_address_network_summary import GraphAddressNetworkSummary as GraphAddressNetworkSummary
 from graphsense.models.graph_address_overall import GraphAddressOverall as GraphAddressOverall
@@ -215,8 +216,8 @@ from graphsense.models.neighbor_address import NeighborAddress as NeighborAddres
 from graphsense.models.neighbor_addresses import NeighborAddresses as NeighborAddresses
 from graphsense.models.neighbor_cluster import NeighborCluster as NeighborCluster
 from graphsense.models.neighbor_clusters import NeighborClusters as NeighborClusters
-from graphsense.models.neighbor_entities import NeighborEntities as NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity as NeighborEntity
+from graphsense.models.network_capabilities import NetworkCapabilities as NetworkCapabilities
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic as OneTimeChangeHeuristic
 from graphsense.models.per_tx_inner import PerTxInner as PerTxInner
 from graphsense.models.rate import Rate as Rate
@@ -231,6 +232,7 @@ from graphsense.models.search_result_level3 import SearchResultLevel3 as SearchR
 from graphsense.models.search_result_level4 import SearchResultLevel4 as SearchResultLevel4
 from graphsense.models.search_result_level5 import SearchResultLevel5 as SearchResultLevel5
 from graphsense.models.search_result_level6 import SearchResultLevel6 as SearchResultLevel6
+from graphsense.models.service_info import ServiceInfo as ServiceInfo
 from graphsense.models.stats import Stats as Stats
 from graphsense.models.tag import Tag as Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry as TagCloudEntry
@@ -253,3 +255,5 @@ from graphsense.models.wasabi_heuristic import WasabiHeuristic as WasabiHeuristi
 from graphsense.models.whirlpool_coin_join_heuristic import WhirlpoolCoinJoinHeuristic as WhirlpoolCoinJoinHeuristic
 from graphsense.models.whirlpool_tx0_heuristic import WhirlpoolTx0Heuristic as WhirlpoolTx0Heuristic
 
+# Pointers for removed client names (hand-written)
+import graphsense.removed  # noqa: F401, E402

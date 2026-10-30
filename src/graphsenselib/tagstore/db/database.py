@@ -1,10 +1,13 @@
 import contextlib
+import logging
+import socket
 from datetime import datetime
 from functools import cache, partial
 from importlib.resources import files as imprtlb_files
 from typing import Iterable
 
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import Session, SQLModel, create_engine, create_mock_engine, text
 
 from .. import db as db
@@ -65,6 +68,47 @@ def get_db_engine(db_url, **kwargs):
 
 def get_db_engine_async(db_url, **kwargs):
     return create_async_engine(db_url, **kwargs)
+
+
+logger = logging.getLogger(__name__)
+
+# Probe a quiet connection after 60s, then every 15s; give up after 4 misses.
+# TCP_USER_TIMEOUT (ms) bounds data the server never acknowledges, which
+# keepalive does not cover: a query sent into an outage.
+TCP_KEEPALIVE = {
+    "TCP_KEEPIDLE": 60,
+    "TCP_KEEPINTVL": 15,
+    "TCP_KEEPCNT": 4,
+    "TCP_USER_TIMEOUT": 120_000,
+}
+
+
+def enable_tcp_keepalive(engine: AsyncEngine) -> AsyncEngine:
+    """Turn on TCP keepalive (and a user timeout) for every asyncpg
+    connection of ``engine``.
+
+    Without it, a connection whose server side is gone (a VPN outage, a NAT
+    dropping idle state) looks open forever: a query on it waits for an
+    answer that never comes and the process hangs without an error. The
+    kernel's probes notice the dead peer within about two minutes and fail
+    the socket, while a long query on a live server is unaffected (the
+    server's kernel answers the probes). asyncpg has no keepalive option,
+    so set it on the socket after connecting.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_keepalive(dbapi_connection, _record):
+        transport = getattr(dbapi_connection.driver_connection, "_transport", None)
+        sock = transport.get_extra_info("socket") if transport is not None else None
+        if sock is None:
+            logger.warning("Could not enable TCP keepalive on a tagstore connection")
+            return
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for name, value in TCP_KEEPALIVE.items():
+            if hasattr(socket, name):  # Linux names; absent on some platforms
+                sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), value)
+
+    return engine
 
 
 def to_sync_db_url(db_url: str) -> str:

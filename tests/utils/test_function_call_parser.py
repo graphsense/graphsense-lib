@@ -1,11 +1,12 @@
+from eth_abi import encode as abi_encode
 from eth_utils import keccak, to_hex
 
 from graphsenselib.utils.function_call_parser import (
-    parse_function_call,
-    generate_function_selector,
     decoded_function_to_str,
-    get_filtered_function_signatures,
     function_signatures,
+    generate_function_selector,
+    get_filtered_function_signatures,
+    parse_function_call,
 )
 
 
@@ -84,6 +85,53 @@ def test_parse_function_call_approve_success():
     assert result["selector"] == "0x095ea7b3"
     assert len(result["inputs"]) == 2
     assert result["parameters"]["amount"] == 5000
+
+
+def test_parse_oneinch_swap_with_tuple_and_bytes():
+    """Decode the 1inch AggregationRouter swap used by the second fixture."""
+    executor = "0x111116053f09d34a7eae8102887004445176ca11"
+    src_token = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    dst_token = "0xe92f673ca36c5e2efd2de7628f815f84807e803f"
+    recipient = "0xedcea136f0f7e5d51e1834bd96937847089fcdd4"
+    amount = 2000000000000000
+
+    input_bytes = bytes.fromhex("07ed2379") + abi_encode(
+        [
+            "address",
+            "(address,address,address,address,uint256,uint256,uint256)",
+            "bytes",
+        ],
+        [
+            executor,
+            (
+                src_token,
+                dst_token,
+                executor,
+                recipient,
+                amount,
+                13431294583590000,
+                0,
+            ),
+            b"\x01",
+        ],
+    )
+
+    result = parse_function_call(input_bytes, function_signatures)
+
+    assert result is not None
+    assert result["name"] == "swap"
+    assert result["selector"] == "0x07ed2379"
+    assert result["parameters"]["executor"] == executor
+    assert result["parameters"]["desc"] == [
+        src_token,
+        dst_token,
+        executor,
+        recipient,
+        amount,
+        13431294583590000,
+        0,
+    ]
+    assert result["parameters"]["data"] == "0x01"
 
 
 def test_parse_function_call_no_parameters():

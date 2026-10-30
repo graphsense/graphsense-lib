@@ -44,8 +44,11 @@ class TestGetConversionsFromDbGather:
             received["bridge_traces"] = traces
             return []
 
-        def fake_swaps(decoded_log_data, logs_raw_filtered, traces, visualize):
+        def fake_swaps(
+            decoded_log_data, logs_raw_filtered, traces, visualize, **kwargs
+        ):
             received["swap_traces"] = traces
+            received["swap_kwargs"] = kwargs
             return []
 
         with (
@@ -74,6 +77,8 @@ class TestGetConversionsFromDbGather:
         # downstream bridge/swap extraction must see the *normalized* traces
         assert received["bridge_traces"] == normalized_traces_sentinel
         assert received["swap_traces"] == normalized_traces_sentinel
+        # CoW Protocol settlements are detected unless turned off
+        assert received["swap_kwargs"]["cow_protocol"] is True
 
         assert result == []
 

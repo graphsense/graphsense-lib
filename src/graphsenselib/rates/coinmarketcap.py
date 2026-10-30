@@ -229,11 +229,11 @@ def ingest(
 
         # insert final exchange rates into Cassandra
         if "USD" not in fiat_currencies:
-            exchange_rates.drop("USD", axis=1, inplace=True)
+            exchange_rates = exchange_rates.drop("USD", axis=1)
         exchange_rates["fiat_values"] = exchange_rates.drop("date", axis=1).to_dict(
             orient="records"
         )
-        exchange_rates.drop(fiat_currencies, axis=1, inplace=True)
+        exchange_rates = exchange_rates.drop(fiat_currencies, axis=1)
 
         # insert exchange rates into Cassandra table
         if not dry_run:

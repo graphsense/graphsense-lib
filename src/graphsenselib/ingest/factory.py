@@ -22,6 +22,7 @@ class IngestModule(ABC):
         previous_day: bool,
         provider_timeout: int,
         mode: str,
+        reorg_backoff_blocks: Optional[int] = None,
     ):
         pass
 
@@ -40,6 +41,7 @@ class IngestModuleAccountAsync(IngestModule):
         previous_day: bool,
         provider_timeout: int,
         mode: str,
+        reorg_backoff_blocks: Optional[int] = None,
     ):
         ingest_account_async(
             db=db,
@@ -53,6 +55,7 @@ class IngestModuleAccountAsync(IngestModule):
             previous_day=previous_day,
             provider_timeout=provider_timeout,
             mode=mode,
+            reorg_backoff_blocks=reorg_backoff_blocks,
         )
 
 
@@ -70,6 +73,7 @@ class IngestModuleUtxo(IngestModule):
         previous_day: bool,
         provider_timeout: int,
         mode: str,
+        reorg_backoff_blocks: Optional[int] = None,
     ):
         ingest_utxo(
             db=db,
@@ -83,6 +87,7 @@ class IngestModuleUtxo(IngestModule):
             previous_day=previous_day,
             provider_timeout=provider_timeout,
             mode=mode,
+            reorg_backoff_blocks=reorg_backoff_blocks,
         )
 
 

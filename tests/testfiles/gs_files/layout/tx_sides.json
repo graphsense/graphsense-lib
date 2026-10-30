@@ -1,0 +1,192 @@
+{
+  "_comment": "Senders/receivers of every tx in the layout fixtures, from the GraphSense REST API (tx details with io), 2026-09-23. The THORChain file's txs and its conversion (conversions.json) come from the /txs/{hash}/conversions endpoint the same day. Only addresses drawn in the fixture files are kept; the other inputs/outputs of these txs don't affect the layout.",
+  "btc": {
+    "2e72aad19566e05d2b9a59dd85f5d67b225e7affa8b7f9d59cc46f73580c0ffd": [
+      [
+        "bc1qpq7zglwqcmz2khxce9xdewkxaq0jtadkeeehv2"
+      ],
+      [
+        "bc1qadak98ddp6mmuy3a6a7cepqyl4aeqqg2asgvpa"
+      ]
+    ],
+    "62cc475f1caa9fe935c8c835a5e917c775025aed6bc34d52d28664658b0e002c": [
+      [
+        "bc1qarg05940elwewhs0vpwl6eawrr2387ax6sag6y"
+      ],
+      [
+        "bc1qadak98ddp6mmuy3a6a7cepqyl4aeqqg2asgvpa"
+      ]
+    ],
+    "72862acaebbc43ea86c485381fa186eaab25ff3e9f7a5c4911cc6bb1a16ce65c": [
+      [
+        "bc1qpjwnvq65aqw023z40wxfjj4v4yg0ptm3jgjcqh",
+        "bc1qr0kv8lxq59kdkua0p898zwnh7hau4rev8mmztn",
+        "bc1qadak98ddp6mmuy3a6a7cepqyl4aeqqg2asgvpa"
+      ],
+      [
+        "1C6w4hZfMCo8u5JQ1RSzK159Juu49HK5cf",
+        "bc1qynzn556k5u8v94u86gts8x5qm7n34gkmyasg2h"
+      ]
+    ],
+    "e370eb05cb04f78e2fcbd74dd494e402a2d37876a25938a89ab99c279fa65c68": [
+      [
+        "bc1qh3lc7zx9tv2r0ky94rvcve2uheplspmt26876d",
+        "bc1qkw988p28sydl7dfzac8q6ar8eqam4yku96t939"
+      ],
+      [
+        "1C6w4hZfMCo8u5JQ1RSzK159Juu49HK5cf",
+        "bc1qetlgmsf4s5zq8g476q8eg2gajgju3f3heewwfv"
+      ]
+    ],
+    "a028bb2d4c795cb8a8fd2f03285934fba8747fa84296fb7711dcda179b21cc4c": [
+      [
+        "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94"
+      ],
+      [
+        "1ARirZgU4q61sSjVK2iB8BEYC5w2B8ZnE9",
+        "1H68h8qsVkMUgY8khcdFpbHV22cCnC74dk"
+      ]
+    ],
+    "8def6458a46234ab0e040602e7852ff5cf58650f3f1102803b1d4bca4cc293a1": [
+      [
+        "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94"
+      ],
+      [
+        "1M1CfXLynR6vqbjwTqSiiLRVDQZEXHHJbb"
+      ]
+    ],
+    "409803bb5e124fd028c0482027c7722e84ce55b78204b279d3a44aba5e7c1698": [
+      [
+        "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw"
+      ],
+      [
+        "1JC41YHmjKEcW1rLH6pmMWEFHkoNwSmhnC",
+        "1FQQ86tMuvhQ4Ruyggbb8j7iaNfUZ69gpY"
+      ]
+    ],
+    "35e5d5fe8c8128cfa6884f56be5817e4138c58c91b79d78d3e78a8d365b9d8a7": [
+      [
+        "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw"
+      ],
+      [
+        "16dfTuSx4f78eQ81PzTgBtBDyZ7QhNZ8Vy"
+      ]
+    ],
+    "ef0ac1c130740138805bfb7cd605456e440266db1fd85ae5b4a852a7172fcf2f": [
+      [
+        "115p7UMMngoj1pMvkpHijcRdfJNXj6LrLn"
+      ],
+      [
+        "14Y8rfeRAcZkGqG451UGk1epq5zw3dVQif"
+      ]
+    ],
+    "d17829f8097ed86fa2e961b5ccefc51877673f649196621bf90e03f42f1e9ab8": [
+      [
+        "115p7UMMngoj1pMvkpHijcRdfJNXj6LrLn"
+      ],
+      [
+        "18gsrbQsTY7HzYVZEbvtVBfhywpQk6No2Q",
+        "1Q8maVpVNAZbPiavySQz9JaiwsfhbT9vBz"
+      ]
+    ],
+    "ac71843d9edfe199de6f4d47ce4d8cb9d68e35c0ced593a9ed18d5a11008c316": [
+      [
+        "bc1q43727w99qpg58ykswgzvfth7skvaagd9l03ppp"
+      ],
+      [
+        "1HqDW4YkF1R2y2sUDngyTVpqKzZ4DXW9iC",
+        "bc1q43727w99qpg58ykswgzvfth7skvaagd9l03ppp"
+      ]
+    ],
+    "b42dbfcf8552463759862cbcbbfb1ba3ff1dd9466f2a329ee16b3a52d02e4a9c": [
+      [
+        "1HqDW4YkF1R2y2sUDngyTVpqKzZ4DXW9iC"
+      ],
+      [
+        "bc1qt4nrf97js3hxv5k8dg833nrgdrnxekcnlg6jk2"
+      ]
+    ]
+  },
+  "eth": {
+    "118e828edacb0a8c7f0c44b05044a76184ab06d60aef5a1b19088751b798594a_I63": [
+      [
+        "0xcf370abba4d587c8f6a2a6d5a15c012967a11e65"
+      ],
+      [
+        "0xc659921507d9130c79dd31f2e02a89483cc68ba2"
+      ]
+    ],
+    "4fd3adb02bc90b785dfeffe2ebe6d98a41e7dc3ad0de7f7d3bfe26ff01a69d02_I1554": [
+      [
+        "0xc659921507d9130c79dd31f2e02a89483cc68ba2"
+      ],
+      [
+        "0x90f080a538bbcacaf7506f205a1c6ae7eec62859"
+      ]
+    ],
+    "519bfc9a8da0a360db51574b277bd9dec1b07268e420831799b00997d45ca146_I545": [
+      [
+        "0xb5d85cbf7cb3ee0d56b3bb207d5fc4b82f43f511"
+      ],
+      [
+        "0xcf370abba4d587c8f6a2a6d5a15c012967a11e65"
+      ]
+    ],
+    "6542bd5384e7d66724d255f88395154cee0dfe618c11009ca8ac54a908885a79_I443": [
+      [
+        "0xcf370abba4d587c8f6a2a6d5a15c012967a11e65"
+      ],
+      [
+        "0xc659921507d9130c79dd31f2e02a89483cc68ba2"
+      ]
+    ],
+    "871099a1bb14341e50f678712636ba58560fcc77d416f2e9c5f24eb706ebaafb_I719": [
+      [
+        "0x87dc4ed6e7bc9ec4b53b5268564477388d38b62b"
+      ],
+      [
+        "0xc659921507d9130c79dd31f2e02a89483cc68ba2"
+      ]
+    ],
+    "b65012f356b8fb7226a154ac31066bceeefe73c35c1c7b55fdf4dfc38b45cb7b_I152": [
+      [
+        "0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740"
+      ],
+      [
+        "0x87dc4ed6e7bc9ec4b53b5268564477388d38b62b"
+      ]
+    ],
+    "c4ae40b3fd390b182ccc168a1a598b0b246c5b2a3068297679e757d37f6a29e4_I1232": [
+      [
+        "0xc659921507d9130c79dd31f2e02a89483cc68ba2"
+      ],
+      [
+        "0x611b01e3df8bafb6c9fe715f8a42ac595db878fd"
+      ]
+    ],
+    "6b16c29fc5c1161c3efd01874cc4e2c8104a7772b8fd9c7c70f8b747d3398a6f_I1405": [
+      [
+        "0xe1c97edbb870bd71c4fff4e3e5edd9a52677fa29"
+      ],
+      [
+        "0xd37bbe5744d730a1d98d8dc97c42f0ca46ad7146"
+      ]
+    ],
+    "9f670a80cbb73291c8c8d23a6bfbf19b10e6c66b62af405914d46bf942d33235_I471": [
+      [
+        "0x47666fab8bd0ac7003bce3f5c3585383f09486e2"
+      ],
+      [
+        "0xd9421f576d8c1c01e28081a1f393e13fb41cff3c"
+      ]
+    ],
+    "a04380bdd262342e93d9c58dd589b761ed8306409b27de30434c6486f729e4e0_I412": [
+      [
+        "0xd9421f576d8c1c01e28081a1f393e13fb41cff3c"
+      ],
+      [
+        "0xe1c97edbb870bd71c4fff4e3e5edd9a52677fa29"
+      ]
+    ]
+  }
+}

@@ -42,6 +42,7 @@ graphsense/ext/*
 graphsense/cli/*
 graphsense/gs_files/*
 graphsense/address_scan/*
+graphsense/removed.py
 tests/*
 docs/cli/*
 docs/ext/*

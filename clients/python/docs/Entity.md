@@ -7,7 +7,7 @@ Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **currency** | **str** |  | 
-**entity** | **int** | Deprecated alias of &#x60;cluster&#x60;. Use &#x60;cluster&#x60; instead; this field is retained for backwards compatibility and will be removed in a future release. | 
+**entity** | **int** | Deprecated alias of &#x60;cluster&#x60;. Use &#x60;cluster&#x60; instead; this field is retained for backwards compatibility and will be removed in a future release. | [optional] 
 **root_address** | **str** |  | 
 **balance** | [**Values**](Values.md) |  | 
 **total_received** | [**Values**](Values.md) |  | 

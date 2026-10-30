@@ -45,12 +45,10 @@ are also filtered out.
 
 ## Deprecated endpoints
 
-Deprecated API classes (currently `EntitiesApi`) are hidden by default.
-Set the environment variable `GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` to expose them:
-
-```sh
-GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1 graphsense raw entities --help
-```
+API classes whose endpoints are all deprecated are hidden by default (there
+are none at the moment; `EntitiesApi` was removed when its routes were sunset).
+Set the environment variable `GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` to
+expose such groups.
 
 Even when hidden, calls that return RFC 8594 `Deprecation` / `Sunset`
 headers from the server emit a one-line stderr warning (unless `--quiet`).

@@ -1,4 +1,3 @@
-import os
 import pytest
 
 from graphsenselib.utils import (
@@ -14,7 +13,7 @@ from graphsenselib.utils import (
     to_int,
     truncateI32,
 )
-from graphsenselib.utils.errorhandling import CrashRecoverer
+from graphsenselib.utils.accountmodel import normalize_hex_identifier
 from graphsenselib.utils.generic import camel_to_snake_case, dict_to_dataobject
 
 
@@ -37,6 +36,25 @@ def test_btoh_works(capsys):
     assert bytes_to_hex(b"asdfasdf") == "6173646661736466"
 
 
+@pytest.mark.parametrize(
+    "identifier,expected",
+    [
+        ("0xAbC123", "0xabc123"),
+        ("0xabc123", "0xabc123"),
+        # 64 hex chars, e.g. SUI
+        ("0x" + "Ab" * 32, "0x" + "ab" * 32),
+        # uppercase prefix is not our stored form and not what clients send
+        ("0XABC", "0XABC"),
+        ("0x", "0x"),
+        ("0xZZ", "0xZZ"),
+        ("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"),
+        ("", ""),
+    ],
+)
+def test_normalize_hex_identifier(identifier, expected):
+    assert normalize_hex_identifier(identifier) == expected
+
+
 def test_strip_0x_works1():
     assert strip_0x("0xa9059cbb") == "a9059cbb"
 
@@ -51,48 +69,6 @@ def test_to_int1():
     assert to_int("1111") == 1111
     assert to_int("0xf") == 15
     assert to_int("0x10") == 16
-
-
-def test_crash_recoverer():
-    file = "/tmp/test_graphsense_lib_crashrecoverer.err"
-    if os.path.exists(file):
-        os.remove(file)
-    cr = CrashRecoverer(file)
-
-    try:
-        with cr.enter_critical_section({"int": 1}):
-            raise NotImplementedError("test")
-    except NotImplementedError:
-        assert cr.is_in_recovery_mode()
-        assert cr.get_recovery_hint() == {
-            "int": 1,
-            "exception": "test",
-            "exception_type": "NotImplementedError",
-        }
-
-    cr = CrashRecoverer(file)
-    assert cr.is_in_recovery_mode()
-    assert cr.get_recovery_hint() == {
-        "int": 1,
-        "exception": "test",
-        "exception_type": "NotImplementedError",
-    }
-
-    try:
-        with cr.enter_critical_section({}):
-            pass
-    except ValueError:
-        pass
-
-    assert cr.get_recovery_hint() == {
-        "int": 1,
-        "exception": "test",
-        "exception_type": "NotImplementedError",
-    }
-
-    cr.leave_recovery_mode()
-    assert not cr.is_in_recovery_mode()
-    assert not os.path.exists(file)
 
 
 def test_batch_works():

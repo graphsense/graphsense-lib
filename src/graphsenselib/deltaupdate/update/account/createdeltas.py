@@ -661,8 +661,8 @@ def get_sorted_unique_addresses(
     if addresses_sorting_df.empty:
         return pd.Series([])
 
-    addresses_sorting_df.sort_values(
-        inplace=True, by=["block_id", "is_log", "index", "is_from_address"]
+    addresses_sorting_df = addresses_sorting_df.sort_values(
+        by=["block_id", "is_log", "index", "is_from_address"]
     )
     df_sorted_unique = addresses_sorting_df.drop_duplicates(
         keep="first", subset=["address"]

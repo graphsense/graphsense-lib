@@ -350,33 +350,69 @@ class DbWriterMixin:
         nr_retries=100,
         initial_concurrency: int = 100,
         min_concurrency: int = 5,
+        chunk_size: int = 10_000,
     ) -> ApplyChangesResult:
-        """Apply db changes and return retry/warning metadata."""
-        statements = [
-            (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
-            for chng in changes
-        ]
-        unique_statements = {stmt for stmt, _ in statements}
+        """Apply db changes and return retry/warning metadata.
 
-        prepared_statements = {
-            stmt: self._db.get_prepared_statement(stmt) for stmt in unique_statements
-        }
+        Non-atomic changes are bound and written ``chunk_size`` at a time: a
+        bound statement plus the driver's per-statement bookkeeping costs a few
+        KB, so binding a whole batch up front held several GB per million
+        changes. An atomic set goes out as one batch, so it is bound at once.
+        """
+        prepared_statements = {}
 
-        change_stmts = [
-            prepared_statements[
-                chng.get_cql_statement(keyspace=self.get_keyspace())
-            ].bind(chng.data)
-            for chng in changes
-        ]
+        def bind(chng):
+            stmt = chng.get_cql_statement(keyspace=self.get_keyspace())
+            if stmt not in prepared_statements:
+                prepared_statements[stmt] = self._db.get_prepared_statement(stmt)
+            return prepared_statements[stmt].bind(chng.data)
+
+        if atomic:
+            chunks = [changes]
+        else:
+            chunks = (
+                changes[i : i + chunk_size] for i in range(0, len(changes), chunk_size)
+            )
 
         attempts_made = 0
         total_retry_wait_seconds = 0.0
-        # change_stmts are bound once above with literal values, so every
-        # attempt re-submits identical upserts (no Cassandra counters, no
-        # re-read). Retrying is therefore idempotent. Unavailable /
-        # NoHostAvailable are included so a recoverable database outage is
-        # waited out (bounded by stop_after_attempt) instead of aborting a
-        # half-flushed batch and leaving the keyspace inconsistent.
+        for chunk in chunks:
+            change_stmts = [bind(chng) for chng in chunk]
+            chunk_attempts, chunk_wait = self._execute_with_write_retries(
+                change_stmts, atomic, nr_retries, initial_concurrency, min_concurrency
+            )
+            attempts_made = max(attempts_made, chunk_attempts)
+            total_retry_wait_seconds += chunk_wait
+
+        warning_threshold = None
+        warning_text = None
+        if total_retry_wait_seconds > 30:
+            warning_threshold = "retry_wait_gt_30s"
+            warning_text = (
+                "Total retry wait time exceeded threshold: "
+                f"{total_retry_wait_seconds:.1f}s > 30.0s "
+                f"(attempts={attempts_made})"
+            )
+
+        return ApplyChangesResult(
+            attempts_made=attempts_made,
+            total_retry_wait_seconds=total_retry_wait_seconds,
+            warning_threshold=warning_threshold,
+            warning_text=warning_text,
+        )
+
+    def _execute_with_write_retries(
+        self, change_stmts, atomic, nr_retries, initial_concurrency, min_concurrency
+    ):
+        """Write one set of bound statements; return (attempts, retry wait s)."""
+        attempts_made = 0
+        retry_wait_seconds = 0.0
+        # change_stmts are bound once with literal values, so every attempt
+        # re-submits identical upserts (no Cassandra counters, no re-read).
+        # Retrying is therefore idempotent. Unavailable / NoHostAvailable are
+        # included so a recoverable database outage is waited out (bounded by
+        # stop_after_attempt) instead of aborting a half-flushed batch and
+        # leaving the keyspace inconsistent.
         for attempt in Retrying(
             retry=retry_if_exception_type(
                 (WriteTimeout, OperationTimedOut, Unavailable, NoHostAvailable)
@@ -405,26 +441,10 @@ class DbWriterMixin:
                     self._db.execute_statements(
                         change_stmts, concurrency=current_concurrency
                     )
-                total_retry_wait_seconds = max(
-                    total_retry_wait_seconds, float(attempt.retry_state.idle_for or 0.0)
+                retry_wait_seconds = max(
+                    retry_wait_seconds, float(attempt.retry_state.idle_for or 0.0)
                 )
-
-        warning_threshold = None
-        warning_text = None
-        if total_retry_wait_seconds > 30:
-            warning_threshold = "retry_wait_gt_30s"
-            warning_text = (
-                "Total retry wait time exceeded threshold: "
-                f"{total_retry_wait_seconds:.1f}s > 30.0s "
-                f"(attempts={attempts_made})"
-            )
-
-        return ApplyChangesResult(
-            attempts_made=attempts_made,
-            total_retry_wait_seconds=total_retry_wait_seconds,
-            warning_threshold=warning_threshold,
-            warning_text=warning_text,
-        )
+        return attempts_made, retry_wait_seconds
 
     def ensure_table_exists(
         self,
@@ -569,11 +589,17 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         if r == -1:
             # minus one could mean two things, either
             # no missing exchangesrates are found within the lookback range
-            # or that all have exchange rates, so we recheck if the
-            # second case applies
+            # or that all blocks below hb have exchange rates (hi is
+            # exclusive), so we recheck hb: with rates it is the frontier,
+            # without them hb - 1 is (e.g. hb is the first block of a day
+            # whose rates are not out yet)
             er = self.get_exchange_rates_for_block_batch([hb])
             if len(er) > 0 and has_er_value(er):
                 r = hb
+            elif hb > first_rates and has_er_value(
+                self.get_exchange_rates_for_block_batch([hb - 1])
+            ):
+                r = hb - 1
         else:
             r = r - 1
 
@@ -1084,44 +1110,6 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "address_ids_by_address_prefix", columns=["address"], where=w, limit=1
         )
         return len(rows.current_rows) > 0
-
-    def known_addresses_batch(
-        self, address: list[str], inlcude_new_adresses_table=True
-    ):
-        stmt = self.select_stmt(
-            "address_ids_by_address_prefix",
-            columns=["address"],
-            where={"address_prefix": "?", "address": "?"},
-            limit=1,
-        )
-        adrs = [(a, self.to_db_address(a)) for a in address]
-        parameters = [(a, [adr.prefix, adr.db_encoding]) for a, adr in adrs]
-
-        results = self._db.execute_batch_async(stmt, parameters)
-        if inlcude_new_adresses_table:
-            stmt = self.select_stmt(
-                "new_addresses",
-                columns=["address"],
-                where={"address_prefix": "?", "address": "?"},
-                limit=1,
-            )
-            results_new = self._db.execute_batch_async(stmt, parameters)
-            r1 = {
-                a: (len(row.current_rows) > 0)
-                for (a, row) in self._db.await_batch(results)
-            }
-            r2 = {
-                a: (len(row.current_rows) > 0)
-                for (a, row) in self._db.await_batch(results_new)
-            }
-
-            return {a: (r or r2[a]) for (a, r) in r1.items()}
-
-        else:
-            return {
-                a: (len(row.current_rows) > 0)
-                for (a, row) in self._db.await_batch(results)
-            }
 
     def get_token_configuration(self):
         # No limit: load every configured token (supports hundreds-thousands).

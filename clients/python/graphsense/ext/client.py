@@ -28,11 +28,13 @@ from graphsense.api_client import ApiClient
 from graphsense.configuration import Configuration
 from graphsense.ext import bulk as bulk_mod
 from graphsense.ext.deprecation import install as install_deprecation_hook
+from graphsense.removed import REMOVED_NAMES
 
 # APIs that expose only deprecated endpoints; hidden from the convenience
 # surface but still reachable through raw when
-# GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1.
-_DEPRECATED_APIS = {"EntitiesApi"}
+# GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1. Empty since EntitiesApi was
+# removed (its routes were sunset on 2026-10-31).
+_DEPRECATED_APIS: set[str] = set()
 
 # Environment variables consulted in this order (first set wins) when no
 # explicit api_key / host is passed. Fully-qualified names (GRAPHSENSE_*,
@@ -119,7 +121,10 @@ class Raw:
     def __getattr__(self, item: str) -> Any:
         try:
             return self._groups[item]
-        except KeyError as exc:  # pragma: no cover - defensive
+        except KeyError as exc:
+            for name, message in REMOVED_NAMES.items():
+                if name.endswith("Api") and _api_attr_name(name) == item:
+                    raise AttributeError(message) from None
             raise AttributeError(item) from exc
 
     def __dir__(self) -> list[str]:
@@ -259,9 +264,8 @@ class GraphSense:
     ) -> Bundle:
         """Fetch an address plus the usual auxiliary data in parallel.
 
-        Non-deprecated paths only — the cluster bundle uses
-        ClustersApi.get_cluster via the address's `cluster` id field,
-        not the deprecated get_address_entity.
+        The cluster bundle uses ClustersApi.get_cluster via the address's
+        `cluster` id field.
         """
         ccy = self._currency(currency)
         addresses = self.raw.addresses

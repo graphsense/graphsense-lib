@@ -5,6 +5,7 @@ import click
 
 from ..cli.common import require_currency, require_environment
 from ..utils.locking import LockAcquisitionError, create_lock
+from . import WATCH_DEPRECATION_MESSAGE
 from .factory import FlowWatcherFactory
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ def watch_cli():
     pass
 
 
-@watch_cli.group()
+@watch_cli.group(deprecated=WATCH_DEPRECATION_MESSAGE)
 def watch():
     """Commands for permanently watching cryptocurrency events."""
     pass

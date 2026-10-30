@@ -359,7 +359,7 @@ class GraphSense(object):
         self.session.set_keyspace(keyspace)
 
         df_temp = df[["cluster_id"]].copy()
-        df_temp.rename(columns={"cluster_id": "address_id"}, inplace=True)
+        df_temp = df_temp.rename(columns={"cluster_id": "address_id"})
         df_temp = df_temp.drop_duplicates()
         df_temp["address_id_group"] = np.floor(
             df_temp["address_id"] / ks_config["bucket_size"]
@@ -391,13 +391,11 @@ class GraphSense(object):
 
         if network == "ETH":
             # tagpacks include invalid ETH addresses, ignore those
-            addresses.drop(
-                addresses[~addresses.address.str.startswith("0x")].index, inplace=True
-            )
-            addresses.rename(columns={"address": "checksum_address"}, inplace=True)
+            addresses = addresses[addresses.address.str.startswith("0x")]
+            addresses = addresses.rename(columns={"address": "checksum_address"})
             addresses.loc[:, "address"] = addresses["checksum_address"].str.lower()
         elif network == "TRX":
-            addresses.rename(columns={"address": "checksum_address"}, inplace=True)
+            addresses = addresses.rename(columns={"address": "checksum_address"})
             addresses.loc[:, "address"] = addresses["checksum_address"]
 
         df_address_ids = self.get_address_ids(addresses, network)
@@ -410,8 +408,8 @@ class GraphSense(object):
 
             result = df_address_ids.merge(addresses, on="address")
 
-            result.drop("address", axis="columns", inplace=True)
-            result.rename(columns={"checksum_address": "address"}, inplace=True)
+            result = result.drop("address", axis="columns")
+            result = result.rename(columns={"checksum_address": "address"})
             result["cluster_defining_address"] = result["address"]
 
             return result

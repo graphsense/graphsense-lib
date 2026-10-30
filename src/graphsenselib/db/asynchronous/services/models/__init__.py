@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -127,6 +127,7 @@ class Address(BaseModel):
     is_contract: Optional[bool] = None
     actors: Optional[List[LabeledItemRef]] = None
     status: Optional[str] = None
+    is_possible_service: Optional[bool] = None
 
 
 class Rate(BaseModel):
@@ -220,7 +221,7 @@ class Parameter(BaseModel):
 class ParameterDetails(Parameter):
     name: str
     type: str
-    value: Union[str, int, float, bool]
+    value: Any
 
 
 class FunctionDefinition(BaseModel):
@@ -232,9 +233,7 @@ class FunctionDefinition(BaseModel):
 
 class FunctionCall(BaseModel):
     parameter_details: List[ParameterDetails]
-    parameter_values: Dict[str, Union[str, int, float, bool]] = Field(
-        default_factory=dict
-    )
+    parameter_values: Dict[str, Any] = Field(default_factory=dict)
     function_definition: FunctionDefinition
 
 
@@ -322,6 +321,15 @@ class Stats(BaseModel):
     currencies: List[CurrencyStats]
     version: str
     request_timestamp: str
+
+
+class NetworkCapabilities(BaseModel):
+    network: str
+    disabled: List[str] = Field(default_factory=list)
+
+
+class Capabilities(BaseModel):
+    networks: List[NetworkCapabilities]
 
 
 class Actor(BaseModel):

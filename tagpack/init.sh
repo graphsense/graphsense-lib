@@ -38,6 +38,7 @@ CREATE ROLE userinsertedtags;
 GRANT INSERT ON TABLE public.tag TO userinsertedtags;
 GRANT INSERT ON TABLE public.tagpack TO userinsertedtags;
 GRANT INSERT ON TABLE public.tag_concept TO userinsertedtags;
+GRANT INSERT ON TABLE public.address TO userinsertedtags;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO userinsertedtags;
 GRANT userinsertedtags TO read_user;
 

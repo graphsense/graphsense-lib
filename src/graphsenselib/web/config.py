@@ -3,7 +3,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.config.tagstore_config import TagStoreReaderConfig
-from pydantic import ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings
 
 
@@ -123,6 +130,123 @@ class ExternalBackendsConfig(BaseSettings):
     timeout_s: float = Field(
         default=60.0, description="HTTP timeout towards the backends"
     )
+    merge_timeout_s: float = Field(
+        default=5.0,
+        description="HTTP timeout of a merge fan-out call (/stats, "
+        "/capabilities, /search, related_addresses). A backend that does not "
+        "answer within it is left out of the merged answer, so a hung backend "
+        "cannot hold up the core networks for the full timeout_s. The "
+        "adapter answers these in under 1 s cold.",
+    )
+    failure_skip_s: float = Field(
+        default=30.0,
+        ge=0.0,
+        description="After a backend could not be reached or did not answer "
+        "in time, merges leave it out for this long without asking it, so a "
+        "hung backend costs the core networks merge_timeout_s once per window "
+        "instead of on every request. Any answer of the backend ends the "
+        "window early. 0 asks it on every merge.",
+    )
+    merge_related_addresses: bool = Field(
+        default=True,
+        description="Rule 5: a locally served network's related_addresses "
+        "(pubkey) also lists the address's twins on the externally served "
+        "networks, asked from the backends; false keeps the local answer alone",
+    )
+    consumer_header: str = Field(
+        default="X-Username",
+        description="Incoming header carrying the gateway-asserted user "
+        "identity; its value is relayed to the backends as "
+        "X-Consumer-Username so they can pace and attribute per user. Empty "
+        "disables the relay.",
+    )
+
+
+class NotificationsConfig(BaseSettings):
+    """Address notifications: the /notifications/* routes, forwarded to the
+    gs-notifications service (web/routes/notifications.py).
+
+    The service owns the data and the rules; this app only adds typed routes
+    in front of it, so the dashboard and API clients talk to one API. When
+    disabled (the default) no route is registered.
+    """
+
+    enabled: bool = Field(
+        default=False, description="Register the /notifications/* routes."
+    )
+    url: Optional[str] = Field(
+        default=None,
+        description="Base URL of the gs-notifications service on the internal "
+        "network, e.g. http://gs-notifications:8000. Required when enabled.",
+    )
+    timeout_s: float = Field(
+        default=30.0,
+        description="HTTP timeout towards the service. Subscribing looks the "
+        "address up in this API first, so allow for a slow lookup.",
+    )
+    forward_headers: List[str] = Field(
+        default_factory=lambda: ["X-Username", "X-User-Roles"],
+        description="Gateway headers passed on to the service: the user "
+        "identity and the roles it gates networks with. Nothing else is "
+        "forwarded.",
+    )
+    service_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Shared secret sent to the service with every forwarded "
+        "call (in service_token_header), so it trusts the identity headers "
+        "only from this app. Must equal the service's identity.service_token. "
+        "Unset or blank: not sent.",
+    )
+    service_token_header: str = Field(
+        default="X-Service-Token",
+        description="Header carrying service_token.",
+    )
+    include_in_schema: bool = Field(
+        default=False,
+        description="List the routes in the OpenAPI spec (and so in the "
+        "generated clients). Off: they are not in openapi.json or the "
+        "clients, but still answer any caller the gateway lets through (API "
+        "key, or login with the notifications role). Beta, may change.",
+    )
+
+    @field_validator("service_token", mode="before")
+    @classmethod
+    def _blank_token_is_none(cls, v: Any) -> Any:
+        # Compose passes an unset token as "": not sent, not an empty secret.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _url_when_enabled(self) -> "NotificationsConfig":
+        if self.enabled and not self.url:
+            raise ValueError("notifications.url is required when enabled")
+        return self
+
+
+class CurrencyRolesConfig(BaseSettings):
+    """Gate externally served currencies on the gateway's roles header (see
+    middleware/currency_roles.py). The role names are an IAM contract: a new
+    network gets its ``currency-<code>`` role in Keycloak, nothing changes
+    here unless ``gated_currencies`` is pinned explicitly."""
+
+    roles_header: str = Field(
+        default="X-User-Roles", description="Header name to parse"
+    )
+    currency_role_prefix: str = Field(
+        default="currency-", description="Prefix of the per-currency roles"
+    )
+    gated_currencies: Optional[List[str]] = Field(
+        default=None,
+        description="Currencies that require the role; unset = every network "
+        "served by an external backend (external_backends.networks). Others "
+        "are open",
+    )
+    enforce_currency_roles: bool = Field(
+        default=True,
+        description="Kill switch: false disables the gate without a redeploy "
+        "(local development has no gateway and therefore no header)",
+    )
 
 
 class GSRestConfig(BaseSettings):
@@ -173,7 +297,10 @@ class GSRestConfig(BaseSettings):
     )
     tag_summary_only_propagate_high_confidence_actors: bool = Field(
         default=True,
-        description="Only propagate high confidence actors in tag summaries",
+        description=(
+            "Only propagate high confidence actors in tag summaries; also limits "
+            "the actors lists of addresses and clusters to actor-type tags"
+        ),
     )
     user_tag_reporting_acl_group: str = Field(
         default="develop",
@@ -192,6 +319,11 @@ class GSRestConfig(BaseSettings):
     included_bridges: Tuple[str, ...] = Field(
         default_factory=tuple,
         description="Included bridges in tx conversions",
+    )
+    cow_protocol_swaps: bool = Field(
+        default=True,
+        description="Report the orders of CoW Protocol settlements as swaps in "
+        "tx conversions (false: settlements yield no conversions)",
     )
     block_by_date_use_linear_search: bool = Field(
         default=False,
@@ -294,10 +426,21 @@ class GSRestConfig(BaseSettings):
         default=None, description="Download file store configuration"
     )
 
+    notifications: Optional[NotificationsConfig] = Field(
+        default=None, description="Address notifications (gs-notifications)"
+    )
+
     external_backends: Optional[ExternalBackendsConfig] = Field(
         default=None,
         description="Networks served by external GraphSense-API-compatible "
         "backends (middleware/external_backends.py)",
+    )
+
+    auth: Optional[CurrencyRolesConfig] = Field(
+        default=None,
+        description="Role-based gating of externally served currencies "
+        "(middleware/currency_roles.py); unset = defaults, i.e. enforced for "
+        "every external-backend network",
     )
 
     @model_validator(mode="after")

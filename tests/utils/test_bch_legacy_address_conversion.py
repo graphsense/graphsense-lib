@@ -32,11 +32,10 @@ def test_request_path_canonicalizes_cashaddr_to_legacy():
         == "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu"
     )
 
-    # Known caveat: only the ``bitcoincash:``-prefixed form is converted; a
-    # prefixless CashAddr is passed through as-is.
+    # A prefixless CashAddr, as wallets often show it, is converted too.
     assert (
         cannonicalize_address("bch", "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a")
-        == "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        == "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu"
     )
 
 

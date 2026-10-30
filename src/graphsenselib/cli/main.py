@@ -1,4 +1,5 @@
 import logging
+import os
 
 import click
 from rich.traceback import install
@@ -12,8 +13,11 @@ from ..ingest.cli import ingest_cli
 from ..monitoring.cli import monitoring_cli
 from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
+from ..sync.cli import sync_cli
+from ..sync.jobs import SYNC_JOB_ENV_VAR
 from ..utils.console import console
 from ..utils.logging import configure_logging
+from ..utils.signals import install_sigterm_as_interrupt
 from ..utils.slack import ClickSlackErrorNotificationContext
 from ..utils.generic import filter_sensitive_sys_argv
 from ..watch.cli import watch_cli
@@ -27,9 +31,10 @@ try:
 
     tagpacktool_cli_available = True
 
-except ImportError:
+except ImportError as e:
     logger.debug("Tagpack tool or tagstore CLI not available.")
     tagpacktool_cli_available = False
+    tagpacktool_import_error = e
 
 try:
     from ..web.cli import web_cli
@@ -54,6 +59,32 @@ try:
 except ImportError:
     logger.debug("MCP CLI not available.")
     mcp_cli_available = False
+
+
+def _unavailable_cli(names, error, extra):
+    """Stand-in commands for an optional CLI that failed to import, so that
+    calling it reports why instead of "No such command"."""
+
+    @click.group()
+    def stub():
+        pass
+
+    for name in names:
+
+        @stub.command(
+            name=name,
+            context_settings={"ignore_unknown_options": True},
+            add_help_option=False,
+        )
+        @click.argument("args", nargs=-1, type=click.UNPROCESSED)
+        def _unavailable(args, _name=name):
+            raise click.ClickException(
+                f"'{_name}' is not available: {error}. "
+                f"Install it with: pip install 'graphsense-lib[{extra}]'"
+            )
+
+    return stub
+
 
 __author__ = "iknaio"
 __copyright__ = "iknaio"
@@ -84,10 +115,19 @@ def version_cmd():
             config_cli,
             convert_cli,
             monitoring_cli,
+            sync_cli,
             watch_cli,
             version,
         ]
-        + ([tagpacktool_cli, tagstore_cli] if tagpacktool_cli_available else [])
+        + (
+            [tagpacktool_cli, tagstore_cli]
+            if tagpacktool_cli_available
+            else [
+                _unavailable_cli(
+                    ["tagpack-tool", "tagstore"], tagpacktool_import_error, "tagpacks"
+                )
+            ]
+        )
         + ([web_cli] if web_cli_available else [])
         + ([transformation_cli] if transformation_cli_available else [])
         + ([mcp_cli] if mcp_cli_available else [])
@@ -114,15 +154,21 @@ def cli(ctx, verbosity: int, config_file: str):
         verbosity (int): One v stands for loglevel warning, two for info and so on...
     """
 
+    # docker stop / the sync daemon send SIGTERM: unwind like Ctrl-C so locks
+    # are released (see utils/signals.py).
+    install_sigterm_as_interrupt()
     configure_logging(verbosity)
     config, h = try_load_config(config_file)
-    # if we have a config, we can set up the slack notification context
+    # if we have a config, we can set up the slack notification context. Not
+    # for jobs of the sync daemon: it retries them and reports failures itself,
+    # rate-limited (see sync/jobs.py).
     if config is not None:
-        ctx.with_resource(
-            ClickSlackErrorNotificationContext(
-                config.get_slack_exception_notification_hook_urls()
+        if not os.environ.get(SYNC_JOB_ENV_VAR):
+            ctx.with_resource(
+                ClickSlackErrorNotificationContext(
+                    config.get_slack_exception_notification_hook_urls()
+                )
             )
-        )
         logger.info(
             f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
         )

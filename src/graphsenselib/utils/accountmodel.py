@@ -1,3 +1,4 @@
+import re
 from typing import Optional, Union
 
 from .generic import remove_prefix
@@ -6,6 +7,23 @@ from .generic import remove_prefix
 ETH_PLACEHOLDER_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 NULL_ADDRESS = "0x0000000000000000000000000000000000000000"
 NATIVE_ASSET = "native"
+
+
+_HEX_IDENTIFIER = re.compile(r"^0x[0-9a-fA-F]+$")
+
+
+def normalize_hex_identifier(identifier: str) -> str:
+    """Lowercase a 0x-prefixed hex identifier, leave anything else untouched.
+
+    Hex is case-insensitive, and no base58 string can start with "0x" (base58
+    has no "0"), so this is safe regardless of the network a tag claims:
+    it covers EVM chains, tokens tagged with their currency as network, and
+    64-char hex addresses alike. Case-sensitive formats (base58, bech32 in
+    mixed case, Monero, ...) never match and are returned as-is.
+    """
+    if _HEX_IDENTIFIER.match(identifier):
+        return identifier.lower()
+    return identifier
 
 
 def ensure_0x_prefix(istr: str) -> str:

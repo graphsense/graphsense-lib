@@ -22,6 +22,7 @@ temp-file rename).
 import datetime as _dt
 import hashlib
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -29,7 +30,7 @@ import msgpack
 
 from graphsenselib.datatypes import DbChangeType
 from graphsenselib.db.analytics import DbChange
-from graphsenselib.db.parallel import PlainRow
+from graphsenselib.db.parallel import PlainRow, flatten_value
 from graphsenselib.deltaupdate.update.account.createdeltas import TxReference
 from graphsenselib.deltaupdate.update.generic import DeltaValue
 
@@ -53,6 +54,10 @@ _HEADER_IDX = -1
 #   - PlainRow    (attribute-access view of a driver row/UDT) — account only:
 #         the process-parallel reader returns current DB values as PlainRow
 #         (db/parallel.py), and these enter DbChange.data on the account path.
+#   - driver maps (OrderedMapSerializedKey, e.g. token_values) — account only:
+#         with one worker the reader hands map columns back as the driver's
+#         own type. Flattened like the parallel reader does (dict, UDT values
+#         as PlainRow), so both paths stage the same payload.
 #   - datetime    (bookkeeping timestamps)
 #   - big int     (Python ints outside msgpack's signed/unsigned 64-bit range):
 #         Cassandra varint columns hold arbitrary precision — e.g. high-decimal
@@ -89,6 +94,8 @@ def _default(obj):
         # _data may nest further PlainRow/DeltaValue/etc.; _packb recurses
         # through _default so the whole tree rebinds byte-identically.
         return msgpack.ExtType(_EXT_PLAINROW, _packb(obj._data))
+    if isinstance(obj, Mapping):  # driver map; a plain dict never gets here
+        return flatten_value(obj)
     if hasattr(obj, "item"):  # numpy scalar
         return obj.item()
     if isinstance(obj, int):  # int wider than msgpack's native 64-bit range
@@ -228,6 +235,11 @@ class DeltaWal:
     def has_pending(self) -> bool:
         """True only if a committed (headered) record exists."""
         return self._read_header() is not None
+
+    def pending_header(self) -> Optional[dict]:
+        """Header of the committed record (run_id, code_version, block_lo,
+        block_hi, ...), or None. A single read; safe for read-only callers."""
+        return self._read_header()
 
     def stage(self, record: WalRecord) -> None:
         """Durably persist the record before any of it is applied.

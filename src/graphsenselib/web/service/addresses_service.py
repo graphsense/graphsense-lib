@@ -173,6 +173,8 @@ async def list_address_links(
     return pydantic_to_openapi(pydantic_result)
 
 
+# Bulk-only legacy name (the `/addresses/{address}/entity` route is gone); the
+# casemgm dashboard plugin still requests it. See service/entities_service.py.
 async def get_address_entity(ctx, currency, address, include_actors=True):
     pydantic_result = await ctx.services.addresses_service.get_address_entity(
         currency, address, include_actors, ctx.tagstore_groups

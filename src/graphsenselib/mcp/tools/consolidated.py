@@ -3,11 +3,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Callable, Literal, Optional
 
 import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
+from pydantic import Field
+
+from graphsenselib.mcp.declined import record_declined
+from graphsenselib.mcp.error_logging import request_user
+from graphsenselib.mcp.pagesize import resolve_pagesize
+from graphsenselib.web.middleware.external_backends import (
+    SERVED_BY_HEADER,
+    SERVED_BY_VALUE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +76,19 @@ def _make_client(app) -> httpx.AsyncClient:
     tests via in-process Client) — safe no-op.
     """
     headers = get_http_headers()
+    # a merged answer missing an external backend's networks is noted in the
+    # tool result (mcp/declined.py)
+    event_hooks: dict[str, list[Callable[..., Any]]] = {"response": [record_declined]}
     base_url = getattr(app.state, "_graphsense_mcp_internal_base_url", None)
     if base_url:
-        return httpx.AsyncClient(base_url=base_url, headers=headers)
+        return httpx.AsyncClient(
+            base_url=base_url, headers=headers, event_hooks=event_hooks
+        )
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://graphsense-mcp",
         headers=headers,
+        event_hooks=event_hooks,
     )
 
 
@@ -89,18 +104,32 @@ def _raise_backend_http_error(response: httpx.Response, path: str) -> None:
     `graphsenselib.mcp` (see `web/app.py:setup_logging`) then picks up
     the 5xx records but stays quiet for 4xx — those are model-side
     mistakes (`tx not found`, `bad address`, ...) and would just be
-    noise.
+    noise. 501 stays quiet too: the external backend of a lite network
+    answers it by contract for features it does not offer (clusters,
+    neighbors; see `/capabilities`), so it is no incident either. So does a
+    503 the external backend answered or that stands for it being down: the
+    external backends middleware alerts once per outage, and one alert per
+    tool call during it would be the spam that avoids.
     """
     try:
         detail = response.json().get("detail")
     except Exception:
         detail = response.text
-    if response.status_code >= 500:
+    external_unavailable = (
+        response.status_code == 503
+        and response.headers.get(SERVED_BY_HEADER) == SERVED_BY_VALUE
+    )
+    if (
+        response.status_code >= 500
+        and response.status_code != 501
+        and not external_unavailable
+    ):
         logger.error(
-            "graphsense backend returned HTTP %d for %s: %s",
+            "graphsense backend returned HTTP %d for %s: %s | User: %s",
             response.status_code,
             path,
             detail,
+            request_user(),
         )
     raise ToolError(
         f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
@@ -123,14 +152,15 @@ async def _get_json_optional(
     path: str,
     params: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Like _get_json, but returns None on 404 instead of raising.
+    """Like _get_json, but returns None on 404 and 501 instead of raising.
 
     Use when the absence of a resource is a valid, expected outcome —
     e.g. an address that has no cluster association shouldn't fail the
-    whole lookup_address call.
+    whole lookup_address call. 501 is the same outcome on a lite network
+    whose external backend does not offer the feature (no clusters on EVM).
     """
     response = await client.get(path, params=params)
-    if response.status_code == 404:
+    if response.status_code in (404, 501):
         return None
     if response.status_code >= 400:
         _raise_backend_http_error(response, path)
@@ -347,7 +377,7 @@ def register_lookup_address(mcp, app, stack) -> None:
                 # some non-UTXO cases) — a 404 here must not fail the whole
                 # call, so we use the 404-tolerant variant.
                 cluster_body = await _get_json_optional(
-                    client, f"/{currency}/addresses/{address}/entity"
+                    client, f"/{currency}/addresses/{address}/cluster"
                 )
                 if cluster_body is not None:
                     result["cluster"] = _slim(_strip_cluster_legacy(cluster_body))
@@ -404,6 +434,10 @@ def register_lookup_cluster(mcp, app, stack) -> None:
         return {"cluster": _slim(_strip_cluster_legacy(base))}
 
 
+# Every consolidated list tool routes through _params_from, so this is where
+# the shared pagesize policy (see mcp/pagesize.py) is applied for them:
+# callers can page onward via `next_page`. Auto-generated tools have no such
+# chokepoint and get an omitted default from FastMCP's ToolTransform instead.
 def _params_from(
     direction: Optional[str],
     pagesize: Optional[int],
@@ -413,8 +447,7 @@ def _params_from(
     params: dict[str, Any] = {}
     if direction is not None:
         params["direction"] = direction
-    if pagesize is not None:
-        params["pagesize"] = pagesize
+    params["pagesize"] = resolve_pagesize(pagesize)
     if page is not None:
         params["page"] = page
     for k, v in extra.items():
@@ -490,7 +523,9 @@ def register_list_neighbors(mcp, app, stack) -> None:
             currency: Network identifier (e.g. "btc").
             address: The address to list neighbors for.
             direction: "in" (incoming) or "out" (outgoing).
-            pagesize: Results per page (when filtering: target match count).
+            pagesize: Results per page, or the target match count when
+                filtering. Omitted, it defaults to 25 unfiltered and 50
+                with `tag_filter` set; page onward via `next_page`.
             page: Pagination token from a previous response.
             only_ids: Limit to specific neighbor ids.
             include_tag_summary: Enrich each neighbor with its `tag_summary`.
@@ -604,86 +639,77 @@ def register_list_neighbors(mcp, app, stack) -> None:
 def register_lookup_tx_details(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_transaction-level"})
     async def lookup_tx_details(
-        currency: str,
-        tx_hash: str,
-        include_upstream: bool = False,
-        include_downstream: bool = False,
-        include_heuristics: bool = False,
-        include_conversions: bool = False,
+        currency: Annotated[
+            str, Field(description='Network identifier (e.g. "btc", "eth").')
+        ],
+        tx_hash: Annotated[str, Field(description="Transaction hash.")],
+        include_upstream: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Backward trace (where did the money come from?). Appends "
+                    "`upstream`: one `{tx_hash, input_index, output_index}` per "
+                    "input, read as 'our input [input_index] was produced by "
+                    "[tx_hash]'s output [output_index]'."
+                )
+            ),
+        ] = False,
+        include_downstream: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Forward trace (where did the money go next?). Appends "
+                    "`downstream`: the later tx that spent each output. "
+                    "Unspent outputs don't appear."
+                )
+            ),
+        ] = False,
+        include_heuristics: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Compute the UTXO heuristics (change-address detection, "
+                    "CoinJoin: wasabi/whirlpool/joinmarket); results sit in "
+                    "the tx body. No-op on account-model chains."
+                )
+            ),
+        ] = False,
+        include_conversions: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Appends `conversions`: the DEX swaps and bridge txs in "
+                    "this tx under one schema (`conversion_type` 'dex_swap' "
+                    "or 'bridge_tx', `from_address`, `to_address`, "
+                    "`from_asset`, `to_asset`, `from_amount`, ...)."
+                )
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Fetch a transaction with full IO detail and optional trace context.
 
-        One call replaces get_tx, get_tx_io, get_spending_txs,
-        get_spent_in_txs, and get_tx_conversions. The tx body is retrieved
-        with io + nonstandard io + io indices always enabled, so UTXO txs
-        come back with a complete inputs/outputs list (including
-        non-standard scripts and their positional indices) and
-        account-model txs come back with the usual sender/receiver/value
-        fields.
+        UTXO txs always come back with the complete inputs/outputs list,
+        including non-standard scripts and positional indices;
+        account-model txs with the usual sender/receiver/value fields.
+        The `include_*` flags add backward (`upstream`) and forward
+        (`downstream`) trace links, UTXO heuristics, and DEX swap / bridge
+        `conversions`.
 
-        Optional add-ons:
+        For account-model txs the per-event value flows (every base,
+        internal and token transfer) are not included, because an
+        aggregator or exploit tx can fan out into hundreds of them. Page
+        through them with `list_tx_flows`. On UTXO chains the same
+        information is already in `inputs`/`outputs`.
 
-        - `include_upstream=True` → appends an `upstream` list: for each
-          INPUT of this tx, the earlier tx whose output funded it. Backward
-          tracing ("where did the money come from?"). Each entry
-          `{"tx_hash": str, "input_index": int, "output_index": int}` reads
-          as "our input [input_index] was produced by [tx_hash]'s output
-          [output_index]".
-        - `include_downstream=True` → appends a `downstream` list: for each
-          OUTPUT of this tx, the later tx that consumed it. Forward tracing
-          ("where did the money go next?"). Outputs that haven't been spent
-          yet simply don't appear.
-        - `include_heuristics=True` → asks graphsense to compute all
-          supported UTXO heuristics (change-address detection, CoinJoin
-          identification — wasabi/whirlpool/joinmarket variants). The
-          results are embedded in the returned tx body under
-          implementation-specific fields. UTXO-chain only; a no-op on
-          account-model chains.
-        - `include_conversions=True` → appends a `conversions` list:
-          "conversion" is graphsense's internal term for any cross-asset
-          movement within a single tx. It covers BOTH DEX swaps (token A
-          → token B on the same chain) and bridge transactions (asset X
-          on chain A → asset Y on chain B). The returned entries share one
-          schema (`conversion_type: "dex_swap" | "bridge_tx"`, `from_address`,
-          `to_address`, `from_asset`, `to_asset`, `from_amount`, …) so the
-          LLM doesn't need to branch on the subtype to reason about the
-          cross-asset edge.
-
-        For account-model txs, the per-event value-flow listing (every
-        base/internal/token transfer with sender, receiver, asset, value)
-        is *not* included here because the count is unbounded — an
-        aggregator or exploit tx can fan out into hundreds of events.
-        Call the dedicated `list_tx_flows` tool for that, paginated.
-        On UTXO chains the equivalent information is already present in
-        this response under `inputs`/`outputs`.
-
-        Note on `spending` vs `spent_in`: the underlying graphsense
-        endpoints `/spending` and `/spent_in` are NAMED counter-intuitively
-        (/spending is backward, /spent_in is forward). This consolidation
-        hides that and uses `upstream` / `downstream` to mean what they say.
-
-        Note on `identifier` vs `tx_hash`: account-model responses carry
-        both. `tx_hash` names the on-chain transaction; `identifier`
-        names a specific sub-payment within it (one tx hash can carry
-        many sub-payments — the native transfer plus token transfers,
-        each with its own `identifier`). When feeding a tx into
-        `build_pathfinder_file`, pass the `identifier` so pathfinder can
-        disambiguate which sub-payment is meant. UTXO responses have
-        only `tx_hash` and no `identifier`; use `tx_hash` there.
-
-        Args:
-            currency: Network identifier (e.g. "btc", "bch", "ltc", "eth").
-            tx_hash: Transaction hash.
-            include_upstream: Backward trace — where our inputs came from.
-            include_downstream: Forward trace — where our outputs went next.
-            include_heuristics: Compute all supported UTXO heuristics.
-            include_conversions: DEX swaps and bridge transactions in this
-                tx, unified under one schema.
+        `identifier` vs `tx_hash`: account-model responses carry both.
+        `tx_hash` names the on-chain transaction; `identifier` names one
+        sub-payment within it (the native transfer or a token transfer).
+        Pass the `identifier` to `build_pathfinder_file`. UTXO txs have
+        only `tx_hash`.
 
         Returns:
-            The full tx body (always includes io, nonstandard io, and io
-            indices) with optional top-level `upstream`, `downstream`, and
-            `conversions` keys.
+            The full tx body with optional top-level `upstream`,
+            `downstream`, and `conversions` keys.
         """
         _validate_currency(currency)
         _validate_id("tx_hash", tx_hash)
@@ -768,7 +794,8 @@ def register_list_txs_for(mcp, app, stack) -> None:
                 `address` and which is `neighbor`.
             direction: "in" / "out" / None to include both. Ignored when
                 `neighbor` is set (raises on combination).
-            pagesize: Results per page.
+            pagesize: Results per page (defaults to 25 when omitted); page
+                onward via `next_page`.
             page: Pagination token from a previous response.
             min_height: Only include transactions at or above this block height.
             max_height: Only include transactions at or below this block height.
@@ -847,11 +874,20 @@ def register_list_tags_by_address(mcp, app, stack) -> None:
         cluster-derived attribution still surfaces. Qualify any claim
         drawn from a cluster-derived tag (see server `instructions`).
 
+        Name fields, strong to weak: `actor` (curated id, sparsest),
+        `label` (free text; match case-insensitively as a substring),
+        `category` + `concepts`, then `tagpack_title` +
+        `tagpack_is_public`. An empty stronger field is not missing
+        attribution, only missing at that level. A high-confidence tag
+        from a non-public tagpack with empty actor and label is a
+        redacted real attribution, not an unknown one.
+
         Args:
             currency: Network identifier (e.g. "btc", "eth").
             address: Address to list tags for.
             page: Pagination token from a previous response.
-            pagesize: Results per page.
+            pagesize: Results per page (defaults to 25 when omitted); page
+                onward via `next_page`.
 
         Returns:
             A dict with `address_tags` and a `next_page` cursor.

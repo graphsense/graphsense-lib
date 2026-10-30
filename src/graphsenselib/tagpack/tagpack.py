@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
+import unicodedata
 from collections import UserDict, defaultdict
 from datetime import date, datetime
 from typing import Optional, Tuple
 
-from graphsenselib.config import supported_base_currencies
 import giturlparse as gup
 import yaml
 from git import Repo
@@ -24,12 +25,174 @@ from graphsenselib.tagpack import (
     load_yaml_fast,
 )
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
-from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
-from graphsenselib.utils.address import validate_address
+from graphsenselib.tagpack.constants import (
+    is_known_network,
+    suggest_networks_from_currency,
+)
+from graphsenselib.tagpack.utils import (
+    apply_to_dict_field,
+    normalize_tag_address,
+    try_parse_date,
+)
+from graphsenselib.tagpack.address_check import (
+    ADDRESS_VALIDATION_SKIP,
+    UNDECODED_ESCAPE,
+    AddressFinding,
+    address_hint,
+    address_line_numbers,
+    autofill_hints,
+    validate_token_address,
+)
+from graphsenselib.utils.address import is_verifiable_network, validate_address
 from graphsenselib.tagpack.cmd_utils import get_user_choice
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class _UnresolvedInclude:
+    """An ``!include`` node kept as a reference instead of being resolved."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def __eq__(self, other):
+        return isinstance(other, _UnresolvedInclude) and other.path == self.path
+
+
+class _UnresolvedIncludeLoader(UniqueKeyLoader):
+    pass
+
+
+_UnresolvedIncludeLoader.add_constructor(
+    "!include",
+    lambda loader, node: _UnresolvedInclude(loader.construct_scalar(node)),
+)
+
+
+class _UnresolvedIncludeDumper(yaml.Dumper):
+    def choose_scalar_style(self):
+        # PyYAML only emits plain scalars for implicit tags, so `!include x`
+        # would come out as `!include 'x'`. Keep it plain, as tagpacks write it.
+        if self.event.tag == "!include" and not self.event.style:
+            if self.analysis is None:
+                self.analysis = self.analyze_scalar(self.event.value)
+            if self.analysis.allow_block_plain and not self.analysis.multiline:
+                return ""
+        return super().choose_scalar_style()
+
+
+_UnresolvedIncludeDumper.add_representer(
+    _UnresolvedInclude,
+    lambda dumper, inc: dumper.represent_scalar("!include", inc.path),
+)
+
+
+def _render_entry(key, value, indent, newline) -> str:
+    line = yaml.safe_dump(
+        {key: value}, default_flow_style=False, allow_unicode=True, width=1 << 20
+    ).rstrip("\n")
+    return " " * indent + line.replace("\n", newline) + newline
+
+
+def _entry_end_line(node) -> int:
+    """Line before which an entry following ``node`` (a value) is inserted."""
+    while (
+        isinstance(node, (yaml.MappingNode, yaml.SequenceNode))
+        and not node.flow_style
+        and node.value
+    ):
+        node = (
+            node.value[-1][1] if isinstance(node, yaml.MappingNode) else node.value[-1]
+        )
+    if isinstance(node, yaml.ScalarNode) and node.style in ("|", ">"):
+        # block scalars end at the start of the next token's line
+        return node.end_mark.line
+    return node.end_mark.line + 1
+
+
+def _edit_actor_entries(text, original, expected) -> Optional[str]:
+    """Apply the top-level ``actor``/``lastmod`` and per-tag ``actor`` values of
+    ``expected`` to ``text`` as line edits.
+
+    ``original`` is ``text`` loaded. Returns None when a change is not a plain
+    insert or value replacement (removing an entry, flow-style tags).
+    """
+    root = yaml.compose(text, _UnresolvedIncludeLoader)
+    if not isinstance(root, yaml.MappingNode) or root.flow_style:
+        return None
+
+    newline = "\r\n" if "\r\n" in text else "\n"
+    line_starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    edits = []  # (start index, end index, replacement)
+
+    def line_index(line):
+        if line < len(line_starts):
+            return line_starts[line]
+        return len(text)
+
+    def insert_line(line, entry):
+        pos = line_index(line)
+        if pos == len(text) and text and not text.endswith("\n"):
+            entry = newline + entry
+        edits.append((pos, pos, entry))
+
+    def set_entry(mapping, key, value, before=None):
+        entries = {k.value: (k, v) for k, v in mapping.value}
+        indent = mapping.value[0][0].start_mark.column
+        if key in entries:
+            _, v = entries[key]
+            if (
+                not isinstance(v, yaml.ScalarNode)
+                or v.start_mark.line != v.end_mark.line
+            ):
+                return False
+            rendered = _render_entry(key, value, 0, newline)
+            rendered = rendered[len(key) + 1 :].strip()
+            edits.append((v.start_mark.index, v.end_mark.index, rendered))
+        elif before is not None and before in entries:
+            insert_line(
+                entries[before][0].start_mark.line,
+                _render_entry(key, value, indent, newline),
+            )
+        else:
+            insert_line(
+                _entry_end_line(mapping.value[-1][1]),
+                _render_entry(key, value, indent, newline),
+            )
+        return True
+
+    for key in ("lastmod", "actor"):
+        want, have = expected.get(key), original.get(key)
+        if want == have:
+            continue
+        if want is None or not set_entry(root, key, want, before="tags"):
+            return None
+
+    want_tags = expected.get("tags") or []
+    have_tags = original.get("tags") or []
+    tag_nodes = [v for k, v in root.value if k.value == "tags"]
+    for i, (want_tag, have_tag) in enumerate(zip(want_tags, have_tags)):
+        want, have = want_tag.get("actor"), have_tag.get("actor")
+        if want == have:
+            continue
+        if want is None or not tag_nodes:
+            return None
+        node = tag_nodes[0]
+        if not isinstance(node, yaml.SequenceNode) or node.flow_style:
+            return None
+        item = node.value[i]
+        if not isinstance(item, yaml.MappingNode) or item.flow_style or not item.value:
+            return None
+        if not set_entry(item, "actor", want):
+            return None
+
+    # apply back to front; same-position inserts keep their order
+    for _, (start, end, replacement) in sorted(
+        enumerate(edits), key=lambda e: (e[1][0], e[0]), reverse=True
+    ):
+        text = text[:start] + replacement + text[end:]
+    return text
 
 
 def get_repository(path: str) -> pathlib.Path:
@@ -192,31 +355,185 @@ def get_uri_for_tagpack(
         return res, rel_path, default_prefix, commit_date
 
 
-def check_for_null_characters(field_name: str, value, context=None) -> None:
-    """
-    Check if a field value contains null characters (\x00 or \u0000).
+# Control characters allowed in text fields: tab and line breaks.
+_ALLOWED_CONTROL_CHARS = frozenset("\t\n\r")
 
-    Args:
-        field_name: Name of the field being checked
-        value: Value to check for null characters
-        context: Additional context for error messages (converted to str only on error)
+# Garbled or non-printable text only warns for now: some generated
+# packs carry many such values and must be
+# repaired at their generators first. Set to True to reject them. Null
+# characters are always rejected.
+TEXT_PROBLEMS_ARE_ERRORS = False
+
+_CP1252_SPECIALS = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ"
+# Characters that UTF-8 bytes turn into when read as Latin-1/cp1252.
+_MOJIBAKE_RUN = re.compile("[\u0080-\u00ff" + re.escape(_CP1252_SPECIALS) + "]+")
+
+
+def _utf8_sequence_length(lead: int) -> int:
+    if 0xC2 <= lead <= 0xDF:
+        return 2
+    if 0xE0 <= lead <= 0xEF:
+        return 3
+    if 0xF0 <= lead <= 0xF4:
+        return 4
+    return 0
+
+
+def decode_mojibake_pieces(pieces: list) -> str:
+    """Decode a run given as [(byte, original text)], one entry per byte.
+
+    Every valid UTF-8 sequence becomes its character; any other byte keeps
+    its original text. So "Ã\xa0è" becomes "àè": the first two characters
+    are a garbled "à", the "è" is correct and stays.
+    """
+    out = []
+    left = []
+    i = 0
+    while i < len(pieces):
+        n = _utf8_sequence_length(pieces[i][0])
+        if n and i + n <= len(pieces):
+            try:
+                out.append(bytes(b for b, _ in pieces[i : i + n]).decode("utf-8"))
+                i += n
+                continue
+            except UnicodeDecodeError:
+                pass
+        out.append(pieces[i][1])
+        left.append(pieces[i][0])
+        i += 1
+    # A partial decode is only trusted if what is left looks like real text:
+    # leftover cp1252 punctuation or C1 bytes mean the run was garbled some
+    # other way (e.g. Mac Roman), and "repairing" it would garble it further.
+    if any(0x80 <= b <= 0x9F for b in left):
+        return "".join(t for _, t in pieces)
+    return "".join(out)
+
+
+def _run_pieces(run: str) -> Optional[list]:
+    pieces = []
+    for c in run:
+        if ord(c) < 256:
+            pieces.append((ord(c), c))
+        else:
+            try:
+                pieces.append((c.encode("cp1252")[0], c))
+            except UnicodeError:
+                return None
+    return pieces
+
+
+def repair_mojibake(text: str) -> Optional[str]:
+    """``text`` decoded properly if it contains UTF-8 that was read as
+    cp1252 or Latin-1 (e.g. "Ð\x9bÐ\x98Ð¤" for "ЛИФ", "MÃ¼nchen" for
+    "München"), else None.
+
+    Works on runs of Latin-1/cp1252 characters and decodes every valid UTF-8
+    sequence inside them, so text that is only partly damaged (garbled next
+    to correct characters, as in some generated packs) is found too. Correct
+    accented text ("Zürich", "Café") does not form UTF-8 sequences, and
+    Cyrillic, CJK etc. are never part of a run. The rare exception is
+    adjacent Latin-1 characters that happen to be valid UTF-8 bytes (e.g.
+    "ß¿"), which are reported too. Text garbled through other codecs (Mac
+    Roman: "‚Ä¢" for "•") is not detected.
+    """
+    if text.isascii():
+        return None
+
+    def fix(m):
+        pieces = _run_pieces(m.group(0))
+        return m.group(0) if pieces is None else decode_mojibake_pieces(pieces)
+
+    fixed = _MOJIBAKE_RUN.sub(fix, text)
+    return fixed if fixed != text else None
+
+
+def text_problem(text: str) -> Optional[str]:
+    """Why ``text`` should not be in a tagpack field, or None if it is fine."""
+    if "\x00" in text:
+        return "contains null characters (\\x00)"
+    fixed = repair_mojibake(text)
+    if fixed is not None:
+        return (
+            "is mis-encoded (UTF-8 bytes read as Latin-1/cp1252); "
+            f"the intended text is probably {fixed!r}"
+        )
+    m = UNDECODED_ESCAPE.search(text)
+    if m:
+        return (
+            f"contains the undecoded escape sequence {m.group(0)!r} "
+            "(the escape as text instead of the character it stands for)"
+        )
+    bad = sorted(
+        {
+            c
+            for c in text
+            if unicodedata.category(c) == "Cc" and c not in _ALLOWED_CONTROL_CHARS
+        }
+    )
+    if bad:
+        codes = ", ".join(f"U+{ord(c):04X}" for c in bad)
+        return f"contains non-printable control characters ({codes})"
+    return None
+
+
+def check_text_field(
+    field_name: str, value, context=None, warnings: Optional[list] = None
+) -> None:
+    """Check a field value, including strings nested in lists and dicts (e.g.
+    a JSON context), for null characters, other non-printable control
+    characters and mis-encoded (mojibake) text.
+
+    Null characters always raise. The other problems raise only if
+    TEXT_PROBLEMS_ARE_ERRORS; otherwise their messages are appended to
+    ``warnings`` (or logged if no list is given).
 
     Raises:
-        ValidationError: If null characters are found in the value
+        ValidationError: naming the field, the position of the bad string
+            and, for mojibake, the probably intended text.
     """
-    if isinstance(value, str):
-        if "\x00" in value or "\u0000" in value:
+
+    def walk(v, where):
+        if isinstance(v, str):
+            problem = text_problem(v)
+            if problem is None:
+                return
             context_str = f" in {context}" if context else ""
-            raise ValidationError(
-                f"Field '{field_name}' contains null characters (\\x00 or \\u0000){context_str}"
-            )
-    elif isinstance(value, (list, tuple)):
-        for i, item in enumerate(value):
-            if isinstance(item, str) and ("\x00" in item or "\u0000" in item):
-                context_str = f" in {context}" if context else ""
-                raise ValidationError(
-                    f"Field '{field_name}' item at index {i} contains null characters (\\x00 or \\u0000){context_str}"
-                )
+            message = f"Field '{field_name}'{where} {problem}{context_str}"
+            if "\x00" in v or TEXT_PROBLEMS_ARE_ERRORS:
+                raise ValidationError(message)
+            if warnings is not None:
+                warnings.append(message)
+            else:
+                logger.warning(message)
+        elif isinstance(v, (list, tuple)):
+            for i, item in enumerate(v):
+                walk(item, f"{where} item at index {i}")
+        elif isinstance(v, dict):
+            for k, item in v.items():
+                walk(k, f"{where} key {k!r}")
+                walk(item, f"{where} key {k!r}")
+
+    if field_name == "context" and isinstance(value, str):
+        # a JSON string: its escapes are JSON's, check the decoded values
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
+    walk(value, "")
+
+
+def log_text_warnings(source_prefix: str, warnings: list, shown: int = 3) -> None:
+    """One summary warning per pack instead of one per value."""
+    if not warnings:
+        return
+    examples = "; ".join(warnings[:shown])
+    more = f" (and {len(warnings) - shown} more)" if len(warnings) > shown else ""
+    logger.warning(
+        f"{source_prefix}{len(warnings)} field value(s) with garbled or "
+        f"non-printable text, accepted for now but to be rejected in a later "
+        f"release: {examples}{more}. Repair with "
+        "scripts/one-off-fixes/fix_tagpack_mojibake.py in graphsense-lib."
+    )
 
 
 # Tagpack convention: header files live at the repo root, not next to the
@@ -390,8 +707,6 @@ class TagPack(object):
         # so '2022-10-1' is not interpreted as a date. This line fixes this.
         apply_to_dict_field(self.contents, "lastmod", try_parse_date, fail=False)
 
-    verifiable_currencies = supported_base_currencies
-
     @staticmethod
     def _db_unique_key_for_tag(tag):
         """Build the uniqueness key used by tagstore insert/DB constraint.
@@ -404,23 +719,8 @@ class TagPack(object):
             address = tag.all_fields.get("address")
             network = str(tag.all_fields.get("network", "")).upper()
 
-            # Apply network-specific address normalization (matches tagstore._perform_address_modifications)
-            if network == "BCH" and address.startswith("bitcoincash"):
-                from graphsenselib.utils.bch import (
-                    bch_address_to_legacy as to_legacy_address,
-                )
-
-                try:
-                    address = to_legacy_address(address)
-                except Exception as exc:
-                    logger.warning(
-                        "Could not normalize BCH cash address during validation; "
-                        "using original address as-is: %s (%s)",
-                        address,
-                        exc,
-                    )
-            elif network == "ETH":
-                address = address.lower()
+            # Same normalization as the tagstore insert path.
+            address = normalize_tag_address(address, network, "validation")
 
             identifier = address
         else:
@@ -473,11 +773,15 @@ class TagPack(object):
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
 
-        # Check first 4KB for !include directives
+        # the whole file: an include missed here would reach the fast loader,
+        # which leaves tags to a PyYAML without the include constructor
         with open(pathname, "rb") as f:
-            has_include = b"!include" in f.read(4096)
+            has_include = b"!include" in f.read()
 
-        if use_pyyaml or header_dir is not None or has_include:
+        # The fast loader reads files as PyYAML does (see load_yaml_fast);
+        # PyYAML itself is needed only to resolve includes. A header
+        # directory alone no longer means PyYAML.
+        if use_pyyaml or has_include:
             # Resolution order:
             #   1. explicit `header_dir` (batch path via collect_tagpack_files);
             #   2. the tagpack repo root inferred by walking up from the file;
@@ -491,7 +795,7 @@ class TagPack(object):
                 yaml_include.Constructor(base_dir=include_base),
                 UniqueKeyLoader,
             )
-            with open(pathname, "r") as f:
+            with open(pathname, "r", encoding="utf-8") as f:
                 contents = yaml.load(f, UniqueKeyLoader)
         else:
             contents = load_yaml_fast(pathname)
@@ -504,6 +808,58 @@ class TagPack(object):
 
     def update_lastmod(self):
         self.contents["lastmod"] = date.today()
+
+    def dump_actor_updates(self, pathname) -> str:
+        """Return the file at ``pathname`` with this pack's ``actor`` and
+        ``lastmod`` changes applied.
+
+        Works on the file as written rather than on ``self.contents``, so an
+        ``!include``d header stays a reference and values filled in on load
+        (defaults, JSON-encoded contexts) are not written back. The changes are
+        made as line edits, keeping the rest of the file (formatting, comments)
+        as it is. Where that is not possible, the whole file is re-serialized.
+        """
+        with open(pathname, "r", encoding="utf-8", newline="") as f:
+            text = f.read()
+
+        original = yaml.load(text, _UnresolvedIncludeLoader)
+        expected = yaml.load(text, _UnresolvedIncludeLoader)
+
+        raw_tags = expected.get("tags") or []
+        tags = self.contents.get("tags") or []
+        if len(raw_tags) != len(tags):
+            raise TagPackFileError(
+                f"{pathname} changed on disk: {len(raw_tags)} tags, {len(tags)} loaded"
+            )
+
+        if "actor" in self.contents:
+            expected["actor"] = self.contents["actor"]
+        else:
+            expected.pop("actor", None)
+
+        for raw_tag, tag in zip(raw_tags, tags):
+            if "actor" in tag:
+                raw_tag["actor"] = tag["actor"]
+            else:
+                raw_tag.pop("actor", None)
+
+        if "lastmod" in self.contents:
+            expected["lastmod"] = self.contents["lastmod"]
+
+        edited = _edit_actor_entries(text, original, expected)
+        if (
+            edited is not None
+            and yaml.load(edited, _UnresolvedIncludeLoader) == expected
+        ):
+            return edited
+
+        logger.warning(
+            f"{pathname}: cannot apply the actor changes as line edits, "
+            "rewriting the whole file (comments and formatting are not kept)."
+        )
+        if "tags" in expected:
+            expected["tags"] = expected.pop("tags")  # keep tags last
+        return yaml.dump(expected, Dumper=_UnresolvedIncludeDumper, sort_keys=False)
 
     def init_default_values(self):
         if "confidence" not in self.contents and not all(
@@ -612,6 +968,7 @@ class TagPack(object):
 
     def validate(self):
         """Validates a TagPack against its schema and used taxonomies"""
+        text_warnings: list = []
         # check if mandatory header fields are used by a TagPack
         for schema_field in self.schema.mandatory_header_fields:
             if schema_field not in self.header_fields:
@@ -630,14 +987,21 @@ class TagPack(object):
                     "Value of header field {} must not be empty (None)".format(field)
                 )
 
-            check_for_null_characters(field, value, "header")
+            if field != "tags":  # checked per tag below, with the tag named
+                check_text_field(field, value, "header", text_warnings)
+
+            if field == "address_validation" and value != ADDRESS_VALIDATION_SKIP:
+                raise ValidationError(
+                    f"Header field address_validation must be "
+                    f"'{ADDRESS_VALIDATION_SKIP}'"
+                )
 
             if field == "is_public":
                 logger.warning(
-                    "YAML field 'is_public' is DEPRECATED and will be removed "
-                    "in future versions. Use the commandline flag "
-                    "--public for inserting public tagpacks. By default, tagpacks "
-                    "are inserted with access set to private."
+                    "YAML field 'is_public' is DEPRECATED and will be ignored. "
+                    "Use the commandline flag --public for inserting public "
+                    "tagpacks. By default, tagpacks are inserted with access "
+                    "set to private."
                 )
 
             self.schema.check_type(field, value)
@@ -684,7 +1048,13 @@ class TagPack(object):
                 if value is None:
                     raise ValidationError(e4.format(field, tag))
 
-                check_for_null_characters(field, value, tag)
+                check_text_field(field, value, tag, text_warnings)
+
+                if field == "address_validation" and value != ADDRESS_VALIDATION_SKIP:
+                    raise ValidationError(
+                        f"Field address_validation must be "
+                        f"'{ADDRESS_VALIDATION_SKIP}' in {tag}"
+                    )
 
                 # check types and taxomomy use
                 try:
@@ -693,11 +1063,33 @@ class TagPack(object):
                 except ValidationError as e:
                     raise ValidationError(f"{e} in {tag}")
 
+        log_text_warnings(self._source_prefix(), text_warnings)
+
         if nr_no_actors > 0:
             src_prefix = self._source_prefix()
             logger.warning(
                 f"{src_prefix}{nr_no_actors}/{len(ut)} tags have no actor configured. "
                 "Please consider connecting the tag to an actor."
+            )
+
+        # A token currency without an explicit network ends up with the token
+        # as its network (see load-time defaulting), which says nothing about
+        # the chain the address lives on.
+        token_networks = defaultdict(int)
+        for tag in ut:
+            network = str(tag.all_fields.get("network", "")).upper()
+            if not is_known_network(network) and suggest_networks_from_currency(
+                network
+            ):
+                token_networks[network] += 1
+
+        for network, count in token_networks.items():
+            src_prefix = self._source_prefix()
+            chains = ", ".join(suggest_networks_from_currency(network))
+            logger.warning(
+                f"{src_prefix}{count} tag(s) have network {network}, which is a "
+                "token, not a chain (network defaults to the currency when "
+                f"unset). Set network explicitly, e.g. one of: {chains}."
             )
 
         address_counts = defaultdict(int)
@@ -735,63 +1127,116 @@ class TagPack(object):
             logger.warning(msg)
         return True
 
-    def verify_addresses(self):
-        """
-        Verify valid blockchain addresses. In
-        general, this is done by decoding the address (e.g. to base58) and
-        calculating a checksum using the first bytes of the decoded value,
-        which should match with the last bytes of the decoded value.
-        """
+    def verify_addresses(self, with_hints: bool = False) -> list:
+        """Check every address with the validator of its network (checksum,
+        version byte, length) and log one summary per pack.
 
+        Tags with ``address_validation: skip`` are left out: sources kept
+        verbatim on purpose (sanctions lists with ID numbers, dumps).
+
+        Returns:
+            list[AddressFinding]: invalid addresses and addresses with
+            whitespace. Every finding has a hint if ``with_hints``, else only
+            the logged samples have one (hints try other validators, too slow
+            for 100k invalid addresses that nobody reads).
+        """
         unsupported = defaultdict(set)
-        invalid = defaultdict(list)  # cupper -> [address, ...]
-        whitespace_addrs = []
+        findings = []
+        whitespace = []
+        skipped = 0
+        valid = set()
         for tag in self.get_unique_tags():
-            currency = tag.all_fields.get("currency", "").lower()
-            cupper = currency.upper()
             address = tag.all_fields.get("address")
-            if address is not None:
-                if len(address) != len(address.strip()):
-                    whitespace_addrs.append(address)
-                elif currency in self.verifiable_currencies:
-                    v = validate_address(currency, address)
-                    if not v:
-                        invalid[cupper].append(address)
+            if address is None:
+                continue
+            if tag.all_fields.get("address_validation") == ADDRESS_VALIDATION_SKIP:
+                skipped += 1
+                continue
+            network = str(tag.all_fields.get("network", "")).lower()
+            if len(address) != len(address.strip()):
+                finding = AddressFinding(
+                    self._source_file(), 0, network.upper(), address
+                )
+                finding.hint = "leading or trailing whitespace"
+                whitespace.append(finding)
+            else:
+                if is_verifiable_network(network):
+                    ok = validate_address(network, address)
                 else:
-                    unsupported[cupper].add(address)
+                    # a token (network defaults to the currency): valid if
+                    # valid on any chain the token lives on
+                    ok = validate_token_address(network, address)
+                if ok is None:
+                    unsupported[network.upper()].add(address)
+                elif ok:
+                    valid.add(address)
+                else:
+                    finding = AddressFinding(
+                        self._source_file(), 0, network.upper(), address
+                    )
+                    finding.context = tag.all_fields.get("context")
+                    findings.append(finding)
 
         _SAMPLE_SIZE = 3
+        autofill = autofill_hints([f.address for f in findings], valid)
+        for i, f in enumerate(findings):
+            if with_hints or i < _SAMPLE_SIZE:
+                f.hint = autofill.get(f.address) or address_hint(
+                    f.network.lower(), f.address, f.context
+                )
+        if (findings or whitespace) and with_hints:
+            lines = address_line_numbers(
+                self._source_file(), {f.address for f in findings + whitespace}
+            )
+            for f in findings + whitespace:
+                f.line = lines.get(f.address, 0)
 
         def _fmt_summary(items, repr_items=False):
             total = len(items)
-            sample = list(items)[:_SAMPLE_SIZE]
-            samples = ", ".join(repr(a) if repr_items else a for a in sample)
+            sample = []
+            for f in items[:_SAMPLE_SIZE]:
+                a = repr(f.address) if repr_items else f.address
+                sample.append(f"{a} ({f.hint})" if f.hint and not repr_items else a)
+            samples = ", ".join(sample)
             extra = f" (+{total - _SAMPLE_SIZE} more)" if total > _SAMPLE_SIZE else ""
             return total, samples, extra
 
         src_prefix = self._source_prefix()
 
-        if whitespace_addrs:
-            total, samples, extra = _fmt_summary(whitespace_addrs, repr_items=True)
+        if whitespace:
+            total, samples, extra = _fmt_summary(whitespace, repr_items=True)
             logger.warning(
                 f"{src_prefix}{total} address(es) contain whitespace: {samples}{extra}"
             )
 
-        if invalid:
-            all_invalid = [a for addrs in invalid.values() for a in addrs]
-            currencies = ", ".join(sorted(invalid.keys()))
-            total, samples, extra = _fmt_summary(all_invalid)
+        if findings:
+            networks = ", ".join(sorted({f.network for f in findings}))
+            total, samples, extra = _fmt_summary(findings)
             logger.warning(
-                f"{src_prefix}{total} possible invalid address(es) [{currencies}]: {samples}{extra}"
+                f"{src_prefix}{total} invalid address(es) [{networks}]: "
+                f"{samples}{extra}"
+            )
+
+        if skipped:
+            logger.info(
+                f"{src_prefix}{skipped} address(es) not verified "
+                f"(address_validation: {ADDRESS_VALIDATION_SKIP})"
             )
 
         if unsupported:
             total_unsupported = sum(len(v) for v in unsupported.values())
-            currencies = ", ".join(sorted(unsupported.keys()))
-            logger.warning(
-                f"{src_prefix}Address verification skipped for {total_unsupported} address(es) "
-                f"in unsupported currencies [{currencies}]"
+            networks = ", ".join(sorted(unsupported.keys()))
+            logger.info(
+                f"{src_prefix}Address verification skipped for {total_unsupported} "
+                f"address(es) in unsupported networks [{networks}]"
             )
+
+        return whitespace + findings
+
+    def _source_file(self) -> str:
+        if isinstance(self.uri, (str, os.PathLike)):
+            return os.fspath(self.uri)
+        return ""
 
     def add_actors(
         self, find_actor_candidates, only_categories=None, user_choice_cache={}
@@ -866,9 +1311,6 @@ class TagPack(object):
             logger.warning("Actor is defined on Tagpack level, skip scanning all tags.")
             return False
 
-        # update tags and trace if all labels carry the same actor
-        actors = set()
-        all_tags_carry_actor = True
         for tag in self.get_unique_tags():
             # Continue if tag is not of a selected category
             if (
@@ -883,17 +1325,9 @@ class TagPack(object):
                 actor = get_user_choice_cached(tl, context_str, user_choice_cache)
                 if actor:
                     tag.contents["actor"] = actor
-                    actors.add(actor)
                     suggestions_found = True
                 else:
                     labels_with_no_actors.add(tl)
-                    all_tags_carry_actor = False
-
-        if all_tags_carry_actor and len(actors) == 1:
-            # promote actor to header field
-            self.contents["actor"] = actors.pop()
-            for tag in self.get_unique_tags():
-                tag.contents.pop("actor")
 
         if len(labels_with_no_actors) > 0:
             logger.warning("Did not assign an actor to the tags with labels:")
