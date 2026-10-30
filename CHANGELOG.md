@@ -12,6 +12,13 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.20.1] - 2026-10-30
+
+Security fix: a failing `graphsense-cli` command no longer prints local variables, which included DB URLs with passwords, loaded configs and API keys. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
+
+### Upgrade notes
+- **Tracebacks no longer list local variables.** Set `GRAPHSENSE_TRACEBACK_LOCALS=1` to get them back for local debugging. If you kept logs of failing `graphsense-cli` runs, rotate the credentials that appear in them.
+
 ### Library
 
 #### Security
