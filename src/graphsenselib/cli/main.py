@@ -2,7 +2,6 @@ import logging
 import os
 
 import click
-from rich.traceback import install
 
 from .. import __version__
 from ..config.cli import config_cli
@@ -16,7 +15,7 @@ from ..schema.cli import schema_cli
 from ..sync.cli import sync_cli
 from ..sync.jobs import SYNC_JOB_ENV_VAR
 from ..utils.console import console
-from ..utils.logging import configure_logging
+from ..utils.logging import configure_logging, install_tracebacks
 from ..utils.signals import install_sigterm_as_interrupt
 from ..utils.slack import ClickSlackErrorNotificationContext
 from ..utils.generic import filter_sensitive_sys_argv
@@ -182,8 +181,9 @@ def cli(ctx, verbosity: int, config_file: str):
 
 
 def main():
-    """install rich as traceback handler for all cli commands"""
-    install(show_locals=True, suppress=[click])
+    """install rich as traceback handler for all cli commands (no locals by
+    default: GRAPHSENSE_TRACEBACK_LOCALS, see utils/logging.py)"""
+    install_tracebacks()
 
     cli()
 

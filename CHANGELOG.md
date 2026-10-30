@@ -12,6 +12,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Library
+
+#### Security
+- **Tracebacks no longer list local variables.** `graphsense-cli` printed every frame's locals on an uncaught exception (rich, `show_locals=True`), so a failing command wrote DB URLs with passwords, loaded configs and API keys into its output and from there into cron logs and log aggregation. Locals are now off; `GRAPHSENSE_TRACEBACK_LOCALS=1` turns them back on for local debugging. If you collected such logs, rotate the credentials that appear in them.
+
 ## [2.20.0] - 2026-10-29
 
 `graphsense-cli sync run` gains scheduled tasks (e.g. the weekly cross-chain pubkey update), and Delta Lake compaction no longer deletes files a running Spark job still reads. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
