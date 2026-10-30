@@ -23,7 +23,7 @@
 # resolve `FROM python-base` as an image. It bumps both lines in one PR.
 # =============================================================================
 FROM ghcr.io/astral-sh/uv:0.13.6 AS uv
-FROM eclipse-temurin:11-jre-jammy@sha256:1adc4db6079f9a35c45f36b0907dd94232a0b9b409a4088a7fe0c77b14e99294 AS java11
+FROM eclipse-temurin:11-jre-jammy@sha256:0c567a8bd671331808b89a96976fabb305d57b123dec4fa62a20bfb89f2b32b9 AS java11
 
 # =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
