@@ -1,9 +1,11 @@
 import logging
+import os
 import sys
 import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
+from typing import Optional
 
 import click
 from rich.console import Console
@@ -17,6 +19,26 @@ from ..config import (
 
 # create logger
 logger = logging.getLogger(__name__)
+
+TRACEBACK_LOCALS_ENV = "GRAPHSENSE_TRACEBACK_LOCALS"
+
+
+def traceback_show_locals() -> bool:
+    """Whether uncaught-exception tracebacks list each frame's local variables.
+
+    Off unless GRAPHSENSE_TRACEBACK_LOCALS is 1/true/yes/on: locals hold DB
+    URLs with passwords, loaded configs and API keys, and tracebacks end up in
+    cron logs and log aggregation. Turn it on only for local debugging.
+    """
+    value = os.environ.get(TRACEBACK_LOCALS_ENV, "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def install_tracebacks(console: Optional[Console] = None) -> None:
+    """Rich tracebacks for uncaught exceptions, locals per traceback_show_locals()."""
+    install_rich_traceback(
+        show_locals=traceback_show_locals(), suppress=[click], console=console
+    )
 
 
 @contextmanager
@@ -100,12 +122,8 @@ def configure_logging(loglevel):
         sh.addFilter(addSubsys)
         sh.addFilter(NoETLBatchExecSpamFilter())
         handlers = [sh]
-        # Install rich tracebacks for uncaught exceptions (shows local variables)
-        install_rich_traceback(
-            show_locals=True,
-            suppress=[click],
-            console=Console(file=sys.stderr, width=220),
-        )
+        # Rich tracebacks for uncaught exceptions (locals only on request)
+        install_tracebacks(console=Console(file=sys.stderr, width=220))
 
     logging.basicConfig(
         format=log_format,
