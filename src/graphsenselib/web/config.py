@@ -133,10 +133,10 @@ class ExternalBackendsConfig(BaseSettings):
     merge_timeout_s: float = Field(
         default=5.0,
         description="HTTP timeout of a merge fan-out call (/stats, "
-        "/capabilities, /search, related_addresses). A backend that does not "
-        "answer within it is left out of the merged answer, so a hung backend "
-        "cannot hold up the core networks for the full timeout_s. The "
-        "adapter answers these in under 1 s cold.",
+        "/capabilities, /search, related_addresses, delegated_conversions). "
+        "A backend that does not answer within it is left out of the merged "
+        "answer, so a hung backend cannot hold up the core networks for the "
+        "full timeout_s. The adapter answers these in under 1 s cold.",
     )
     failure_skip_s: float = Field(
         default=30.0,
@@ -152,6 +152,17 @@ class ExternalBackendsConfig(BaseSettings):
         description="Rule 5: a locally served network's related_addresses "
         "(pubkey) also lists the address's twins on the externally served "
         "networks, asked from the backends; false keeps the local answer alone",
+    )
+    delegated_conversions: Dict[str, ExternalBackendConfig] = Field(
+        default_factory=dict,
+        description="Rule 6: locally served networks, keyed by the lowercase "
+        "network code (e.g. eth), whose GET /{network}/txs/{tx}/conversions "
+        "has this backend pair the bridges graphsense-lib finds only half of "
+        "(Circle CCTP, once 'cctp' is in included_bridges; "
+        "defi/bridging/delegated.py). Only a tx with such a half bridge asks "
+        "the backend, which must answer GET /{network}/txs/{tx}/conversions "
+        "for that network within merge_timeout_s. Without its answer the half "
+        "bridge is served. Empty: nothing is paired.",
     )
     consumer_header: str = Field(
         default="X-Username",

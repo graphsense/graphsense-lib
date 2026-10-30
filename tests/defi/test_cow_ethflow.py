@@ -185,6 +185,6 @@ async def test_conversions_link_placements_unless_turned_off():
             "eth", db, tx_of("placement"), cow_protocol_swaps=False
         )
 
-    assert on == ["LINKED"]
-    assert off == []
+    assert on.conversions == ("LINKED",)
+    assert off.conversions == ()
     linked.assert_awaited_once()

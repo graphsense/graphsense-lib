@@ -37,8 +37,14 @@ Security fix: a failing `graphsense-cli` command no longer prints local variable
 
 ### Web API + Python client
 
+#### Added
+- **`GET /eth/txs/{tx}/conversions` reports Circle CCTP bridges, and an external backend can pair them.** With `cctp` in `included_bridges`, an eth tx with a CCTP `DepositForBurn` or `MintAndWithdraw` (V1 or V2, from Circle's eth TokenMessenger) gets a half bridge: graphsense-lib reads the eth leg but cannot find the other chain's. A burn's half bridge names its funding USDC Transfer, the destination network and recipient, `to_asset` `unknown`, `to_amount` 0 and `to_asset_transfer` `pending`; a mint's names its payout Transfer and the source network, with the other fields `unknown` and `from_amount` 0, like THORChain's partial bridges. With `external_backends.delegated_conversions: {eth: {url, api_key}}`, a tx with a half bridge asks that backend for `GET /eth/txs/{tx}/conversions?only_bridges=true`, sub-tx suffix included, and its `bridge_tx` rows naming the tx take the half bridges' place. `only_bridges` tells the backend that the swaps are the local detection's, so it need not read or price them; a backend that ignores it is fine, since only its `bridge_tx` rows are taken. Other txs cost no backend call and no extra read. When the backend cannot pair the tx (a 404 or 501, logged at INFO) or fails (an error, an unreadable answer, a 429, unreachable, or slower than `merge_timeout_s`, 5 s by default), the half bridge is served; a failure is logged as on the merges and names the backend in `X-Ikn-Backends-Declined`. The currency opt-out and roles apply as to the other external-backend features. The startup log warns when `delegated_conversions` is set but `included_bridges` lacks `cctp`. gs-rest versions before this one refuse the `delegated_conversions` key, so set it only together with this version.
+
 #### Changed
 - **A non-JSON error answer from the notifications service** (e.g. a proxy's HTML error page) is no longer passed to the client; the client gets the status and its reason phrase, and the body is logged.
+
+#### Fixed
+- **A lite network's conversions no longer name an eth tx the API cannot serve yet.** A proxied `/{network}/txs/{tx}/conversions` answer whose bridge leg is on eth names an eth tx. For a fresh transfer Cassandra may not have indexed it yet, so the dashboard could not load that leg and the bridge went missing from the graph. Such an answer is now a 501 until Cassandra has every eth tx it names (one lookup per eth tx, only for answers naming one): the whole answer is refused rather than served in part.
 
 ### Library
 
@@ -51,6 +57,7 @@ Security fix: a failing `graphsense-cli` command no longer prints local variable
 - **`sync run` warns once, not every second, when the `sync` section or a `-c` network is missing from the config**; with `--once` it then exits 2 instead of 0.
 - **Sync jobs log the config file they run with**, instead of "Running version … without a config".
 - **Compatible with pandas 3.1** (no `inplace=True`, deprecated there). Dependency updates: pandas 3.1.0, fastapi 0.162.0, authlib 1.9.1, dnspython 2.9.0 (GHSA-45c3-73f7-pv4m), aiohttp 3.14.4, uv image 0.13.6; Python client: python-dateutil 3.0.0.
+- **`get_conversions_from_db` and `TxsService.get_conversions` return a result object instead of a list.** `get_conversions_from_db` returns `DetectedConversions` and `TxsService.get_conversions` returns `TxConversions`; both have `conversions` and `half_bridges` (tuples, filtered to the sub-tx suffix by `get_conversions`). `half_bridges` are the bridges of `included_bridges` that graphsense-lib finds only half of (Circle CCTP, `defi/bridging/delegated.py`), each a `Bridge` (a row in `TxConversions`) with the other chain's leg `pending` or `unknown`. They are found in the logs the conversions are read from, so they cost no extra read.
 
 #### Fixed
 - **Delta Lake compaction no longer deletes files a running Spark job still reads.** Vacuum kept no removed files (retention 0), so a transformation or `pubkey-update` that overlapped a compaction of its source network could fail mid-read on a missing parquet file. Removed files are now kept for 48h; storage of compacted-away files is freed that much later. The time of the last vacuum is stored in the table property `graphsense.lastVacuum`, since a vacuum that deletes nothing leaves no commit to schedule `auto_compact` on.

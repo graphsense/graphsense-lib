@@ -26,6 +26,7 @@ from graphsenselib.config import AppConfig
 from graphsenselib.config.tagstore_config import set_active_tagstore_config
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
+from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES
 from graphsenselib.errors import (
     AddressNotFoundException,
     BadUserInputException,
@@ -476,6 +477,12 @@ def setup_logging(
     FORMAT = "%(asctime)s %(message)s"
     logging.basicConfig(format=FORMAT)
     app_logger.setLevel(level)
+    # The external backends middleware logs to a sibling logger tree: without
+    # its own level it would keep the root's WARNING and drop its INFO lines.
+    backends_logger = logging.getLogger(
+        "graphsenselib.web.middleware.external_backends"
+    )
+    backends_logger.setLevel(level)
 
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
@@ -499,10 +506,7 @@ def setup_logging(
         # REST routes.
         mcp_logger = logging.getLogger("graphsenselib.mcp")
         # The external backends middleware logs at ERROR exactly once per
-        # outage of a backend (its module docstring), a sibling tree as well.
-        backends_logger = logging.getLogger(
-            "graphsenselib.web.middleware.external_backends"
-        )
+        # outage of a backend (its module docstring).
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
@@ -1116,11 +1120,16 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
     No-op unless `external_backends.enabled` is set with at least one
-    network — the app is then byte-identical to one without the feature.
-    The shared httpx client lives on app.state so teardown can close it.
+    network or delegated_conversions entry — the app is then byte-identical
+    to one without the feature. The shared httpx client lives on app.state
+    so teardown can close it.
     """
     eb_config = config.external_backends
-    if eb_config is None or not eb_config.enabled or not eb_config.networks:
+    if (
+        eb_config is None
+        or not eb_config.enabled
+        or not (eb_config.networks or eb_config.delegated_conversions)
+    ):
         return
     client = httpx.AsyncClient(timeout=httpx.Timeout(eb_config.timeout_s))
     app.state.external_backends_client = client
@@ -1139,7 +1148,7 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     # startup log rather than by re-reading the config.
     logger.info(
         "External backends enabled for networks: %s (fan-out: %s; caller identity: %s)",
-        ", ".join(sorted(eb_config.networks)),
+        ", ".join(sorted(eb_config.networks)) or "none",
         f"skipped for currencies without a {roles_config.currency_role_prefix}* role"
         if gated
         else "not role-gated, every caller fans out",
@@ -1147,6 +1156,17 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
         if eb_config.consumer_header
         else "NOT relayed, so the backend paces every caller as one",
     )
+    if eb_config.delegated_conversions:
+        logger.info(
+            "External backends pair the bridges in conversions on: %s",
+            ", ".join(sorted(eb_config.delegated_conversions)),
+        )
+        if not set(DELEGATED_BRIDGES) & set(config.included_bridges):
+            logger.warning(
+                "delegated_conversions pairs nothing: included_bridges names "
+                "none of %s, so no half bridge is found to pair",
+                ", ".join(DELEGATED_BRIDGES),
+            )
 
 
 # Response headers the dashboard reads, named because the "*" wildcard does not
