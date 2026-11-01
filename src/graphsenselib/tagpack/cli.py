@@ -14,7 +14,7 @@ import click
 import giturlparse as gup
 import pandas as pd
 import yaml
-from git import Repo
+from git import GitCommandError, Repo
 from tabulate import tabulate
 from yaml.parser import ParserError, ScannerError
 
@@ -29,6 +29,7 @@ from graphsenselib.tagpack.tagpack import (
     collect_tagpack_files,
     get_last_commit_times,
     get_repository,
+    exit_if_repo_modified,
     get_uri_for_tagpack,
 )
 from graphsenselib.tagpack.tagpack_schema import TagPackSchema, ValidationError
@@ -483,6 +484,14 @@ def _sync_repo(repo_url, branch, workdir):
     if f"origin/{target}" in {r.name for r in repo.remotes.origin.refs}:
         repo.git.reset("--hard", f"origin/{target}")
     repo.git.clean("-fdx")
+    # Refresh the index's stat data. A checkout written in the same second
+    # as its index (a fresh clone) has "racily clean" entries that git must
+    # re-read on every `git diff`; read-only commands never fix them, so a
+    # reused cache stayed slow for good (1-2 s per diff on a large repo).
+    try:
+        repo.git.update_index("-q", "--refresh")
+    except GitCommandError as e:
+        logger.warning(f"Refreshing the git index of {workdir} failed ({e}).")
     return repo
 
 
@@ -1078,6 +1087,10 @@ def insert_tagpack(
 
     # resolve backlinks to remote repository and relative paths
     scheck, nogit = not no_strict_check, no_git
+    # One modification check for the whole repo, not one per file: each is a
+    # full `git diff` (see exit_if_repo_modified).
+    if scheck and not nogit:
+        exit_if_repo_modified(base_url)
     # Resolve every file's last-commit time in a single history walk rather
     # than one `git log` per file (see get_last_commit_times).
     commit_times = (
@@ -1090,7 +1103,7 @@ def insert_tagpack(
     prepared_packs = [
         (m, h, n[0], n[1], n[2], n[3], False)
         for m, h, n in [
-            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit, commit_times))
+            (a, h, get_uri_for_tagpack(base_url, a, False, nogit, commit_times))
             for h, fs in tagpack_files.items()
             for a in fs
         ]
@@ -1513,6 +1526,10 @@ def insert_actorpacks(
     # resolve backlinks to remote repository and relative paths
     # For the URI we use the same logic for ActorPacks than for TagPacks
     scheck, nogit = not no_strict_check, no_git
+    # One modification check for the whole repo, not one per file: each is a
+    # full `git diff` (see exit_if_repo_modified).
+    if scheck and not nogit:
+        exit_if_repo_modified(base_url)
     # Resolve every file's last-commit time in a single history walk rather
     # than one `git log` per file (see get_last_commit_times).
     commit_times = (
@@ -1525,7 +1542,7 @@ def insert_actorpacks(
     prepared_packs = [
         (m, h, n[0], n[1], n[2])
         for m, h, n in [
-            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit, commit_times))
+            (a, h, get_uri_for_tagpack(base_url, a, False, nogit, commit_times))
             for h, fs in actorpack_files.items()
             for a in fs
         ]

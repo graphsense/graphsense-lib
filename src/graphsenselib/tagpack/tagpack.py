@@ -259,6 +259,22 @@ def get_last_commit_times(repo_path, tagpack_files) -> dict:
     return result
 
 
+def exit_if_repo_modified(repo_path) -> None:
+    """Stop (exit 0) when the local git copy at `repo_path` has modifications.
+
+    Callers handling many files of one repo run this once up front and pass
+    `strict_check=False` to `get_uri_for_tagpack`: `is_dirty()` diffs the
+    whole working tree, so checking per file cost hours on large tagpack
+    repos (1,961 files x two `git diff`s).
+    """
+    with Repo(repo_path) as repo:
+        if repo.is_dirty():
+            msg = f"Local modifications in {repo.common_dir} detected, please "
+            msg += "push first."
+            logger.info(msg)
+            sys.exit(0)
+
+
 def get_uri_for_tagpack(
     repo_path, tagpack_file, strict_check, no_git, commit_times=None
 ) -> Tuple[str, str, str, date]:
@@ -277,8 +293,9 @@ def get_uri_for_tagpack(
     If no_git is set, return tagpack file string. For the relative path,
     try to split at '/packs/', or as fallback return the absolute path.
 
-    Local git copy will be checked for modifications by default.
-    Toggle strict_check param to change this.
+    With strict_check the local git copy is checked for modifications (a
+    full `git diff`); for many files of one repo call
+    `exit_if_repo_modified` once instead and pass strict_check=False.
 
     If path does not contain any git information, the original path
     is returned.
@@ -299,13 +316,10 @@ def get_uri_for_tagpack(
         date_last_mod = datetime.fromtimestamp(os.path.getmtime(tagpack_file))
         return tagpack_file, rel_path, default_prefix, date_last_mod
 
-    with Repo(repo_path) as repo:
-        if strict_check and repo.is_dirty():
-            msg = f"Local modifications in {repo.common_dir} detected, please "
-            msg += "push first."
-            logger.info(msg)
-            sys.exit(0)
+    if strict_check:
+        exit_if_repo_modified(repo_path)
 
+    with Repo(repo_path) as repo:
         # Most recent commit touching the file. Use a precomputed map when
         # available, otherwise ask git for just the newest commit.
         if commit_times is not None:
