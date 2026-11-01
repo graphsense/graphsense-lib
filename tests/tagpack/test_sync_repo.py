@@ -190,3 +190,43 @@ class TestSyncRepo:
 
         assert repo.active_branch.name == "feature"
         assert (workdir / "packs" / "p1.yaml").read_text() == "p1: feature2\n"
+
+
+class TestIndexRefresh:
+    """A checkout written in the same second as its index has "racily clean"
+    entries that every `git diff` re-reads; read-only commands never fix them,
+    so a reused cache stayed slow (1-2 s per diff on a large repo). _sync_repo
+    refreshes the index once, after a clone and after a fetch."""
+
+    @staticmethod
+    def _spy(monkeypatch):
+        from git.cmd import Git
+
+        calls = []
+        original = Git._call_process
+
+        def spy(self, method, *args, **kwargs):
+            calls.append((method, args))
+            return original(self, method, *args, **kwargs)
+
+        monkeypatch.setattr(Git, "_call_process", spy)
+        return calls
+
+    def test_refresh_after_clone_and_after_fetch(
+        self, upstream, cache_dir: Path, monkeypatch
+    ):
+        _, _, url = upstream
+        workdir = _repo_workdir(_repo_cache_dir(str(cache_dir)), url)
+        calls = self._spy(monkeypatch)
+        _sync_repo(url, None, workdir)  # clone
+        _sync_repo(url, None, workdir)  # fetch
+        refreshes = [c for c in calls if c == ("update_index", ("-q", "--refresh"))]
+        assert len(refreshes) == 2
+
+    def test_index_matches_the_working_tree_after_sync(self, upstream, cache_dir: Path):
+        _, _, url = upstream
+        workdir = _repo_workdir(_repo_cache_dir(str(cache_dir)), url)
+        _sync_repo(url, None, workdir)
+        repo = _sync_repo(url, None, workdir)
+        assert not repo.is_dirty()
+        assert repo.git.diff_files() == ""

@@ -12,6 +12,12 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Library
+
+#### Fixed
+- **`tagpack-tool sync` / `tagpack insert` check a repo for local changes once, not once per file.** `is_dirty()` (a full `git diff`) ran for every tagpack file; on a reused `--repo-cache-dir` checkout each diff took 1-2 s, so a 1,961-file repo spent about four hours there instead of three minutes. The check now runs once per repo (`exit_if_repo_modified`), same outcome on local changes.
+- **`--repo-cache-dir` checkouts get their git index refreshed after each fetch**, so later `git diff`s no longer re-read the whole working tree ("racily clean" entries left by the clone).
+
 ## [2.20.1] - 2026-10-30
 
 Security fix: a failing `graphsense-cli` command no longer prints local variables, which included DB URLs with passwords, loaded configs and API keys. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
