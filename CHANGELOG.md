@@ -12,6 +12,10 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.20.2] - 2026-11-01
+
+`tagpack-tool sync` with `--repo-cache-dir` is fast again: the local-changes check ran once per tagpack file and cost hours on a reused cache. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
+
 ### Library
 
 #### Fixed
