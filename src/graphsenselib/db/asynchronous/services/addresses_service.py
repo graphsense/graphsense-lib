@@ -420,8 +420,8 @@ class AddressesService:
             cache=cache,
         )
 
-        self.logger.info(
-            f"Fetched {len(tags)} tags for address {address} on network {currency}"
+        self.logger.debug(
+            "Fetched %d tags for address %s on network %s", len(tags), address, currency
         )
 
         # Convert to AddressTag objects using tags service
