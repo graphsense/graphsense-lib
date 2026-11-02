@@ -1031,15 +1031,29 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             "?only_bridges=true"
         )
         try:
-            doc = await self._fetch_json(
-                request,
+            # httpx times each phase out on its own, so a backend answering in
+            # slow pieces could hold the conversions far longer: the pairing
+            # gets merge_timeout_s in all
+            async with asyncio.timeout(self.config.merge_timeout_s):
+                doc = await self._fetch_json(
+                    request,
+                    backend.url,
+                    path,
+                    declined=declined,
+                    # it cannot pair the tx (yet), or does not know it
+                    tolerate_404=True,
+                    tolerate_501=True,
+                )
+        except TimeoutError:
+            # as a hung backend (_fetch_json): named, alerted, left out
+            self._merge_failed(
+                declined,
                 backend.url,
                 path,
-                declined=declined,
-                # it cannot pair the tx (yet), or does not know it
-                tolerate_404=True,
-                tolerate_501=True,
+                f"no answer within {self.config.merge_timeout_s} s",
             )
+            self._skip(backend.url)
+            return []
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
             # bridges are served, never a 500

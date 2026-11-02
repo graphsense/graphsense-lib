@@ -8,8 +8,10 @@ database, the middleware in front, and an httpx MockTransport for the backend.
 The txs are real mainnet Circle CCTP transfers (tests/defi/cctp_eth_logs.json).
 """
 
+import asyncio
 import dataclasses
 import logging
+import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -542,6 +544,30 @@ def test_an_unreachable_or_hung_backend_is_left_out_for_a_while(error, monkeypat
     now[0] += 31
     client.get(CONVERSIONS)
     assert len(seen) == 2
+
+
+def test_merge_timeout_s_bounds_the_whole_call():
+    """httpx applies the timeout per phase: a backend that answers in slow
+    pieces is not timed out by it. The pairing gets merge_timeout_s in all,
+    and a backend that runs over is handled as a hung one."""
+
+    async def slow(request):
+        await asyncio.sleep(3)
+        return httpx.Response(200, json=[BRIDGE_ROW])
+
+    client, seen, _ = make_client(timeout_s=0.2, backend_answer=slow)
+    with records_of_the_middleware() as records:
+        started = time.monotonic()
+        response = client.get(CONVERSIONS)
+        elapsed = time.monotonic() - started
+        again = client.get(CONVERSIONS)
+    assert elapsed < 2
+    for answer in (response, again):
+        assert answer.json() == [LOCAL_ROW, HALF_ROW]
+        assert answer.headers[DECLINED_HEADER] == BACKEND_URL
+    # left out for failure_skip_s, as a hung backend is
+    assert len(seen) == 1
+    assert any(r.levelno == logging.ERROR for r in records)
 
 
 # ---------------------------------------------------------------------------
