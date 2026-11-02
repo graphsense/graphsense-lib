@@ -12,6 +12,10 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.20.3] - 2026-11-02
+
+`tagpack-tool sync --clone-filter blob:none` clones the tagpack repos without old file versions, so a large repo's cache shrinks while `lastmod` stays exact. Also: user-reported BCH tags on a cashaddr are stored in legacy form, and a sync daemon with an unconfigured `-c` network exits 2 at startup. The API version stays 2.19.0 (no OpenAPI change, no new Python client).
+
 ### Library
 
 #### Added

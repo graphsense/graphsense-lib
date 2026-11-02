@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.20.2'
+RELEASESEM := 'v2.20.3'
 WEBAPISEM := 'v2.19.0'
 # Spark pipeline release track (spark/, tag shape spark-vX.Y.Z). Kept apart
 # from the library track so a jar is only rebuilt and republished when the
