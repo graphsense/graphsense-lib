@@ -772,6 +772,44 @@ async def test_user_reported_tag_lowercases_hex_address(async_tagstore_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+        "BITCOINCASH:QPM2QSZNHKS23Z7629MMS6S4CWEF74VCWVY22GDX6A",
+        "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+        " 1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu ",
+    ],
+)
+async def test_user_reported_bch_tag_stored_as_legacy(
+    db_setup, async_tagstore_db, spelling
+):
+    """Like the tagpack importer: a cashaddr is stored in legacy form (tag
+    and `address` row), which is what lookups and cluster mapping use."""
+    db = async_tagstore_db
+    legacy = "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu"  # CashAddr spec example
+
+    await db.add_user_reported_tag(
+        UserReportedAddressTag(
+            address=spelling,
+            network="bch",
+            actor="binance",
+            label=f"bch report {spelling.strip()[:12]}",
+            description="user reported cashaddr",
+        )
+    )
+
+    tags = await db.get_tags_by_subjectid(
+        legacy, offset=None, page_size=None, groups=["public"]
+    )
+    assert {t.identifier for t in tags} == {legacy}
+    ts = TagStore(db_setup["db_connection_string"], "public")
+    bch = [a for a, net in ts.get_addresses(update_existing=False) if net == "BCH"]
+    assert bch.count(legacy) == 1
+    assert not [a for a in bch if "q" in a.lower()[:12]]  # no cashaddr spelling
+
+
+@pytest.mark.asyncio
 async def test_user_reported_tag_registers_address_for_cluster_mapping(
     db_setup, async_tagstore_db
 ):

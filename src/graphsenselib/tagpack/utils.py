@@ -18,9 +18,11 @@ def normalize_tag_address(address, network, context="insert"):
     The single source of truth for both the insert path and the duplicate
     check in TagPack validation; ``context`` only labels the log message.
     """
-    if network.upper() == "BCH" and address.lower().startswith("bitcoincash"):
+    if network.upper() == "BCH":
         from graphsenselib.utils.bch import checked_bch_address_to_legacy
 
+        # Every cashaddr spelling the REST lookups accept (prefix in either
+        # case, or none); a legacy address comes back unchanged.
         try:
             return checked_bch_address_to_legacy(address)
         except Exception as exc:

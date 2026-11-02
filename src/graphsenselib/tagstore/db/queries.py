@@ -17,6 +17,7 @@ from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from graphsenselib.config.tagstore_config import get_use_label_search_view
+from graphsenselib.tagpack.utils import normalize_tag_address
 from graphsenselib.utils.accountmodel import normalize_hex_identifier
 from graphsenselib.utils.constants import (
     FRESH_CLUSTER_ID_OFFSET,
@@ -1554,8 +1555,11 @@ class TagstoreDbAsync:
 
         context = {"user": tag.user, "uuid": unique_id}
 
-        identifier = _normalize_subject_id(tag.address)
         network = tag.network.upper()
+        # Same normalization as the tagpack importer (BCH cashaddr -> legacy,
+        # hex lowercased): lookups search the stored form, so a cashaddr
+        # stored as typed would never be found or cluster-mapped.
+        identifier = normalize_tag_address(tag.address.strip(), network, "report")
 
         tagN = Tag(
             label=tag.label,

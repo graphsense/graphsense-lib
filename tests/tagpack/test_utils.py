@@ -39,6 +39,35 @@ def test_non_hex_address_kept_verbatim(address, network):
     assert normalize_tag_address(address, network) == address
 
 
+BCH_LEGACY = "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu"  # CashAddr spec example
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+        "BITCOINCASH:QPM2QSZNHKS23Z7629MMS6S4CWEF74VCWVY22GDX6A",
+        # no prefix: was stored as typed, while REST lookups accept it
+        "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+        BCH_LEGACY,
+    ],
+)
+@pytest.mark.parametrize("network", ["BCH", "bch"])
+def test_bch_address_normalized_to_legacy(address, network):
+    assert normalize_tag_address(address, network) == BCH_LEGACY
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6b",  # checksum
+        "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6b",
+    ],
+)
+def test_invalid_bch_cashaddr_kept_as_is(address):
+    assert normalize_tag_address(address, "BCH") == address
+
+
 @pytest.mark.parametrize(
     "uri, expected",
     [
