@@ -1401,8 +1401,8 @@ def test_the_outage_alert_reaches_slack(monkeypatch):
 @pytest.mark.parametrize("level", ["INFO", "WARNING"])
 def test_the_middleware_logs_at_the_configured_level(monkeypatch, level):
     """A sibling of the app's logger, the middleware's would otherwise keep the
-    root's WARNING and drop its INFO lines (a backend that cannot answer, a
-    proxied answer refused for an unindexed eth leg)."""
+    root's WARNING and drop its INFO lines (a backend that cannot pair a
+    tx)."""
     from graphsenselib.web.app import setup_logging
     from graphsenselib.web.config import LoggingConfig
 

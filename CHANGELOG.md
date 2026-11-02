@@ -20,9 +20,6 @@ Use one changelog file, but separate entries by track in each release window.
 #### Changed
 - **A non-JSON error answer from the notifications service** (e.g. a proxy's HTML error page) is no longer passed to the client; the client gets the status and its reason phrase, and the body is logged.
 
-#### Fixed
-- **A lite network's conversions no longer name an eth tx the API cannot serve yet.** A proxied `/{network}/txs/{tx}/conversions` answer whose bridge leg is on eth names an eth tx. For a fresh transfer Cassandra may not have indexed it yet, so the dashboard could not load that leg and the bridge went missing from the graph. Such an answer is now a 501 until Cassandra has every eth tx it names (one lookup per eth tx, only for answers naming one): the whole answer is refused rather than served in part.
-
 ### Library
 
 #### Added
