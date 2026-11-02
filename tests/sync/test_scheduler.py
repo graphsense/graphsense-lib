@@ -444,6 +444,24 @@ def test_unconfigured_network_warned_once_and_once_exits_2(setup, caplog):
     assert result == [2]
 
 
+@pytest.mark.parametrize("no_sync_section", [False, True])
+def test_daemon_exits_2_at_startup_when_unconfigured(setup, no_sync_section):
+    env = make_env()
+    if no_sync_section:
+        env.sync = None
+    sched, probe, runner, alerts, clock = setup(env=env)
+    sched.only = {"zec", "btc"}  # zec is configured, btc is not
+    result = []
+    t = threading.Thread(target=lambda: result.append(sched.run()), daemon=True)
+    t.start()
+    t.join(timeout=10)
+    if t.is_alive():  # the old behaviour: idles forever; stop it, then fail
+        sched._stop.set()
+        t.join(timeout=10)
+    assert result == [2]
+    assert runner.calls == []  # not even zec was started
+
+
 def test_missing_sync_section_warned_once(setup, caplog):
     env = make_env()
     env.sync = None

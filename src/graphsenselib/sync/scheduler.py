@@ -265,6 +265,18 @@ class SyncScheduler:
                 if self._missing:
                     return 2
             else:
+                env = self._environment_now()
+                missing = self._unconfigured(env) if env is not None else set()
+                if missing:
+                    # At startup this is a typo in -c or the config, not a
+                    # live edit: fail before starting anything, so the
+                    # container shows it instead of idling with one warning.
+                    # Later reloads only warn (see tick).
+                    logger.error(
+                        "sync daemon exits, not configured: "
+                        + ", ".join(sorted(missing))
+                    )
+                    return 2
                 while not self._stop.is_set():
                     self.tick()
                     self._stop.wait(_TICK_SECONDS)
@@ -311,6 +323,17 @@ class SyncScheduler:
         self._environment = env
         return env
 
+    def _unconfigured(self, env: Environment) -> set:
+        """What this daemon was asked to run but the config lacks."""
+        if env.sync is None:
+            return {f"the sync section of environment {self.env}"}
+        if self.only:
+            return {
+                f"sync.networks.{n} (environment {self.env})"
+                for n in self.only - set(env.sync.networks)
+            }
+        return set()
+
     def tick(self):
         if self._reload_requested.is_set():
             self._reload_requested.clear()
@@ -318,14 +341,7 @@ class SyncScheduler:
         env = self._environment_now()
         if env is None:
             return
-        missing = set()
-        if env.sync is None:
-            missing.add(f"the sync section of environment {self.env}")
-        elif self.only:
-            missing |= {
-                f"sync.networks.{n} (environment {self.env})"
-                for n in self.only - set(env.sync.networks)
-            }
+        missing = self._unconfigured(env)
         for what in sorted(missing - self._missing):
             logger.warning(f"Not configured, nothing to run: {what}")
         self._missing = missing

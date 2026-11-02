@@ -19,6 +19,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **An MCP client hanging up mid tool call no longer logs `RuntimeError: No response returned.` and pages Slack.** With the 2026-07-28 MCP protocol, the mcp SDK cancels a call whose client disconnected and returns without a response; the REST app's `BaseHTTPMiddleware`s turned that into an unhandled 500. The `/mcp` mount now answers such a request with an empty 499 (never reaches the gone client) and logs one WARNING with method, path and duration (`mcp/disconnect.py`).
+- **`sync run` exits 2 at startup when a `-c` network or the `sync` section is missing from the config**, before starting any network, instead of warning once and idling. A typo in a compose service's `-c` now shows as a failing container. A network removed from the config while the daemon runs still only warns; `--once` is unchanged (runs the configured networks, then exits 2).
 
 ## [2.20.2] - 2026-11-01
 
