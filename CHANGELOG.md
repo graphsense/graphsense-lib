@@ -12,6 +12,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Library
+
+#### Fixed
+- **An MCP client hanging up mid tool call no longer logs `RuntimeError: No response returned.` and pages Slack.** With the 2026-07-28 MCP protocol, the mcp SDK cancels a call whose client disconnected and returns without a response; the REST app's `BaseHTTPMiddleware`s turned that into an unhandled 500. The `/mcp` mount now answers such a request with an empty 499 (never reaches the gone client) and logs one WARNING with method, path and duration (`mcp/disconnect.py`).
+
 ## [2.20.2] - 2026-11-01
 
 `tagpack-tool sync` with `--repo-cache-dir` is fast again: the local-changes check ran once per tagpack file and cost hours on a reused cache. The API version stays 2.19.0 (no OpenAPI change, no new Python client).

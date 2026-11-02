@@ -20,6 +20,7 @@ from graphsenselib.mcp.declined import (
     networks_by_backend,
     record_declined,
 )
+from graphsenselib.mcp.disconnect import RespondAfterDisconnect
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
 from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE, PagesizeDefaultMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
@@ -199,7 +200,10 @@ def attach_to_fastapi(app, config: GSMCPConfig) -> None:
             )
         )
 
-    app.mount(config.path, mcp_asgi)
+    # Without the wrapper, a client hanging up mid tool call surfaces as
+    # "RuntimeError: No response returned." in the REST middlewares above
+    # (see mcp/disconnect.py). The lifespan above still uses mcp_asgi itself.
+    app.mount(config.path, RespondAfterDisconnect(mcp_asgi))
     app.state._graphsense_mcp_attached = True
     logger.info("graphsense MCP mounted at %s", config.path)
 
