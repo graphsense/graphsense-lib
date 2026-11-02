@@ -3,6 +3,7 @@ from typing import Awaitable, Callable, Optional, Sequence, Set
 from graphsenselib.db.asynchronous.services.models import (
     ExternalConversion as ServiceExternalConversion,
 )
+from graphsenselib.defi.bridging.delegated import PENDING, UNKNOWN
 from graphsenselib.web.models import ExternalConversion
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
@@ -13,6 +14,9 @@ from graphsenselib.web.translators import (
     to_api_tx_ref,
     to_api_tx_value,
 )
+
+# what a half or partial bridge names in place of a transfer (delegated.py)
+_PLACEHOLDERS = frozenset({PENDING, UNKNOWN})
 
 
 async def get_tx(
@@ -104,11 +108,13 @@ async def get_tx_conversions(
 
 
 def _asset_transfers(row: ExternalConversion) -> Set[str]:
-    """The asset transfers a row names, in lower case and without 0x."""
-    return {
+    """The asset transfers a row names, in lower case and without 0x. The
+    placeholders of a half or partial bridge ("pending", "unknown") name none."""
+    transfers = (
         transfer.lower().removeprefix("0x")
         for transfer in (row.from_asset_transfer, row.to_asset_transfer)
-    }
+    )
+    return {transfer for transfer in transfers if transfer not in _PLACEHOLDERS}
 
 
 async def list_tx_flows(

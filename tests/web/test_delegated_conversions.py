@@ -8,6 +8,7 @@ database, the middleware in front, and an httpx MockTransport for the backend.
 The txs are real mainnet Circle CCTP transfers (tests/defi/cctp_eth_logs.json).
 """
 
+import dataclasses
 import logging
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -371,6 +372,23 @@ def test_a_local_row_naming_a_leg_of_a_paired_bridge_is_dropped():
     bridge = {**BRIDGE_ROW, "from_asset_transfer": f"0X{CCTP_BURN[2:].upper()}_T690"}
     client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
     assert client.get(CONVERSIONS).json() == [bridge]
+
+
+@pytest.mark.parametrize("placeholder", ["pending", "Unknown"])
+def test_a_placeholder_leg_names_no_bridge(placeholder):
+    """The placeholders "pending" and "unknown" name no transfer: a local row
+    carrying one, such as a THORChain partial bridge, is not the paired
+    bridge."""
+    local = dataclasses.replace(LOCAL_SWAP, toPayment=placeholder)
+    bridge = {**BRIDGE_ROW, "to_asset_transfer": placeholder.lower()}
+    with patch(
+        "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[local]
+    ):
+        client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
+        assert client.get(CONVERSIONS).json() == [
+            {**LOCAL_ROW, "to_asset_transfer": placeholder},
+            bridge,
+        ]
 
 
 @pytest.mark.parametrize(
