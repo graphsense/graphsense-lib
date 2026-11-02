@@ -459,6 +459,26 @@ def test_the_opt_out_and_the_currency_roles(headers, roles_config, asked, answer
     assert len(seen) == int(asked)
 
 
+def test_a_pairing_the_caller_may_see_only_in_part_leaves_the_half_bridges():
+    """The paired rows replace every half bridge of the tx (a backend pairs
+    all or none). A caller entitled to arb but not to pol, of a tx bridging
+    to both, would otherwise get the arb bridge and lose the pol half."""
+    to_pol = {
+        **BRIDGE_ROW,
+        "from_asset_transfer": f"{CCTP_BURN[2:]}_T700",
+        "to_asset_transfer": f"{'22' * 32}_T1",
+        "to_network": "pol",
+    }
+    client, seen, _ = make_client(
+        roles_config=ROLES,
+        gated=GATED,
+        backend_answer=httpx.Response(200, json=[BRIDGE_ROW, to_pol]),
+    )
+    response = client.get(CONVERSIONS, headers={"X-User-Roles": "currency-arb"})
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert len(seen) == 1
+
+
 # ---------------------------------------------------------------------------
 # without the backend's pairing the half bridge is the answer
 # ---------------------------------------------------------------------------

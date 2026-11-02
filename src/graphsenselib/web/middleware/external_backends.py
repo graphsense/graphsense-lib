@@ -87,11 +87,12 @@ Decision rules:
    included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
    name the tx are taken: the local detection answers swaps. A caller entitled
    to no gated currency is offered no pairing (behind the gateway that is how
-   the client opt-out arrives), and rows naming a gated currency the caller
-   lacks are left out. Without the backend's pairing the half bridge is the
-   answer: a 404 or 501 (it cannot pair the tx, or does not know it) is
-   logged at INFO, any other failure is handled as on a merge (below), within
-   the same merge_timeout_s.
+   the client opt-out arrives), and a caller who lacks a gated currency one
+   of the rows names gets the half bridges: the rows replace all of them.
+   Without the backend's pairing the half bridge is the answer: a 404 or 501
+   (it cannot pair the tx, or does not know it) is logged at INFO, any other
+   failure is handled as on a merge (below), within the same
+   merge_timeout_s.
 
 Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
@@ -1014,12 +1015,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             and tx in {_tx_of(row.from_asset_transfer), _tx_of(row.to_asset_transfer)}
         ]
         networks = {n for row in bridges for n in (row.from_network, row.to_network)}
-        entitled = self._entitled(request, networks)
-        return [
-            row
-            for row in bridges
-            if row.from_network in entitled and row.to_network in entitled
-        ]
+        if self._entitled(request, networks) != networks:
+            # the rows replace every half bridge of the tx, so a caller who may
+            # see only some of them keeps the half bridges instead
+            return []
+        return bridges
 
 
 def _tx_of(transfer: str) -> str:
