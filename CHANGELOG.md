@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Changed
+- **The cross-chain pubkey jobs are no longer marked alpha.** `transformation pubkey-update`, `pubkey-detect`, `pubkey-compact`, `pubkey-load` and `pubkey-update-all` drop the `[ALPHA]` tag from their help and no longer print the alpha warning to stderr. `top-untagged-addresses` and `raw-to-transformed` stay alpha.
+
 #### Fixed
 - **An MCP client hanging up mid tool call no longer logs `RuntimeError: No response returned.` and pages Slack.** With the 2026-07-28 MCP protocol, the mcp SDK cancels a call whose client disconnected and returns without a response; the REST app's `BaseHTTPMiddleware`s turned that into an unhandled 500. The `/mcp` mount now answers such a request with an empty 499 (never reaches the gone client) and logs one WARNING with method, path and duration (`mcp/disconnect.py`).
 

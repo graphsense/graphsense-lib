@@ -466,7 +466,7 @@ def _log_pubkey_startup_banner(
 
 @transformation.command(
     "pubkey-update",
-    short_help="[ALPHA] Update cross-chain pubkey → address lookup from Delta Lake.",
+    short_help="Update cross-chain pubkey → address lookup from Delta Lake.",
 )
 @require_environment(required=False)
 @require_currency()
@@ -596,10 +596,7 @@ def run_pubkey_update(
     pubkey newly observed on 2+ chains to the configured ``--sink-type``
     backend (Cassandra ``pubkey.pubkey_by_address`` table, or a Delta
     table under ``--sink-path``).
-
-    ALPHA: not yet validated in production; the interface may change.
     """
-    _warn_alpha("transformation pubkey-update")
     from graphsenselib.config import (
         currency_to_schema_type,
         get_config,
@@ -780,7 +777,7 @@ def run_pubkey_update(
 
 @transformation.command(
     "pubkey-load",
-    short_help="[ALPHA] Load the Delta pubkey_by_address dataset into Cassandra.",
+    short_help="Load the Delta pubkey_by_address dataset into Cassandra.",
 )
 @require_environment(required=True)
 @click.option(
@@ -825,10 +822,7 @@ def run_pubkey_load_cmd(
     ``--sink-type delta`` for every chain (heavy compute, never touches
     production Cassandra), inspect the resulting Delta dataset, then load it
     here into the isolated keyspace when it looks good.
-
-    ALPHA: not yet validated in production; the interface may change.
     """
-    _warn_alpha("transformation pubkey-load")
     from graphsenselib.config import get_config
     from graphsenselib.pubkey.factory import run_pubkey_load
     from graphsenselib.pubkey.job import PUBKEY_KEYSPACE, PUBKEY_TABLE
@@ -927,7 +921,7 @@ def _pubkey_last_compaction_time(sink_path, s3_credentials):
 
 @transformation.command(
     "pubkey-compact",
-    short_help="[ALPHA] Deduplicate/compact the cross-chain pubkey 'observed' table.",
+    short_help="Deduplicate/compact the cross-chain pubkey 'observed' table.",
 )
 @require_environment(required=False)
 @click.option(
@@ -960,10 +954,7 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local, spark_prof
     but this periodically shrinks the table and bin-packs small files. Safe to
     schedule between update runs; it takes the same pubkey lock so it won't
     race a concurrent update.
-
-    ALPHA: not yet validated in production; the interface may change.
     """
-    _warn_alpha("transformation pubkey-compact")
     from graphsenselib.config import get_config
     from graphsenselib.pubkey.factory import run_pubkey_compact
     from graphsenselib.pubkey.job import PUBKEY_KEYSPACE
@@ -1004,7 +995,7 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local, spark_prof
 
 @transformation.command(
     "pubkey-detect",
-    short_help="[ALPHA] Run cross-chain pubkey detection/materialisation once.",
+    short_help="Run cross-chain pubkey detection/materialisation once.",
 )
 @require_environment(required=False)
 @click.option(
@@ -1066,10 +1057,7 @@ def run_pubkey_detect_command(
     detection ``groupBy`` executes a single time instead of once per chain.
     Currency-agnostic; idempotent (anti-joins the ``materialised`` set). Takes
     the same pubkey lock as update/compact so it won't race them.
-
-    ALPHA: not yet validated in production; the interface may change.
     """
-    _warn_alpha("transformation pubkey-detect")
     from graphsenselib.config import get_config
     from graphsenselib.pubkey.factory import run_pubkey_detect
     from graphsenselib.pubkey.job import PUBKEY_KEYSPACE
@@ -1153,7 +1141,7 @@ def _pubkey_networks(env_config) -> list:
 
 @transformation.command(
     "pubkey-update-all",
-    short_help="[ALPHA] pubkey-update for every network, then detect, compact, load.",
+    short_help="pubkey-update for every network, then detect, compact, load.",
 )
 @require_environment(required=True)
 @click.option(
@@ -1226,8 +1214,6 @@ def run_pubkey_update_all(
     once, ``pubkey-compact`` and, for a delta sink, ``pubkey-load``. Stops at
     the first failing step; every network keeps its own progress in the state
     table, so a rerun resumes where each one left off.
-
-    ALPHA: not yet validated in production; the interface may change.
     """
     from graphsenselib.config import get_config
 
