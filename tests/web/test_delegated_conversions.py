@@ -1,7 +1,7 @@
 """Conversions of an eth tx with a bridge graphsense-lib finds only half of
 (CCTP): the half bridge, or the pairing an external backend answers in its
 place (middleware/external_backends.py, rule 6); and proxied conversions
-answers that name an eth leg (rule 1).
+answers that name an eth leg, which pass through.
 
 These run without containers: the real txs route and TxsService over a fake
 database, the middleware in front, and an httpx MockTransport for the backend.
@@ -571,15 +571,15 @@ def test_merge_timeout_s_bounds_the_whole_call():
 
 
 # ---------------------------------------------------------------------------
-# rule 1: a proxied conversions answer naming an eth leg Cassandra lacks
+# a proxied conversions answer passes through, eth legs or not
 # ---------------------------------------------------------------------------
 
 ARB_CONVERSIONS = f"/arb/txs/{ARB_MINT}/conversions"
 
 
-def arb_client(rows, indexed=(CCTP_BURN,), status=200, content=None):
+def arb_client(rows, status=200, content=None):
     """arb served by the backend, which answers `rows` for a conversions
-    request; Cassandra has the eth txs `indexed`."""
+    request; Cassandra has the eth tx CCTP_BURN."""
 
     def answer(request):
         if not request.url.path.endswith("/conversions"):
@@ -592,87 +592,51 @@ def arb_client(rows, indexed=(CCTP_BURN,), status=200, content=None):
         networks={"arb": {"url": BACKEND_URL}},
         delegated_conversions={},
         backend_answer=answer,
-        indexed=indexed,
     )
 
 
-def eth_tx(tx_hash):
-    return bytes.fromhex(tx_hash.removeprefix("0x"))
-
-
 @pytest.mark.parametrize(
-    "rows, indexed, looked_up",
+    "rows",
     [
-        ([BRIDGE_ROW], (CCTP_BURN,), [CCTP_BURN]),
-        # one lookup per eth tx, however its legs write it
-        (
-            [
-                BRIDGE_ROW,
-                {**BRIDGE_ROW, "from_asset_transfer": f"0X{CCTP_BURN[2:].upper()}_T1"},
-            ],
-            (CCTP_BURN,),
-            [CCTP_BURN],
-        ),
-        (
-            [BRIDGE_ROW, {**BRIDGE_ROW, "from_asset_transfer": f"{OTHER_ETH_TX}_T1"}],
-            (CCTP_BURN, OTHER_ETH_TX),
-            [CCTP_BURN, OTHER_ETH_TX],
-        ),
-        ([{**SWAP_ROW, "from_network": "arb", "to_network": "arb"}], (), []),
-        ([{**BRIDGE_ROW, "from_asset_transfer": ""}], (), []),
-        (["junk", 1, None], (), []),
+        [BRIDGE_ROW],
+        [
+            {
+                **BRIDGE_ROW,
+                "from_network": "arb",
+                "from_asset_transfer": f"{ARB_MINT[2:]}_T8",
+                "to_network": "eth",
+                "to_asset_transfer": f"{OTHER_ETH_TX[2:]}_T3",
+            },
+            {**SWAP_ROW, "from_network": "arb", "to_network": "arb"},
+        ],
+        [{**BRIDGE_ROW, "from_asset_transfer": "pending"}],
+        [{**BRIDGE_ROW, "from_asset_transfer": "unknown"}],
+        [{**BRIDGE_ROW, "from_asset_transfer": "not-a-hash_T1"}],
+        [{**BRIDGE_ROW, **FIAT}],
+        ["junk", 1, None],
     ],
-    ids=["indexed", "written twice", "two txs", "no eth leg", "empty", "no rows"],
+    ids=[
+        "indexed eth leg",
+        "eth leg not indexed yet",
+        "pending",
+        "unknown",
+        "no tx hash",
+        "extension fields",
+        "no rows",
+    ],
 )
-def test_an_answer_whose_eth_legs_are_indexed_passes_through(rows, indexed, looked_up):
-    client, seen, db = arb_client(rows, indexed=indexed)
+def test_a_proxied_conversions_answer_passes_through_unread(rows):
+    """Byte for byte, whether or not Cassandra has the eth txs it names. A
+    leg it lacks yet answers 404, which ends the dashboard's walk of that row
+    alone; refusing the whole answer would hide the tx's other conversions
+    too, and the bridge would be missing all the same (review of #213)."""
+    client, seen, db = arb_client(rows)
     response = client.get(ARB_CONVERSIONS)
     assert response.status_code == 200
-    # byte for byte what the backend sent
     assert response.content == httpx.Response(200, json=rows).content
     assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
-    assert [c.args for c in db.get_tx_by_hash.await_args_list] == [
-        ("eth", eth_tx(tx)) for tx in looked_up
-    ]
+    db.get_tx_by_hash.assert_not_awaited()
     assert len(seen) == 1
-
-
-@pytest.mark.parametrize(
-    "row",
-    [
-        BRIDGE_ROW,
-        {
-            **BRIDGE_ROW,
-            "from_network": "arb",
-            "from_asset_transfer": f"{ARB_MINT[2:]}_T8",
-            "to_network": "eth",
-            "to_asset_transfer": f"{OTHER_ETH_TX[2:]}_T3",
-        },
-        {**BRIDGE_ROW, "from_asset_transfer": "not-a-hash_T1"},
-    ],
-    ids=["from side", "to side", "no tx hash"],
-)
-def test_an_answer_naming_an_eth_leg_cassandra_lacks_is_a_501(row):
-    """Cassandra lags the chain tip: the dashboard could not load that leg,
-    and the bridge would go missing from the graph. The whole answer is
-    refused rather than served in part."""
-    client, _, _ = arb_client([row], indexed=())
-    response = client.get(ARB_CONVERSIONS)
-    assert response.status_code == 501
-    assert response.json()["code"] == "NOT_IMPLEMENTED"
-    assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
-
-
-def test_a_failed_lookup_is_a_501_too():
-    client, _, db = arb_client([BRIDGE_ROW])
-    db.get_tx_by_hash.side_effect = RuntimeError("cassandra down")
-    with records_of_the_middleware() as records:
-        response = client.get(ARB_CONVERSIONS)
-    assert response.status_code == 501
-    assert any(
-        r.levelno == logging.WARNING and "cassandra down" in r.getMessage()
-        for r in records
-    )
 
 
 @pytest.mark.parametrize(

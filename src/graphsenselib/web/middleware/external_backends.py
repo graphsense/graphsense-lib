@@ -18,14 +18,10 @@ Decision rules:
    id space (and vice versa), so both sides of that id family must stay with
    the backend that minted them.
 
-   A proxied ``/txs/{tx}/conversions`` answer can name a leg on eth (a row
-   whose ``from_network`` or ``to_network`` is eth): its
-   ``from/to_asset_transfer`` is an eth tx. Cassandra lags the chain tip, so
-   for a fresh transfer that tx may not be indexed yet; the dashboard then
-   fails to load the leg and the bridge goes missing from the graph. Such an
-   answer is a 501 until Cassandra has every eth tx it names: the whole
-   answer is refused rather than served in part. It costs one Cassandra
-   lookup per eth tx named, and only for such answers.
+   A proxied ``/txs/{tx}/conversions`` answer passes through too, also when
+   it names a leg on eth that Cassandra, lagging the chain tip, has not
+   indexed yet. That leg then answers 404 until it is indexed, which ends
+   the dashboard's walk of that one row; the tx's other conversions stay.
 2. ``/stats`` is answered locally, then the per-currency entries of each
    backend (filtered to its configured networks) are merged into the
    ``currencies`` list. Local scalars (version, request_timestamp) win — they
@@ -197,8 +193,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from graphsenselib.db.asynchronous.services.models import ExternalConversion
-from graphsenselib.errors import TransactionNotFoundException
-from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.web.config import (
     CurrencyRolesConfig,
     ExternalBackendConfig,
@@ -279,8 +273,7 @@ _PUBKEY_RELATION = "pubkey"
 # are asked about it, and the local pubkey table is asked as it
 _EVM_NETWORK = "eth"
 
-# a tx's conversions: proxied and checked for eth legs Cassandra lacks (rule
-# 1), or the bridge rows a backend pairs for the tx (rule 6)
+# a tx's conversions: the bridge rows a backend pairs for the tx (rule 6)
 _CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
 _CONVERSIONS = TypeAdapter(List[ExternalConversion])
 _BRIDGE_TX = "bridge_tx"
@@ -399,12 +392,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if backend is not None and not any(
             pattern.match(path) for pattern in _LOCAL_TAG_PATHS
         ):
-            proxied = await self._proxy(request, backend)
-            if _CONVERSIONS_PATH.match(path):
-                return await self._refused_while_an_eth_leg_is_unindexed(
-                    request, proxied
-                )
-            return proxied
+            return await self._proxy(request, backend)
         if path == "/search" and request.method == "GET":
             currency = request.query_params.get("currency")
             if currency is not None:
@@ -926,63 +914,6 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             headers=headers,
         )
 
-    async def _refused_while_an_eth_leg_is_unindexed(
-        self, request: Request, proxied: Response
-    ) -> Response:
-        """Rule 1: a proxied conversions answer as it is, or a 501 while
-        Cassandra lacks an eth tx it names as a leg. One lookup per eth tx
-        named, all at once; an error answer, or one naming no eth tx, reads
-        nothing."""
-        if proxied.status_code != 200:
-            return proxied
-        try:
-            rows = json.loads(proxied.body)
-        except ValueError:
-            return proxied
-        txs = _eth_leg_txs(rows) if isinstance(rows, list) else []
-        if not txs:
-            return proxied
-        indexed = await asyncio.gather(*(self._indexed(request, tx) for tx in txs))
-        missing = [tx for tx, found in zip(txs, indexed) if not found]
-        if not missing:
-            return proxied
-        logger.info(
-            "%s answered 501: Cassandra lacks its %s legs %s",
-            request.url.path,
-            _EVM_NETWORK,
-            ", ".join(missing),
-        )
-        return JSONResponse(
-            {
-                "detail": f"A leg of this conversion on {_EVM_NETWORK} is not "
-                "indexed yet.",
-                "code": "NOT_IMPLEMENTED",
-            },
-            status_code=501,
-            headers={SERVED_BY_HEADER: SERVED_BY_VALUE},
-        )
-
-    async def _indexed(self, request: Request, tx_hash: str) -> bool:
-        """Whether Cassandra has the eth tx `tx_hash`, in one lookup."""
-        # A lookup that fails cannot prove that the leg is there, so the
-        # answer is refused as if the leg were missing.
-        try:
-            await request.app.state.db.get_tx_by_hash(
-                _EVM_NETWORK, hex_to_bytes(tx_hash)
-            )
-        except TransactionNotFoundException:
-            return False
-        except Exception as exc:
-            logger.warning(
-                "%s leg %s of %s could not be looked up: %r",
-                _EVM_NETWORK,
-                tx_hash,
-                request.url.path,
-                exc,
-            )
-            return False
-        return True
-
     def _conversions_backend(self, request: Request) -> Optional[ExternalBackendConfig]:
         """The backend that pairs the bridges of this request's conversions
         (rule 6), or None. None too for a caller entitled to no gated
@@ -1100,19 +1031,6 @@ def _tx_of(transfer: str) -> str:
     """The tx an asset transfer or a tx identifier names: its hash without
     the sub-tx suffix, in lower case and without 0x."""
     return transfer.partition("_")[0].lower().removeprefix("0x")
-
-
-def _eth_leg_txs(rows: list) -> List[str]:
-    """The distinct eth txs a conversions answer names as legs (rule 1), as
-    _tx_of writes them, in the order they are named."""
-    legs = (
-        _tx_of(str(row.get(f"{side}_asset_transfer") or ""))
-        for row in rows
-        if isinstance(row, dict)
-        for side in ("from", "to")
-        if row.get(f"{side}_network") == _EVM_NETWORK
-    )
-    return [tx for tx in dict.fromkeys(legs) if tx]
 
 
 def make_backend_client(config: ExternalBackendsConfig) -> httpx.AsyncClient:
