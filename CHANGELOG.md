@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Added
+- **`tagpack-tool sync --clone-filter blob:none` clones tagpack repos without the contents of old file versions.** A git partial clone: the first clone and the repo cache get smaller (most of a large repo's history is old file versions), and `lastmod` stays exact, because its single `git log --no-renames --name-only` walk needs commits and trees only. Git keeps the filter in the repo config, so later fetches stay partial and a reset downloads only the files it writes. Off by default. An existing full clone in `--repo-cache-dir` is kept as it is (re-cloning a large repo would cost a long run); delete its cache directory once to re-clone it partially.
+
 #### Changed
 - **The cross-chain pubkey jobs are no longer marked alpha.** `transformation pubkey-update`, `pubkey-detect`, `pubkey-compact`, `pubkey-load` and `pubkey-update-all` drop the `[ALPHA]` tag from their help and no longer print the alpha warning to stderr. `top-untagged-addresses` and `raw-to-transformed` stay alpha.
 

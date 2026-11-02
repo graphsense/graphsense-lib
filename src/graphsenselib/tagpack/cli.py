@@ -366,6 +366,17 @@ def config(ctx, verbose):
         "folder inside the system temp directory."
     ),
 )
+@click.option(
+    "--clone-filter",
+    default=None,
+    metavar="FILTER",
+    help=(
+        "git partial-clone filter for new clones, e.g. 'blob:none': old "
+        "file versions are not downloaded, only the checked-out ones "
+        "(lastmod stays exact). Later fetches keep the filter. An existing "
+        "full clone in the repo cache is kept; delete it once to shrink it."
+    ),
+)
 def sync(
     repos,
     force,
@@ -381,6 +392,7 @@ def sync(
     no_lock,
     no_file_lock,
     repo_cache_dir,
+    clone_filter,
 ):
     """syncs the tagstore with a list of git repos."""
     url = override_postgres_url(url)
@@ -416,6 +428,7 @@ def sync(
                 no_validation=no_validation,
                 dont_update_quality_metrics=dont_update_quality_metrics,
                 repo_cache_dir=repo_cache_dir,
+                clone_filter=clone_filter,
             )
     except LockAcquisitionError as e:
         logger.warning(str(e))
@@ -445,19 +458,40 @@ def _repo_workdir(cache_dir, repo_url):
     return cache_dir / f"{slug}-{digest}"
 
 
-def _sync_repo(repo_url, branch, workdir):
+def _partial_clone_filter(repo):
+    """The partial-clone filter git recorded for origin, or None."""
+    try:
+        return repo.git.config("--get", "remote.origin.partialclonefilter") or None
+    except GitCommandError:  # not set: a full clone
+        return None
+
+
+def _sync_repo(repo_url, branch, workdir, clone_filter=None):
     """Clone `repo_url` into `workdir`, or fetch and hard-reset an existing
     checkout. The returned repo's working tree matches the remote exactly,
     so the result is equivalent to a fresh clone.
 
     Any unusable cache (missing, corrupt, wrong remote, failed fetch) is
     discarded and re-cloned, so a stale cache can never change the result.
+
+    `clone_filter` (e.g. ``blob:none``) makes a new clone partial: git skips
+    the contents of old file versions and records the filter in the repo
+    config, so later fetches stay partial and checkout/reset download only
+    what they write. A cached clone with another (or no) filter is kept, not
+    re-cloned: re-cloning a large repo costs far more than it saves.
     """
     repo = None
     if workdir.exists():
         try:
             cached = Repo(workdir)
             if repo_url in list(cached.remotes.origin.urls):
+                cached_filter = _partial_clone_filter(cached)
+                if (clone_filter or None) != cached_filter:
+                    logger.info(
+                        f"Repo cache at {workdir} has clone filter "
+                        f"{cached_filter or 'none'}, not {clone_filter or 'none'}; "
+                        "keeping it (delete it to re-clone with the new filter)."
+                    )
                 with _timed_phase("Fetching"):
                     cached.remotes.origin.fetch(prune=True, tags=True)
                 repo = cached
@@ -470,8 +504,9 @@ def _sync_repo(repo_url, branch, workdir):
         if workdir.exists():
             logger.info(f"Discarding repo cache at {workdir} and re-cloning.")
             shutil.rmtree(workdir, ignore_errors=True)
+        options = [f"--filter={clone_filter}"] if clone_filter else []
         with _timed_phase("Cloning"):
-            repo = Repo.clone_from(repo_url, workdir)
+            repo = Repo.clone_from(repo_url, workdir, multi_options=options)
 
     # Make the working tree authoritative for the requested ref, so a reused
     # checkout is indistinguishable from a fresh clone.
@@ -508,6 +543,7 @@ def _sync_impl(
     no_validation,
     dont_update_quality_metrics,
     repo_cache_dir,
+    clone_filter=None,
 ):
     if os.path.isfile(repos):
         sync_t0 = time.perf_counter()
@@ -549,7 +585,7 @@ def _sync_impl(
             path = str(workdir)
             logger.info(f"Syncing {repo_url}. Repo files in: {path}")
             with _timed_phase(f"Repo {repo_url}"):
-                _sync_repo(repo_url, branch, workdir)
+                _sync_repo(repo_url, branch, workdir, clone_filter)
 
                 with _timed_phase("Inserting actorpacks"):
                     click_ctx_actorpack.invoke(insert_actorpack_cli, path=path, url=url)

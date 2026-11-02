@@ -242,6 +242,10 @@ def get_last_commit_times(repo_path, tagpack_files) -> dict:
         # record, %ct is the committer timestamp; --name-only lists the
         # paths each (non-merge) commit touched. --no-renames keeps both
         # sides of a rename visible regardless of the user's git config.
+        # It also keeps this walk tree-only: in a partial clone (`tagpack-tool
+        # sync --clone-filter blob:none`) old file contents are not local,
+        # and rename detection, --stat or -p would fetch them from the remote,
+        # one by one. Keep --no-renames and add no diff output here.
         raw = repo.git(c="core.quotePath=false").log(
             "--no-renames", "--name-only", "--pretty=format:%x00%ct"
         )

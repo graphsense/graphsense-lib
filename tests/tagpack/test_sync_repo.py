@@ -230,3 +230,123 @@ class TestIndexRefresh:
         repo = _sync_repo(url, None, workdir)
         assert not repo.is_dirty()
         assert repo.git.diff_files() == ""
+
+
+class TestPartialClone:
+    """`--clone-filter blob:none`: a clone without old file contents. lastmod
+    (get_last_commit_times) must come out the same as from a full clone and
+    must not need the missing contents."""
+
+    @pytest.fixture
+    def filtered_upstream(self, tmp_path: Path):
+        """Upstream with history (p1 edited twice) that serves filters; a
+        file:// URL, since git ignores --filter for a plain local path."""
+        repo_path = tmp_path / "upstream"
+        repo = _init_repo(repo_path)
+        with repo.config_writer() as cw:
+            cw.set_value("uploadpack", "allowFilter", "true")
+            cw.set_value("uploadpack", "allowAnySHA1InWant", "true")
+        _commit(repo, repo_path, "packs/p1.yaml", "p1: v1\n", "add p1")
+        old_blob = repo.git.rev_parse("HEAD:packs/p1.yaml")
+        _commit(repo, repo_path, "packs/p2.yaml", "p2: v1\n", "add p2")
+        _commit(repo, repo_path, "packs/p1.yaml", "p1: v2\n", "edit p1")
+        return repo, repo_path, repo_path.as_uri(), old_blob
+
+    @staticmethod
+    def _offline(repo: Repo, monkeypatch):
+        """No lazy fetches, and no reachable remote either."""
+        monkeypatch.setenv("GIT_NO_LAZY_FETCH", "1")
+        repo.git.remote("set-url", "origin", "file:///nonexistent/upstream")
+
+    @staticmethod
+    def _lastmod(workdir: Path) -> dict:
+        from graphsenselib.tagpack.tagpack import get_last_commit_times
+
+        files = [workdir / "packs" / "p1.yaml", workdir / "packs" / "p2.yaml"]
+        return {
+            Path(k).name: v for k, v in get_last_commit_times(workdir, files).items()
+        }
+
+    def test_clone_is_partial_and_lastmod_matches_full_clone(
+        self, filtered_upstream, tmp_path: Path, monkeypatch
+    ):
+        _, _, url, old_blob = filtered_upstream
+        full_dir = tmp_path / "full"
+        part_dir = tmp_path / "partial"
+        _sync_repo(url, None, full_dir)
+        part = _sync_repo(url, None, part_dir, clone_filter="blob:none")
+
+        assert part.git.config("remote.origin.partialclonefilter") == "blob:none"
+        assert (part_dir / "packs" / "p1.yaml").read_text() == "p1: v2\n"
+        expected = self._lastmod(full_dir)
+        assert set(expected) == {"p1.yaml", "p2.yaml"}
+
+        self._offline(part, monkeypatch)
+        # the old p1 contents really are not local ...
+        assert (
+            part.git.cat_file(
+                "-e", old_blob, with_exceptions=False, with_extended_output=True
+            )[0]
+            != 0
+        )
+        # ... and neither lastmod nor the dirty check needs them
+        assert self._lastmod(part_dir) == expected
+        assert not part.is_dirty()
+
+    def test_refresh_keeps_partial_clone(
+        self, filtered_upstream, tmp_path: Path, monkeypatch
+    ):
+        up_repo, up_path, url, _ = filtered_upstream
+        workdir = tmp_path / "partial"
+        _sync_repo(url, None, workdir, clone_filter="blob:none")
+        (workdir / MARKER).write_text("marker")
+
+        _commit(up_repo, up_path, "packs/p2.yaml", "p2: v2\n", "edit p2")
+        repo = _sync_repo(url, None, workdir, clone_filter="blob:none")
+
+        assert (workdir / MARKER).exists()  # fetched, not re-cloned
+        assert (workdir / "packs" / "p2.yaml").read_text() == "p2: v2\n"
+        assert repo.git.config("remote.origin.partialclonefilter") == "blob:none"
+        expected = self._lastmod(up_path)  # the upstream is a full repo
+        self._offline(repo, monkeypatch)
+        assert self._lastmod(workdir) == expected
+        assert not repo.is_dirty()
+
+    def test_unchanged_refresh_needs_no_lazy_fetch(
+        self, filtered_upstream, tmp_path: Path, monkeypatch
+    ):
+        """A night without upstream changes: fetch, reset, clean and the
+        index refresh touch no missing contents. (New commits do fetch their
+        new file versions lazily, during the reset: that is the point of a
+        blobless clone, and only current versions are fetched.)"""
+        _, _, url, _ = filtered_upstream
+        workdir = tmp_path / "partial"
+        _sync_repo(url, None, workdir, clone_filter="blob:none")
+        expected = self._lastmod(workdir)
+
+        monkeypatch.setenv("GIT_NO_LAZY_FETCH", "1")
+        repo = _sync_repo(url, None, workdir, clone_filter="blob:none")
+
+        assert (workdir / "packs" / "p1.yaml").read_text() == "p1: v2\n"
+        assert self._lastmod(workdir) == expected
+        assert not repo.is_dirty()
+
+    def test_full_cache_kept_when_filter_requested(
+        self, filtered_upstream, tmp_path: Path
+    ):
+        up_repo, up_path, url, _ = filtered_upstream
+        workdir = tmp_path / "cache"
+        _sync_repo(url, None, workdir)  # full clone from an earlier version
+        (workdir / MARKER).write_text("marker")
+
+        _commit(up_repo, up_path, "packs/p3.yaml", "p3: v1\n", "add p3")
+        repo = _sync_repo(url, None, workdir, clone_filter="blob:none")
+
+        assert (workdir / MARKER).exists()  # kept, not re-cloned
+        assert (workdir / "packs" / "p3.yaml").read_text() == "p3: v1\n"
+        assert (
+            repo.git.config(
+                "--get", "remote.origin.partialclonefilter", with_exceptions=False
+            )
+            == ""
+        )
