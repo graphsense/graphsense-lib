@@ -15,7 +15,7 @@ How `graphsense-lib` is versioned, when to mint a tag, and what each tag does in
 | Track | Tag shape | Where the version lives | What it covers |
 |---|---|---|---|
 | Library | `vX.Y.Z`, `vX.Y.Z-rc.N`, `vX.Y.Z-dev.N` | `setuptools_scm` (dynamic) → reads from git tag | The `graphsense-lib` package on PyPI, Docker images on ghcr.io |
-| Web API + Client | `webapi-vA.B.C` | `clients/python/pyproject.toml` `version = "..."` and `src/graphsenselib/web/version.py` `__api_version__` | The `graphsense-lib-client` package on PyPI, OpenAPI spec version |
+| Web API + Client | `webapi-vA.B.C` | `clients/python/pyproject.toml` `version = "..."` and `src/graphsenselib/web/version.py` `__api_version__` | The `graphsense-python` package on PyPI, OpenAPI spec version |
 | Spark pipeline | `spark-vYY.MM.P` | `spark/Makefile` `RELEASE` (mirrored by `SPARKSEM` in the root Makefile) | The `spark/` Scala jars published as GitHub release assets, plus the `ghcr.io/graphsense/graphsense-spark` image |
 
 All three tracks live in the same repo and share `Makefile` helpers (`RELEASESEM` for the library track, `WEBAPISEM` for the client track, `SPARKSEM` for the Spark track) to mint and validate tags.

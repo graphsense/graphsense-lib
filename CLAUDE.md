@@ -112,7 +112,7 @@ Spark side needs to change too, flag it; a delta-only change that Spark can't
 reproduce is a divergence bug waiting to surface at the next full re-run.
 
 `spark/` keeps its own toolchain (sbt, scalafmt/scalafix, `spark/CHANGELOG.md`)
-and its own release track (`spark-vX.Y.Z` tags — see VERSIONING.md); the Python
+and its own release track (`spark-vYY.MM.P` tags — see VERSIONING.md); the Python
 formatting hooks deliberately skip that tree. Build and test it with the
 `spark-*` Makefile targets, or `cd spark && sbt test`.
 

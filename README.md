@@ -441,7 +441,7 @@ graphsense-cli ingest from-node \
 Run the raw → transformed "full transform" by driving the Scala Spark
 transformation job via `spark-submit`. That job lives in this repository under
 [`spark/`](spark/README.md) (formerly the standalone `graphsense-spark` repo) and
-is released on its own `spark-vX.Y.Z` tag track — see [VERSIONING.md](VERSIONING.md).
+is released on its own `spark-vYY.MM.P` tag track — see [VERSIONING.md](VERSIONING.md).
 The release jar is downloaded from a public GitHub Release asset (token-free) and
 cached under `<cache_directory>/spark-jars`. The command creates a fresh dated
 transformed keyspace, resolves Spark properties from a `spark_config` profile, and
