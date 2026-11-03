@@ -75,6 +75,16 @@ from the request model's `api_model_config(EXAMPLE)`, which
 `templates/api_doc_example.mustache`. Without a model example, a body snippet
 sends `Model()` and fails. Example data must be real on-chain data.
 
+## REST API: HTTP 501 means "not supported", never "no data"
+
+Decided 2026-10-29. A 501 means only "this route or feature is not supported for
+this network or deployment". Never return 501 for missing, unresolved or
+temporarily unavailable data: use 404 with a `code`, a 200 with partial or marked
+rows, or 503 with `Retry-After`. Today the external backend adapter still uses 501
+for unresolvable items and cache misses, and gs-rest (`tolerate_501`), the MCP
+tools and the dashboard read 501 as "no data". Migration order: consumers first,
+then the adapter, then remove `tolerate_501`.
+
 ## Sync daemon: stopping must release locks
 
 `graphsense-cli sync run` (`src/graphsenselib/sync/`) is deployed so that a
