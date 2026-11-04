@@ -12,6 +12,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Library
+
+#### Fixed
+- **A dropped keep-alive connection no longer takes an external backend down.** gs-rest's external-backends middleware marked the backend down on its first failed request, so a single request sent on a connection the adapter had just closed (`RemoteProtocolError: Server disconnected without sending a response`) caused 503s on all of the backend's networks until its next answer, plus a Slack alert. Such a request (also a read or write reset) is now sent once more on a fresh connection before it counts as a failure; refused connections and timeouts are not retried. Only read requests are retried (GET/HEAD and the bulk POSTs). The backend client also closes idle connections after 2 s, before uvicorn's default 5 s keep-alive on the adapter side.
+
 ## [2.20.3] - 2026-11-02
 
 `tagpack-tool sync --clone-filter blob:none` clones the tagpack repos without old file versions, so a large repo's cache shrinks while `lastmod` stays exact. Also: user-reported BCH tags on a cashaddr are stored in legacy form, and a sync daemon with an unconfigured `-c` network exits 2 at startup. The API version stays 2.19.0 (no OpenAPI change, no new Python client).

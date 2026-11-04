@@ -99,6 +99,23 @@ leave it out without asking it for ``failure_skip_s`` (default 30 s), named in
 window (the backend is up), proxies still always ask it, and any answer ends
 the window early.
 
+A connection that dropped is not an outage: the shared client keeps
+connections alive between calls, and a backend may close an idle one just as
+a request goes out on it. The request then fails without the backend ever
+seeing it (``RemoteProtocolError: Server disconnected without sending a
+response``, or a reset), although the backend is healthy. Before
+``RETRY_ON_DROPPED_CONNECTION`` this marked the backend down and gave 503s on
+all of its networks until the next answer (2026-11-03: 55 s on eight
+networks, plus a Slack alert). So such a request is sent once more, on a
+fresh connection, before it counts as a failure. Only a dropped connection
+is retried: a refused connection or a timeout is the backend itself, and a
+retry would only double the wait. Only read requests are retried, which is
+every request this module sends: merges are GETs, and the proxy sees only
+``/{network}/...`` and ``/search``, whose one POST family (bulk) reads too.
+The client also lets an idle connection go after ``KEEPALIVE_EXPIRY_S``,
+before the adapter's uvicorn closes it (``--timeout-keep-alive``, default
+5 s), so the race is rare to begin with.
+
 One alert per outage, not one per request: the first failure of a backend
 that answered before is logged at ERROR (the level the Slack handler
 forwards, web/app.py:setup_logging), every failure after it at WARNING, and
@@ -178,6 +195,26 @@ DECLINED_HEADER = "X-Ikn-Backends-Declined"
 # unreachable: the adapter's own overload answers say 30 s as well
 UNREACHABLE_RETRY_AFTER_S = 30
 
+# Errors of a connection that dropped under a request (module docstring): the
+# backend closed an idle keep-alive connection as the request went out on it,
+# or reset it. ConnectError (refused) and timeouts are not here: those are
+# the backend, and asking again only doubles the wait.
+RETRY_ON_DROPPED_CONNECTION = (
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.WriteError,
+)
+
+# Idle connections are closed by this client before the backend closes them:
+# uvicorn's --timeout-keep-alive defaults to 5 s, and so does httpx's
+# keepalive_expiry, which made the two race.
+KEEPALIVE_EXPIRY_S = 2.0
+
+# the proxied POSTs that only read (rule 1: bulk.csv/bulk.json); anything else
+# that is not GET/HEAD is sent once, never retried
+_READ_ONLY_POST_PATHS = re.compile(r"^/[^/]+/bulk\.(csv|json)/[^/]+$")
+_READ_ONLY_METHODS = frozenset({"GET", "HEAD"})
+
 # the one backend response header worth carrying to the client on a proxied
 # 429: without it a paced caller is told to come back but not when
 RETRY_AFTER_HEADER = "retry-after"
@@ -235,9 +272,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # backend URL -> until when merges leave it out without asking it
         # (_now(), failure_skip_s in the module docstring)
         self.skip_until: Dict[str, float] = {}
-        self.client = client or httpx.AsyncClient(
-            timeout=httpx.Timeout(config.timeout_s)
-        )
+        self.client = client or make_backend_client(config)
 
     def _entitled(self, request: Request, networks: Set[str]) -> Set[str]:
         """The subset of `networks` this caller may actually be shown.
@@ -659,7 +694,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # reached or does not answer in time is a partial answer, exactly
         # like a declined one (module docstring), not a 500 for every network.
         try:
-            response = await self.client.get(
+            response = await self._send(
+                "GET",
                 base_url.rstrip("/") + path_and_query,
                 headers=headers,
                 timeout=self.config.merge_timeout_s,
@@ -747,6 +783,26 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             time.monotonic() - since,
         )
 
+    async def _send(
+        self, method: str, url: str, retry: bool = True, **kwargs
+    ) -> httpx.Response:
+        """One call to a backend, sent once more if the connection dropped
+        under it (module docstring). The second attempt gets a fresh
+        connection: httpx drops a connection that failed from its pool. Its
+        failure, of whatever kind, is the caller's to handle."""
+        try:
+            return await self.client.request(method, url, **kwargs)
+        except RETRY_ON_DROPPED_CONNECTION as exc:
+            if not retry:
+                raise
+            logger.info(
+                "external backend connection dropped on %s %s (%r), sending it again",
+                method,
+                url,
+                exc,
+            )
+        return await self.client.request(method, url, **kwargs)
+
     async def _proxy(
         self, request: Request, backend: ExternalBackendConfig
     ) -> Response:
@@ -765,8 +821,12 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 "content-type", "application/json"
             )
         try:
-            backend_response = await self.client.request(
-                request.method, url, headers=headers, content=body
+            backend_response = await self._send(
+                request.method,
+                url,
+                retry=_is_read_only(request.method, request.url.path),
+                headers=headers,
+                content=body,
             )
         except httpx.TransportError as exc:
             self._backend_failed(
@@ -795,6 +855,23 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             media_type=backend_response.headers.get("content-type"),
             headers=headers,
         )
+
+
+def make_backend_client(config: ExternalBackendsConfig) -> httpx.AsyncClient:
+    """The client towards the backends: timeout_s, and idle connections
+    closed before the backend closes them (KEEPALIVE_EXPIRY_S)."""
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(config.timeout_s),
+        limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_S),
+    )
+
+
+def _is_read_only(method: str, path: str) -> bool:
+    """True for a proxied request that may be sent twice (module docstring)."""
+    method = method.upper()
+    if method in _READ_ONLY_METHODS:
+        return True
+    return method == "POST" and bool(_READ_ONLY_POST_PATHS.match(path))
 
 
 def _now() -> float:

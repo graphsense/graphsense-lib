@@ -131,13 +131,15 @@ def make_client(
     refuse_status=None,
     refuse_headers=None,
     fail_with=None,
+    fail_times=None,
     with_cors=False,
     failure_skip_s=30.0,
 ):
     """Local stand-in app + recording mock backend behind the middleware.
 
     ``fail_with`` makes every backend call raise that transport error (a
-    backend that is down or hangs); ``with_cors`` wraps the stack in the CORS
+    backend that is down or hangs), or only the first ``fail_times`` calls
+    (a connection that dropped once); ``with_cors`` wraps the stack in the CORS
     middleware exactly as create_app does. ``failure_skip_s=0`` asks the
     backend on every merge, also after it failed.
 
@@ -201,7 +203,7 @@ def make_client(
 
     def backend(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        if fail_with is not None:
+        if fail_with is not None and (fail_times is None or len(seen) <= fail_times):
             raise fail_with
         if refuse_status is not None:
             return httpx.Response(
@@ -693,6 +695,80 @@ def test_an_unreachable_backend_answers_a_proxied_request_with_503():
     assert response.json() == {"detail": "The service for this network is unavailable."}
     assert [r.levelno for r in records] == [logging.ERROR]
     assert BACKEND_URL in records[0].getMessage()
+
+
+DROPPED = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+
+def test_a_dropped_connection_on_a_proxy_is_sent_again():
+    """2026-11-03: a keep-alive connection the backend had just closed failed
+    one request, and the healthy backend was taken down for 55 s."""
+    for error in (DROPPED, httpx.ReadError("reset"), httpx.WriteError("pipe")):
+        client, seen = make_client(fail_with=error, fail_times=1)
+        with caplog_at_warning() as records:
+            response = client.get("/bnb/blocks/1")
+        assert response.status_code == 200, error
+        assert len(seen) == 2, error
+        assert records == [], error
+
+
+def test_a_dropped_connection_on_a_merge_is_sent_again():
+    for url, field, _ in MERGE_LOCAL_ANSWERS:
+        client, seen = make_client(fail_with=DROPPED, fail_times=1)
+        with caplog_at_warning() as records:
+            response = client.get(url)
+        assert response.status_code == 200, url
+        assert DECLINED_HEADER not in response.headers, url
+        assert len(response.json()[field]) > 1, url  # the backend rows are in
+        assert len(seen) == 2, url
+        assert records == [], url
+
+
+def test_a_read_only_bulk_post_is_sent_again():
+    client, seen = make_client(fail_with=DROPPED, fail_times=1)
+    response = client.post("/bnb/bulk.json/get_block", json={"height": [1]})
+    assert response.status_code == 200
+    assert len(seen) == 2
+
+
+def test_a_connection_that_drops_twice_is_a_failure():
+    """One retry, not a loop: a backend that keeps dropping is down."""
+    client, seen = make_client(fail_with=DROPPED, fail_times=2)
+    with caplog_at_warning() as records:
+        response = client.get("/bnb/blocks/1")
+    assert response.status_code == 503
+    assert len(seen) == 2
+    assert [r.levelno for r in records] == [logging.ERROR]
+
+
+def test_a_refused_connection_or_a_timeout_is_not_sent_again():
+    """Those are the backend itself; asking again only doubles the wait."""
+    for error in (httpx.ConnectError("down"), httpx.ReadTimeout("hung")):
+        client, seen = make_client(fail_with=error, fail_times=1)
+        assert client.get("/bnb/blocks/1").status_code == 503, error
+        assert len(seen) == 1, error
+
+
+def test_only_read_requests_are_sent_again():
+    from graphsenselib.web.middleware.external_backends import _is_read_only
+
+    assert _is_read_only("GET", "/bnb/blocks/1")
+    assert _is_read_only("head", "/bnb/blocks/1")
+    assert _is_read_only("POST", "/bnb/bulk.csv/get_block")
+    assert not _is_read_only("POST", "/bnb/something")
+    assert not _is_read_only("PUT", "/bnb/bulk.json/get_block")
+
+
+def test_the_backend_client_closes_idle_connections_before_the_backend():
+    """uvicorn closes an idle connection after 5 s by default; closing it here
+    first avoids sending a request on one that is about to go."""
+    config = ExternalBackendsConfig(
+        enabled=True, networks={"bnb": {"url": BACKEND_URL}}
+    )
+    client = external_backends.make_backend_client(config)
+    pool = client._transport._pool
+    assert pool._keepalive_expiry == external_backends.KEEPALIVE_EXPIRY_S < 5.0
+    assert client.timeout.read == config.timeout_s
 
 
 def test_a_proxied_backend_error_reaches_the_client_as_it_is():

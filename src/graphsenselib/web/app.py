@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager, suppress
 from html import escape
 from typing import Any, Optional
 
-import httpx
 import yaml
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +64,7 @@ from graphsenselib.web.middleware.external_backends import (
     RETRY_AFTER_HEADER,
     SERVED_BY_HEADER,
     ExternalBackendMiddleware,
+    make_backend_client,
 )
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
@@ -1122,7 +1122,7 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     eb_config = config.external_backends
     if eb_config is None or not eb_config.enabled or not eb_config.networks:
         return
-    client = httpx.AsyncClient(timeout=httpx.Timeout(eb_config.timeout_s))
+    client = make_backend_client(eb_config)
     app.state.external_backends_client = client
     roles_config, gated = _currency_role_gate(config)
     app.add_middleware(
