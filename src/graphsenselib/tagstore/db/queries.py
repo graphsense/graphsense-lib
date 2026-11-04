@@ -27,7 +27,7 @@ from graphsenselib.utils.constants import (
 )
 
 from .database import get_db_engine_async
-from .errors import TagAlreadyExistsException
+from .errors import TagAlreadyExistsException, UnknownConceptsException
 from .models import (
     Actor,
     Address,
@@ -288,6 +288,8 @@ class UserReportedAddressTag(BaseModel):
     label: str
     description: str
     user: Optional[str] = None
+    # extra concept ids (concept taxonomy), added to the actor's concepts
+    concepts: List[str] = []
 
 
 def _normalize_subject_id(subject_id: str) -> str:
@@ -1534,6 +1536,23 @@ class TagstoreDbAsync:
         self, tag: UserReportedAddressTag, acl_group: str = "public", session=None
     ) -> str:
         IDUserReportedTagpack = f"manual-user-reported-tagpack-{acl_group}"
+
+        # Checked first, so an unknown concept stores nothing (not even the tagpack).
+        concept_ids = list(
+            dict.fromkeys(c.strip() for c in tag.concepts or [] if c and c.strip())
+        )
+        if concept_ids:
+            known = set(
+                (
+                    await session.exec(
+                        select(Concept.id).where(Concept.id.in_(concept_ids))
+                    )
+                ).all()
+            )
+            unknown = [c for c in concept_ids if c not in known]
+            if unknown:
+                raise UnknownConceptsException(unknown)
+
         q = select(TagPack).where(TagPack.id == IDUserReportedTagpack)
         tp = (await session.exec(q)).one_or_none()
 
@@ -1576,7 +1595,12 @@ class TagstoreDbAsync:
 
         if actor is not None:
             tagN.actor_id = actor.id
-            tagN.concepts = [TagConcept(concept_id=c) for c in actor.concepts]
+        tag_concepts = list(
+            dict.fromkeys(
+                [*(actor.concepts if actor is not None else []), *concept_ids]
+            )
+        )
+        tagN.concepts = [TagConcept(concept_id=c) for c in tag_concepts]
 
         # The cluster-mapping job only maps what is in `address` (the tagpack
         # importer writes it alongside every tag); without this row a

@@ -21,7 +21,10 @@ from graphsenselib.config.tagstore_config import (
     set_active_tagstore_config,
 )
 from graphsenselib.tagstore.db.queries import UserReportedAddressTag
-from graphsenselib.tagstore.db import TagAlreadyExistsException
+from graphsenselib.tagstore.db import (
+    TagAlreadyExistsException,
+    UnknownConceptsException,
+)
 from pathlib import Path
 
 
@@ -842,3 +845,63 @@ async def test_user_reported_tag_registers_address_for_cluster_mapping(
     ts = TagStore(db_setup["db_connection_string"], "public")
     unmapped = list(ts.get_addresses(update_existing=False))
     assert unmapped.count((address, "BTC")) == 1
+
+
+@pytest.mark.asyncio
+async def test_user_reported_tag_with_concepts(async_tagstore_db):
+    """Concepts given with a report are added to the actor's concepts
+    (e.g. a wallet type chosen in the dashboard), also without an actor."""
+    db = async_tagstore_db
+    await db.add_user_reported_tag(
+        UserReportedAddressTag(
+            address="1UserReportedConceptsActor",
+            network="btc",
+            actor="binance",
+            label="binance hot wallet",
+            description="user reported",
+            concepts=["hot_wallet", "exchange", " hot_wallet "],
+        )
+    )
+    await db.add_user_reported_tag(
+        UserReportedAddressTag(
+            address="1UserReportedConceptsNoActor",
+            network="btc",
+            actor=None,
+            label="someone's cold storage",
+            description="user reported",
+            concepts=["cold_wallet"],
+        )
+    )
+
+    (with_actor,) = await db.get_tags_by_subjectid(
+        "1UserReportedConceptsActor", offset=None, page_size=None, groups=["public"]
+    )
+    assert sorted(with_actor.additional_concepts) == ["exchange", "hot_wallet"]
+    (no_actor,) = await db.get_tags_by_subjectid(
+        "1UserReportedConceptsNoActor", offset=None, page_size=None, groups=["public"]
+    )
+    assert no_actor.additional_concepts == ["cold_wallet"]
+
+
+@pytest.mark.asyncio
+async def test_user_reported_tag_unknown_concept_stores_nothing(async_tagstore_db):
+    db = async_tagstore_db
+    address = "1UserReportedUnknownConcept"
+    with pytest.raises(UnknownConceptsException) as exc_info:
+        await db.add_user_reported_tag(
+            UserReportedAddressTag(
+                address=address,
+                network="btc",
+                actor=None,
+                label="unknown concept",
+                description="user reported",
+                concepts=["hot_wallet", "no_such_concept"],
+            )
+        )
+    assert exc_info.value.unknown == ["no_such_concept"]
+    assert (
+        await db.get_tags_by_subjectid(
+            address, offset=None, page_size=None, groups=["public"]
+        )
+        == []
+    )

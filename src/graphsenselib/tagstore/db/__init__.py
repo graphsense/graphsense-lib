@@ -1,6 +1,7 @@
 # flake8: noqa: E401
 from .database import get_db_engine_async as get_db_engine_async
 from .errors import TagAlreadyExistsException as TagAlreadyExistsException
+from .errors import UnknownConceptsException as UnknownConceptsException
 from .queries import ActorPublic as ActorPublic
 from .queries import InheritedFrom as InheritedFrom
 from .queries import LabelSearchResultPublic as LabelSearchResultPublic

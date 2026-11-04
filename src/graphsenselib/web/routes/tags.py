@@ -1,9 +1,9 @@
 """Tags API routes"""
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
@@ -36,6 +36,16 @@ class UserReportedTag(BaseModel):
     actor: Optional[str] = None
     label: str
     description: Optional[str] = None
+    concepts: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Additional concept ids for the address, from the concept taxonomy "
+            "(GET /tags/taxonomies/concept/concepts), e.g. hot_wallet, "
+            "cold_wallet, deposit_wallet. Added to the concepts of the actor, "
+            "if one is given. Unknown ids are rejected with 400."
+        ),
+        examples=[["hot_wallet"]],
+    )
 
 
 @router.get(

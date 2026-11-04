@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **actor** | **str** |  | [optional] 
 **label** | **str** |  | 
 **description** | **str** |  | [optional] 
+**concepts** | **List[str]** | Additional concept ids for the address, from the concept taxonomy (GET /tags/taxonomies/concept/concepts), e.g. hot_wallet, cold_wallet, deposit_wallet. Added to the concepts of the actor, if one is given. Unknown ids are rejected with 400. | [optional] 
 
 ## Example
 
