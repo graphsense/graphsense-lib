@@ -15,7 +15,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Web API + Python client
 
 #### Added
-- **`POST /tags/report-tag` takes optional `concepts`**, a list of concept ids from the concept taxonomy (`GET /tags/taxonomies/concept/concepts`), e.g. `hot_wallet`, `cold_wallet`, `deposit_wallet`. They are stored on the reported tag next to the concepts of the actor (if one is given), so a user can say what kind of wallet an address is. Duplicates and surrounding spaces are dropped; an unknown id is rejected with 400 and nothing is stored. A report that repeats an existing tag still returns the first report's id and keeps that report's concepts.
+- **`POST /tags/report-tag` takes optional `concepts`**, a list of concept ids from the concept taxonomy (`GET /tags/taxonomies/concept/concepts`), e.g. `hot_wallet`, `cold_wallet`, `deposit_wallet`. They are stored on the reported tag only (its `tag_concept` rows, shown in `additional_concepts`), together with the concepts copied from the actor as before (if one is given); the actor itself is not changed. A user can so say what kind of wallet an address is. Duplicates and surrounding spaces are dropped; an unknown id is rejected with 400 and nothing is stored. A report that repeats an existing tag still returns the first report's id and keeps that report's concepts.
 
 #### Fixed
 - **`privacy_preserving_tag_notifications` now takes effect.** The tag service read `privacy_preserving_tag_notification` (singular), which is not a config field, and fell back to `True`, so setting it to `false` never put the reported tag into the Slack notification. With the default (`true`) nothing changes: Slack gets the report id and the address only.
