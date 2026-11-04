@@ -115,12 +115,15 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;
     # tools that build Pathfinder deep links (build_pathfinder_file's
     # `open_url`) read the base URL off app.state instead. None means the
-    # open-url feature is disabled: the tool then neither mints the link
-    # nor advertises it in its description.
+    # open-url feature is off: the tool then neither mints the link nor
+    # advertises it in its description. In auto mode the REST URL is set
+    # too, and the tool mints the link only for downloads on that host.
+    mode = config.pathfinder_open_url_mode
     app.state._graphsense_mcp_pathfinder_base_url = (
-        config.pathfinder_base_url.rstrip("/")
-        if config.pathfinder_open_url_enabled
-        else None
+        config.pathfinder_base_url.rstrip("/") if mode != "off" else None
+    )
+    app.state._graphsense_mcp_pathfinder_rest_url = (
+        config.pathfinder_rest_url.rstrip("/") if mode == "auto" else None
     )
 
     # The skills directory doubles as the Claude Code plugin root

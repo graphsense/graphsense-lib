@@ -910,6 +910,68 @@ async def test_open_url_survives_download_link_failure(make_file_store) -> None:
     )
 
 
+async def test_open_url_auto_mode_minted_on_matching_rest_host(
+    make_file_store, monkeypatch
+) -> None:
+    """Auto mode: the download link lies on the REST host Pathfinder
+    imports from, so the deep link is minted and leads the text block."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store(base_url="https://api.iknaio.com")
+    app = _app_with_store(store)
+    app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    app.state._graphsense_mcp_pathfinder_rest_url = "https://api.iknaio.com"
+    call_result = await _call(_mcp(app), _MINIMAL_SPEC)
+
+    structured = _structured(call_result)
+    assert structured["open_url"].startswith(
+        "https://app.iknaio.com/pathfinder?import="
+    )
+    text = _text(call_result).text
+    assert text.startswith(f"Open in Pathfinder: {structured['open_url']}")
+    assert structured["download_url"] in text
+
+
+async def test_open_url_auto_mode_skipped_on_other_host(
+    make_file_store, monkeypatch
+) -> None:
+    """Auto mode on a server whose downloads live elsewhere (test, local,
+    self-hosted): the hosted Pathfinder could not fetch the file, so no
+    deep link — the download link is the only one offered."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store(base_url="http://localhost:8080")
+    app = _app_with_store(store)
+    app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    app.state._graphsense_mcp_pathfinder_rest_url = "https://api.iknaio.com"
+    call_result = await _call(_mcp(app), _MINIMAL_SPEC)
+
+    structured = _structured(call_result)
+    assert structured["open_url"] is None
+    assert _text(call_result).text.startswith("Pathfinder file")
+
+
+async def test_open_url_auto_mode_rejects_lookalike_host(
+    make_file_store, monkeypatch
+) -> None:
+    """The host check is a prefix match on '<rest_url>/', so a host that
+    merely starts with the same characters does not count."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store(base_url="https://api.iknaio.com.evil.test")
+    app = _app_with_store(store)
+    app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    app.state._graphsense_mcp_pathfinder_rest_url = "https://api.iknaio.com"
+    call_result = await _call(_mcp(app), _MINIMAL_SPEC)
+    assert _structured(call_result)["open_url"] is None
+
+
 async def _tool_description(mcp: FastMCP) -> str:
     async with Client(mcp) as c:
         tools = {t.name: t for t in await c.list_tools()}

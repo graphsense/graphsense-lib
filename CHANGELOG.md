@@ -17,6 +17,16 @@ Use one changelog file, but separate entries by track in each release window.
 #### Added
 - **`POST /tags/report-tag` takes optional `concepts`**, a list of concept ids from the concept taxonomy (`GET /tags/taxonomies/concept/concepts`), e.g. `hot_wallet`, `cold_wallet`, `deposit_wallet`. They are stored on the reported tag only (its `tag_concept` rows, shown in `additional_concepts`), together with the concepts copied from the actor as before (if one is given); the actor itself is not changed. A user can so say what kind of wallet an address is. Duplicates and surrounding spaces are dropped; an unknown id is rejected with 400 and nothing is stored. A report that repeats an existing tag still returns the first report's id and keeps that report's concepts.
 
+#### Changed
+- **MCP `build_pathfinder_file`: the open-in-Pathfinder link (`open_url`) is on by default where it can work, and comes first.**
+  - **Three modes:** `GS_MCP_PATHFINDER_OPEN_URL_ENABLED` is now three-state.
+    - `true`: always mint the link.
+    - `false`: never mint it, and don't advertise it.
+    - Unset (the new default): auto.
+  - **Auto mode:** the feature is advertised, and each call mints the link only when the file's `download_url` lies on the new `GS_MCP_PATHFINDER_REST_URL` (default `https://api.iknaio.com`). That is the REST host the Pathfinder at `GS_MCP_PATHFINDER_BASE_URL` imports `?import=` files from. With the defaults, the hosted app/API pair gets the link without any configuration. Test, local and self-hosted servers, whose downloads live elsewhere, get no link that would fail to resolve.
+  - **Text order:** the tool's text block now leads with `Open in Pathfinder: <open_url>`, and the download link follows in brackets. Hosts that only render the text show the clickable link first.
+  - **Upgrade note:** deployments that relied on the old "off unless set" default and serve downloads from `https://api.iknaio.com` now get the link. Set `GS_MCP_PATHFINDER_OPEN_URL_ENABLED=false` to keep it off.
+
 #### Fixed
 - **`privacy_preserving_tag_notifications` now takes effect.** The tag service read `privacy_preserving_tag_notification` (singular), which is not a config field, and fell back to `True`, so setting it to `false` never put the reported tag into the Slack notification. With the default (`true`) nothing changes: Slack gets the report id and the address only.
 

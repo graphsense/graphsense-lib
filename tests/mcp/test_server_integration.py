@@ -113,8 +113,8 @@ async def test_external_tool_registered_when_configured(monkeypatch):
 
 async def test_build_mcp_exposes_pathfinder_base_url_on_app_state(monkeypatch):
     """build_mcp must stash the (trailing-slash-stripped) pathfinder base
-    URL on app.state when the open-url feature flag is on — and None when
-    it is off (the default). build_pathfinder_file reads it from there to
+    URL on app.state unless the open-url feature is off; in auto mode (the
+    default) it also stashes the REST URL the tool checks downloads against. build_pathfinder_file reads it from there to
     decide whether to mint and advertise its `open_url` deep link."""
     monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__BASE_URL", raising=False)
     monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__API_KEY_ENV", raising=False)
@@ -132,10 +132,30 @@ async def test_build_mcp_exposes_pathfinder_base_url_on_app_state(monkeypatch):
             app.state._graphsense_mcp_pathfinder_base_url == "https://pf.example.test"
         )
 
+    # Explicitly on: no REST host check.
+    assert app.state._graphsense_mcp_pathfinder_rest_url is None
+
     app_off = create_spec_app()
-    mcp, stack = build_mcp(app_off, GSMCPConfig())
+    mcp, stack = build_mcp(app_off, GSMCPConfig(pathfinder_open_url_enabled=False))
     async with stack:
         assert app_off.state._graphsense_mcp_pathfinder_base_url is None
+        assert app_off.state._graphsense_mcp_pathfinder_rest_url is None
+
+    # Unset (default) = auto: base URL and the REST host to check against.
+    monkeypatch.delenv("GS_MCP_PATHFINDER_OPEN_URL_ENABLED", raising=False)
+    monkeypatch.delenv("GS_MCP_PATHFINDER_BASE_URL", raising=False)
+    monkeypatch.delenv("GS_MCP_PATHFINDER_REST_URL", raising=False)
+    app_auto = create_spec_app()
+    mcp, stack = build_mcp(app_auto, GSMCPConfig())
+    async with stack:
+        assert (
+            app_auto.state._graphsense_mcp_pathfinder_base_url
+            == "https://app.iknaio.com"
+        )
+        assert (
+            app_auto.state._graphsense_mcp_pathfinder_rest_url
+            == "https://api.iknaio.com"
+        )
 
 
 async def test_curated_descriptions_applied(bundled_mcp):

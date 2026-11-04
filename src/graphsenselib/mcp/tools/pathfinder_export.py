@@ -544,14 +544,6 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                     f"({exc}); reduce the number of addresses, transactions "
                     "and edges in the spec, then retry"
                 ) from exc
-            # Open-in-Pathfinder deep link (feature-gated): the dashboard's
-            # `?import=<id>` loader takes the opaque store token (NOT a
-            # URL) and fetches `<REST>/download/<id>` itself, so this
-            # only needs the token plus the configured Pathfinder base
-            # URL (set on app.state by mcp/server.py:build_mcp — None
-            # when pathfinder_open_url_enabled is off).
-            if open_url_enabled:
-                open_url = f"{pathfinder_base_url}/pathfinder?import={token}"
             try:
                 download_url = store.url_for(get_http_request(), token)
             except Exception:
@@ -564,6 +556,23 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                     exc_info=True,
                 )
                 download_url = None
+            # Open-in-Pathfinder deep link (feature-gated): the dashboard's
+            # `?import=<id>` loader takes the opaque store token (NOT a
+            # URL) and fetches `<REST>/download/<id>` itself, so this
+            # needs the token plus the configured Pathfinder base URL (set
+            # on app.state by mcp/server.py:build_mcp — None when the
+            # feature is off). In auto mode (a REST URL on app.state too)
+            # the link is minted only when this server's download link
+            # lies on the REST host that Pathfinder imports from;
+            # elsewhere (test, local, self-hosted) it would not resolve.
+            if open_url_enabled and (
+                pathfinder_rest_url is None
+                or (
+                    download_url is not None
+                    and download_url.startswith(pathfinder_rest_url + "/")
+                )
+            ):
+                open_url = f"{pathfinder_base_url}/pathfinder?import={token}"
 
         # Embedded-resource delivery: included when the server is
         # configured to (file_store_embed_resource), or whenever there is
@@ -591,15 +600,19 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             warnings.extend(
                 await _run_verifier(spec_dict, default_network, app, tx_cache)
             )
-        if download_url is not None:
+        # Lead with the link the user can click straight into Pathfinder;
+        # hosts that only render this text block show it first.
+        if open_url is not None:
+            text = f"Open in Pathfinder: {open_url}"
+            if download_url is not None:
+                text += f"\n(or download `{filename}`: {download_url})"
+        elif download_url is not None:
             text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
         else:
             text = (
                 f"Pathfinder file `{filename}` is ready (embedded in this "
                 f"response; no download link configured)."
             )
-        if open_url is not None:
-            text += f"\nOpen directly in Pathfinder: {open_url}"
         # Fold warnings into the text block too: hosts that drop
         # `structured_content` (Mistral Le Chat) otherwise never see them,
         # and silently shipping a broken .gs is the exact failure mode
@@ -635,13 +648,18 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         )
 
     # Feature gate, resolved once at registration: build_mcp puts the
-    # Pathfinder base URL on app.state only when
-    # GSMCPConfig.pathfinder_open_url_enabled is true. The same flag
-    # controls whether the docstring advertises `open_url` at all.
+    # Pathfinder base URL on app.state unless the open-url feature is off
+    # (GSMCPConfig.pathfinder_open_url_mode). The same gate controls
+    # whether the docstring advertises `open_url` at all.
     pathfinder_base_url = getattr(
         app.state, "_graphsense_mcp_pathfinder_base_url", None
     )
     open_url_enabled = pathfinder_base_url is not None
+    # Auto mode only: the REST URL a download link must lie on for the
+    # deep link to resolve (None = no check, mint whenever enabled).
+    pathfinder_rest_url = getattr(
+        app.state, "_graphsense_mcp_pathfinder_rest_url", None
+    )
 
     # cleandoc mirrors what FastMCP does to a plain docstring; without it
     # the explicit description would keep the source indentation.

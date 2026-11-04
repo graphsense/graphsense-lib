@@ -118,13 +118,13 @@ def test_instructions_point_only_at_bundled_skills(monkeypatch):
         assert (cfg.resolved_skills_dir() / name / "SKILL.md").is_file()
 
 
-def test_open_url_instructions_stripped_by_default(monkeypatch):
+def test_open_url_instructions_stripped_when_off(monkeypatch):
     """The open-in-Pathfinder paragraph in the bundled instructions is
-    feature-gated: with the flag off (default) neither the paragraph nor
-    the HTML marker comments may reach the client."""
+    feature-gated: with the flag off neither the paragraph nor the HTML
+    marker comments may reach the client."""
     monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
     monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
-    monkeypatch.delenv("GS_MCP_PATHFINDER_OPEN_URL_ENABLED", raising=False)
+    monkeypatch.setenv("GS_MCP_PATHFINDER_OPEN_URL_ENABLED", "false")
 
     text = GSMCPConfig().resolved_instructions()
     assert text is not None
@@ -142,6 +142,23 @@ def test_open_url_instructions_kept_when_enabled(monkeypatch):
     assert "open_url" in text
     # Markers themselves are stripped either way.
     assert "feature:pathfinder-open-url" not in text
+
+
+def test_open_url_mode_resolution(monkeypatch):
+    """Unset flag = auto (the default), true = on, false = off; auto keeps
+    the instructions paragraph (the tool decides per call)."""
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
+    monkeypatch.delenv("GS_MCP_PATHFINDER_OPEN_URL_ENABLED", raising=False)
+    auto = GSMCPConfig()
+    assert auto.pathfinder_open_url_mode == "auto"
+    assert "open_url" in (auto.resolved_instructions() or "")
+    assert (
+        GSMCPConfig(pathfinder_open_url_enabled=True).pathfinder_open_url_mode == "on"
+    )
+    assert (
+        GSMCPConfig(pathfinder_open_url_enabled=False).pathfinder_open_url_mode == "off"
+    )
 
 
 def test_instructions_explicit_override_wins(monkeypatch):

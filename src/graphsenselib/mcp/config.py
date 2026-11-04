@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -170,19 +170,38 @@ class GSMCPConfig(BaseSettings):
         ),
     )
 
-    pathfinder_open_url_enabled: bool = Field(
-        default=False,
+    pathfinder_open_url_enabled: Optional[bool] = Field(
+        default=None,
         description=(
-            "Feature flag for the open-in-Pathfinder deep link. When true, "
-            "build_pathfinder_file mints an `open_url` "
-            "(`{pathfinder_base_url}/pathfinder?import=<token>`) alongside "
-            "the download link and the feature is advertised in the tool "
-            "description and server instructions. Off by default; only "
-            "enable where the Pathfinder deployment fetches its imports "
-            "from this REST host (the `?import=` loader resolves the token "
-            "against the dashboard's configured REST URL)."
+            "Feature flag for the open-in-Pathfinder deep link "
+            "(`{pathfinder_base_url}/pathfinder?import=<token>`), minted by "
+            "build_pathfinder_file next to the download link. The `?import=` "
+            "loader resolves the token against the dashboard's configured "
+            "REST URL, so the link only works where that is this server. "
+            "true: always mint it. false: never (and do not advertise it). "
+            "Unset (default): auto — advertise it, and mint it per call only "
+            "when the file's download URL lies on `pathfinder_rest_url`, i.e. "
+            "on the REST host the Pathfinder at `pathfinder_base_url` imports "
+            "from. With the defaults that is the hosted app/API pair; test, "
+            "local and self-hosted servers then simply get no link."
         ),
     )
+    pathfinder_rest_url: str = Field(
+        default="https://api.iknaio.com",
+        description=(
+            "REST base URL the Pathfinder at `pathfinder_base_url` fetches "
+            "`?import=` files from. Only used in auto mode "
+            "(`pathfinder_open_url_enabled` unset) to decide per call whether "
+            "a download link can be opened there. Trailing slashes are stripped."
+        ),
+    )
+
+    @property
+    def pathfinder_open_url_mode(self) -> Literal["on", "off", "auto"]:
+        """Resolved open-url feature mode (see `pathfinder_open_url_enabled`)."""
+        if self.pathfinder_open_url_enabled is None:
+            return "auto"
+        return "on" if self.pathfinder_open_url_enabled else "off"
 
     website_url: Optional[str] = Field(
         default="https://www.iknaio.com/",
@@ -287,8 +306,8 @@ class GSMCPConfig(BaseSettings):
         Feature-gated blocks: text wrapped in
         ``<!-- feature:pathfinder-open-url -->`` /
         ``<!-- /feature:pathfinder-open-url -->`` marker lines is kept
-        (markers stripped) when `pathfinder_open_url_enabled` is true and
-        removed entirely otherwise.
+        (markers stripped) unless the open-url feature is off
+        (`pathfinder_open_url_enabled: false`), and removed entirely then.
         """
         if self.instructions is not None:
             text = self.instructions or None
@@ -299,7 +318,7 @@ class GSMCPConfig(BaseSettings):
             text = path.read_text(encoding="utf-8").strip() or None
         if text is None:
             return None
-        if self.pathfinder_open_url_enabled:
+        if self.pathfinder_open_url_mode != "off":
             text = _OPEN_URL_MARKER_RE.sub("", text)
         else:
             text = _OPEN_URL_BLOCK_RE.sub("", text)
