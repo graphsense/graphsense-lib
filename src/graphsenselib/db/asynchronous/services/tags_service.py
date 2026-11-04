@@ -4,7 +4,11 @@ import time
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, Union, Callable
 
 from graphsenselib.config.config import SlackTopic
-from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
+from graphsenselib.errors import (
+    BadUserInputException,
+    FeatureNotAvailableException,
+    NotFoundException,
+)
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.slack import send_message_to_slack
 
@@ -45,7 +49,7 @@ TAG_SUMMARIES_SLOW_WARN_S = 10.0
 class TagInsertConfigProtocol(Protocol):
     enable_user_tag_reporting: bool
     slack_info_hook: Dict[str, SlackTopic]
-    privacy_preserving_tag_notification: bool
+    privacy_preserving_tag_notifications: bool
 
 
 class TagstoreProtocol(Protocol):
@@ -832,7 +836,10 @@ class TagsService:
         tag_acl_group: str,
     ) -> Optional[str]:
         try:
-            from graphsenselib.tagstore.db import TagAlreadyExistsException
+            from graphsenselib.tagstore.db import (
+                TagAlreadyExistsException,
+                UnknownConceptsException,
+            )
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for tag reporting. "
@@ -841,8 +848,10 @@ class TagsService:
 
         reporting_enabled = config.enable_user_tag_reporting
 
+        # The config field is plural (web/config.py); reading the singular
+        # name silently fell back to True, so the setting had no effect.
         privacy_preserving_tag_notification = getattr(
-            config, "privacy_preserving_tag_notification", True
+            config, "privacy_preserving_tag_notifications", True
         )
 
         insert_id = None
@@ -858,6 +867,11 @@ class TagsService:
                 # nothing new to review, so no notification either.
                 logger.info("Tag already exists, ignoring insert.")
                 return e.existing_id
+            except UnknownConceptsException as e:
+                raise BadUserInputException(
+                    f"Unknown concepts: {', '.join(e.unknown)}. Use concept ids "
+                    "from /tags/taxonomies/concept/concepts."
+                ) from e
 
             info_hook = config.slack_info_hook
 

@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -29,7 +29,8 @@ class UserReportedTag(BaseModel):
     actor: Optional[StrictStr] = None
     label: StrictStr
     description: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["address", "network", "actor", "label", "description"]
+    concepts: Optional[List[StrictStr]] = Field(default=None, description="Additional concept ids for the address, from the concept taxonomy (GET /tags/taxonomies/concept/concepts), e.g. hot_wallet, cold_wallet, deposit_wallet. Added to the concepts of the actor, if one is given. Unknown ids are rejected with 400.")
+    __properties: ClassVar[List[str]] = ["address", "network", "actor", "label", "description", "concepts"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -87,7 +88,8 @@ class UserReportedTag(BaseModel):
             "network": obj.get("network"),
             "actor": obj.get("actor"),
             "label": obj.get("label"),
-            "description": obj.get("description")
+            "description": obj.get("description"),
+            "concepts": obj.get("concepts")
         })
         return _obj
 

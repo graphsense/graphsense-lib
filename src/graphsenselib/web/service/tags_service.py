@@ -58,6 +58,7 @@ async def report_tag(ctx, body):
         label=body.label,
         description=body.description or "",
         user=ctx.username,
+        concepts=body.concepts or [],
     )
 
     derId = await ctx.services.tags_service.report_tag(

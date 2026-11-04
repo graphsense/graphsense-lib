@@ -236,6 +236,19 @@ def test_report_tag_does_not_expose_internal_username_header_in_openapi():
     assert "x-consumer-username" not in parameter_names
 
 
+def test_report_tag_body_has_optional_concepts_in_openapi():
+    app = create_spec_app()
+    with TestClient(app) as client:
+        spec = client.get("/openapi.json").json()
+
+    ref = spec["paths"]["/tags/report-tag"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    body = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+    assert "concepts" in body["properties"]
+    assert "concepts" not in body.get("required", [])
+
+
 def test_pydantic_validation_error_is_handled_as_bad_user_input():
     class SampleInput(BaseModel):
         value: int
