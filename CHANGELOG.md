@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Changed
+- **`is_possible_service` also flags busy senders on account networks.** Besides `in_degree > 7500` or more than 500 incoming txs, an address now counts as a possible service with `out_degree > 7500` (a payout wallet: few deposits, very many recipients), or with at least 500 txs at 100 or more txs per day over its active span (first to last tx). Before, an address that paid out to tens of thousands of recipients in a few days but had under 500 incoming txs was not flagged. Calibrated on trx/eth: the new rules add hot-wallet-like senders and almost no low-activity addresses. UTXO networks are unchanged (judged by their cluster).
+
 #### Fixed
 - **A dropped keep-alive connection no longer takes an external backend down.** gs-rest's external-backends middleware marked the backend down on its first failed request, so a single request sent on a connection the adapter had just closed (`RemoteProtocolError: Server disconnected without sending a response`) caused 503s on all of the backend's networks until its next answer, plus a Slack alert. Such a request (also a read or write reset) is now sent once more on a fresh connection before it counts as a failure; refused connections and timeouts are not retried. Only read requests are retried (GET/HEAD and the bulk POSTs). The backend client also closes idle connections after 2 s, before uvicorn's default 5 s keep-alive on the adapter side.
 

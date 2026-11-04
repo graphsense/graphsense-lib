@@ -435,13 +435,44 @@ async def try_get_tag_cluster_id(
 _SERVICE_MAX_DEGREE = 7500
 _SERVICE_MAX_TXS = 500
 _SERVICE_MAX_CLUSTER_ADDRESSES = 100
+# Account networks also flag a busy address by its tx rate over its active
+# span (first to last tx), which catches payout wallets that receive from few
+# but pay out to many before their totals cross the limits above.
+# Calibrated 2026-11-04 on trx/eth (exchange-tagged addresses vs addresses of
+# random blocks): on top of the degree rules it adds hot-wallet-like senders
+# (median ~50k-1M outgoing, <100 incoming txs) and almost no low-activity
+# addresses. A tx-count floor keeps a burst in an address's first hour from
+# looking like a service.
+_SERVICE_MIN_TXS_FOR_RATE = 500
+_SERVICE_MIN_TXS_PER_DAY = 100
+_SECONDS_PER_DAY = 86400
+
+
+def _active_days(row: Dict[str, Any]) -> float:
+    """Days from the first to the last tx, at least one."""
+    first = getattr(row.get("first_tx"), "timestamp", None)
+    last = getattr(row.get("last_tx"), "timestamp", None)
+    if first is None or last is None:
+        return 1.0
+    return max((last - first) / _SECONDS_PER_DAY, 1.0)
+
+
+def _count(row: Dict[str, Any], column: str) -> int:
+    return saturate_int32_count(row.get(column)) or 0
 
 
 def is_possible_service_account(row: Dict[str, Any]) -> bool:
-    """Account networks judge the address itself: heavy incoming traffic."""
+    """Account networks judge the address itself: many counterparties in
+    either direction, heavy incoming traffic, or a sustained high tx rate."""
+    no_txs = _count(row, "no_incoming_txs") + _count(row, "no_outgoing_txs")
     return (
-        saturate_int32_count(row.get("in_degree", 0)) > _SERVICE_MAX_DEGREE
-        or saturate_int32_count(row.get("no_incoming_txs", 0)) > _SERVICE_MAX_TXS
+        _count(row, "in_degree") > _SERVICE_MAX_DEGREE
+        or _count(row, "out_degree") > _SERVICE_MAX_DEGREE
+        or _count(row, "no_incoming_txs") > _SERVICE_MAX_TXS
+        or (
+            no_txs >= _SERVICE_MIN_TXS_FOR_RATE
+            and no_txs / _active_days(row) >= _SERVICE_MIN_TXS_PER_DAY
+        )
     )
 
 

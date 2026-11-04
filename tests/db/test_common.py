@@ -276,3 +276,86 @@ def test_address_from_row_never_reports_negative_counters():
     assert address.no_outgoing_txs == INT32_MAX
     assert address.in_degree == INT32_MAX
     assert address.out_degree == 7  # untouched
+
+
+def _account_row(first_ts=0, last_ts=400 * 86400, **counts):
+    from graphsenselib.db.asynchronous.cassandra import TxSummary
+
+    row = {
+        "in_degree": 10,
+        "out_degree": 10,
+        "no_incoming_txs": 10,
+        "no_outgoing_txs": 10,
+        "first_tx": TxSummary(height=1, timestamp=first_ts, tx_hash=b""),
+        "last_tx": TxSummary(height=2, timestamp=last_ts, tx_hash=b""),
+    }
+    row.update(counts)
+    return row
+
+
+def test_possible_service_account_quiet_address_is_not_a_service():
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    assert not is_possible_service_account(_account_row())
+
+
+def test_possible_service_account_incoming_rules_unchanged():
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    assert is_possible_service_account(_account_row(in_degree=7501))
+    assert is_possible_service_account(_account_row(no_incoming_txs=501))
+
+
+def test_possible_service_account_many_outgoing_counterparties():
+    """A payout wallet: few deposits in, very many recipients out."""
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    assert is_possible_service_account(_account_row(out_degree=7501))
+    assert not is_possible_service_account(_account_row(out_degree=7500))
+
+
+def test_possible_service_account_sustained_tx_rate():
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    # 450 in + 73,832 out in 4 days: below every count limit but incoming
+    assert is_possible_service_account(
+        _account_row(no_incoming_txs=450, no_outgoing_txs=73832, last_ts=4 * 86400)
+    )
+    # the same 600 txs: 100/day over 6 days flags, over 400 days does not
+    six_days = _account_row(no_incoming_txs=100, no_outgoing_txs=500, last_ts=6 * 86400)
+    assert is_possible_service_account(six_days)
+    assert not is_possible_service_account(
+        _account_row(no_incoming_txs=100, no_outgoing_txs=500)
+    )
+
+
+def test_possible_service_account_rate_needs_a_tx_floor():
+    """A burst in an address's first hour is not a service."""
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    burst = _account_row(no_incoming_txs=10, no_outgoing_txs=489, last_ts=3600)
+    assert not is_possible_service_account(burst)
+
+
+def test_possible_service_account_tolerates_missing_values():
+    from graphsenselib.db.asynchronous.cassandra import TxSummary
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    assert not is_possible_service_account({})
+    no_timestamps = _account_row(no_outgoing_txs=490, out_degree=None)
+    no_timestamps["first_tx"] = TxSummary(height=1, timestamp=None, tx_hash=None)
+    no_timestamps["last_tx"] = None
+    # rate over at least one day: 500 txs in "one day" counts
+    assert is_possible_service_account(no_timestamps)
