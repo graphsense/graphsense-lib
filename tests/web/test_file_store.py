@@ -18,6 +18,7 @@ from starlette.requests import Request
 from graphsenselib.web.app import _register_download_route
 from graphsenselib.web.config import FileStoreConfig
 from graphsenselib.web.file_store import FileTooLargeError, RedisFileStore
+from tests.conftest import require_docker
 from tests.web.conftest import RedisContainer
 
 
@@ -29,6 +30,7 @@ from tests.web.conftest import RedisContainer
 @pytest.fixture(scope="module")
 def _file_store_redis_url():
     """A dedicated Redis container for this module (no Cassandra/Postgres)."""
+    require_docker()
     container = RedisContainer("redis:7-alpine")
     container.start()
     try:
