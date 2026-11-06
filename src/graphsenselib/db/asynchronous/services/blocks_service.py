@@ -39,8 +39,6 @@ class ConfigProtocol(Protocol):
 
 
 async def find_insertion_point_async(accessor, x, low: int, high: int):
-    mid = 0
-
     while low <= high:
         mid = (high + low) // 2
         mid_item = await accessor(mid)
@@ -52,7 +50,7 @@ async def find_insertion_point_async(accessor, x, low: int, high: int):
         else:
             return mid
 
-    return mid - 1 if (mid_item > x) else mid
+    return high
 
 
 class BlocksService:
