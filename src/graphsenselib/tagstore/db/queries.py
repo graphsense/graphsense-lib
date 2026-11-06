@@ -8,11 +8,11 @@ from json import JSONDecodeError
 from typing import Dict, List, Optional, Set
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
+from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func, true
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -525,6 +525,54 @@ def _get_tags_with_joinedloads_by_ids_stmt(tag_ids: List[int]):
     )
 
 
+def _get_private_actor_tag_page_ids_stmt(
+    actor: str,
+    offset: Optional[int],
+    page_size: Optional[int],
+    groups: List[str],
+    network: Optional[str],
+):
+    """Ids of a page of an actor's tags, for callers who see nearly all of them.
+
+    Confidence.level lives in another table, so no index yields this order
+    directly, and sorting all tags of a big actor costs seconds per page.
+    Instead take the first offset + page_size ids of each confidence from
+    tag_actor_confidence_id_idx and pick the page from those: the page can only
+    hold tags from that head of each confidence's list. The cost then follows
+    the page depth, not the actor's tag count.
+    """
+    # Aliased: the outer statement selects Tag and Confidence too, and would
+    # otherwise correlate them out of this subquery.
+    page_tag = aliased(Tag)
+    page_confidence = aliased(Confidence)
+    head = (
+        select(page_tag.id)
+        .where(page_tag.actor_id == actor)
+        # BETWEEN, not ==, plus confidence in the ORDER BY: with ==, Postgres
+        # drops confidence from the sort, tag_pkey then yields the order too,
+        # and under the LIMIT a walk over all tags can look cheap. It takes
+        # seconds or more for a confidence with few tags.
+        .where(page_tag.confidence_id.between(page_confidence.id, page_confidence.id))
+        .where(page_tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .order_by(page_tag.confidence_id, page_tag.id)
+    )
+    if network is not None:
+        head = head.where(page_tag.network == network)
+    if page_size is not None:
+        head = head.limit((offset or 0) + page_size)
+    head = head.correlate(page_confidence).lateral("confidence_head")
+
+    return (
+        select(head.c.id)
+        .select_from(page_confidence)
+        .join(head, true())
+        .order_by(desc(page_confidence.level), head.c.id)
+        .offset(offset)
+        .limit(page_size)
+    )
+
+
 def _get_tags_by_actorid_stmt(
     actor: str,
     offset: Optional[int],
@@ -538,13 +586,27 @@ def _get_tags_by_actorid_stmt(
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(Tag.actor_id == actor)
         .where(Tag.tagpack_id == TagPack.id)
-        .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
+        .order_by(desc(Confidence.level), Tag.id)
+    )
+    if "private" in groups:
+        return q.where(
+            Tag.id.in_(
+                _get_private_actor_tag_page_ids_stmt(
+                    actor, offset, page_size, groups, network
+                )
+            )
+        )
+
+    # Few tagpacks are visible without private access, so Postgres starts from
+    # those. The ids statement above would read all of the actor's tags to find
+    # the visible ones, seconds of work for a big actor with mostly private tags.
+    q = (
+        q.where(Tag.actor_id == actor)
+        .where(TagPack.acl_group.in_(groups))
         .offset(offset)
         .limit(page_size)
-        .order_by(desc(Confidence.level), Tag.id)
     )
     if network is not None:
         q = q.where(Tag.network == network)

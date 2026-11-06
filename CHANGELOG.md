@@ -19,6 +19,8 @@ Use one changelog file, but separate entries by track in each release window.
 - **`POST /tags/report-tag` takes optional `concepts`**, a list of concept ids from the concept taxonomy (`GET /tags/taxonomies/concept/concepts`), e.g. `hot_wallet`, `cold_wallet`, `deposit_wallet`. They are stored on the reported tag only (its `tag_concept` rows, shown in `additional_concepts`), together with the concepts copied from the actor as before (if one is given); the actor itself is not changed. A user can so say what kind of wallet an address is. Duplicates and surrounding spaces are dropped; an unknown id is rejected with 400 and nothing is stored. A report that repeats an existing tag still returns the first report's id and keeps that report's concepts.
 
 #### Changed
+- **`GET /tags/actors/{actor}/tags` no longer slows down with the actor's total tag count.** Each page used to sort all tags of the actor. For callers with private tag access, it now reads the head of each confidence from a new index and costs what the page depth costs. Callers without it keep the old query, which starts from the few tagpacks they can see. Order, response and `page` tokens are unchanged. Create the index on existing tagstores **before** deploying; without it the endpoint gets slower than before:
+  `CREATE INDEX CONCURRENTLY tag_actor_confidence_id_idx ON tag (actor, confidence, id) WHERE actor IS NOT NULL;`
 - **MCP `build_pathfinder_file`: the open-in-Pathfinder link (`open_url`) is on by default where it can work, and comes first.**
   - **Three modes:** `GS_MCP_PATHFINDER_OPEN_URL_ENABLED` is now three-state.
     - `true`: always mint the link.

@@ -1,7 +1,15 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.sql import func
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -152,6 +160,14 @@ class Tag(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint(
             "identifier", "network", "label", "tagpack", "source", name="unique_tag"
+        ),
+        # Pages the tags of an actor (_get_tags_by_actorid_stmt).
+        Index(
+            "tag_actor_confidence_id_idx",
+            "actor",
+            "confidence",
+            "id",
+            postgresql_where=text("actor IS NOT NULL"),
         ),
         _SHARED_TABLE_ARGS,
     )
