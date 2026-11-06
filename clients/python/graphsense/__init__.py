@@ -55,6 +55,9 @@ __all__ = [
     "CoinJoinHeuristics",
     "Concept",
     "ConsensusEntry",
+    "ConvertFormat",
+    "ConvertLayout",
+    "ConvertTxMode",
     "CurrencyStats",
     "DirectChangeHeuristic",
     "Entity",
@@ -179,6 +182,9 @@ from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinC
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
 from graphsense.models.concept import Concept as Concept
 from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
+from graphsense.models.convert_format import ConvertFormat as ConvertFormat
+from graphsense.models.convert_layout import ConvertLayout as ConvertLayout
+from graphsense.models.convert_tx_mode import ConvertTxMode as ConvertTxMode
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
 from graphsense.models.direct_change_heuristic import DirectChangeHeuristic as DirectChangeHeuristic
 from graphsense.models.entity import Entity as Entity

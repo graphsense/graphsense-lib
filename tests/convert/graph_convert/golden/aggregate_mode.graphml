@@ -1,0 +1,149 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="g.gs.v0.format_version" for="graph" attr.name="gs:v0:format_version" attr.type="string" />
+  <key id="g.gs.v0.name" for="graph" attr.name="gs:v0:name" attr.type="string" />
+  <key id="g.gs.v0.source" for="graph" attr.name="gs:v0:source" attr.type="string" />
+  <key id="g.gs.v0.tx_mode" for="graph" attr.name="gs:v0:tx_mode" attr.type="string" />
+  <key id="g.gs.v0.warnings" for="graph" attr.name="gs:v0:warnings" attr.type="string" />
+  <key id="n.label" for="node" attr.name="label" attr.type="string" />
+  <key id="n.gs.v0.kind" for="node" attr.name="gs:v0:kind" attr.type="string" />
+  <key id="n.gs.v0.network" for="node" attr.name="gs:v0:network" attr.type="string" />
+  <key id="n.gs.v0.address" for="node" attr.name="gs:v0:address" attr.type="string" />
+  <key id="n.gs.v0.starting_point" for="node" attr.name="gs:v0:starting_point" attr.type="boolean" />
+  <key id="n.gs.v0.x" for="node" attr.name="gs:v0:x" attr.type="double" />
+  <key id="n.gs.v0.y" for="node" attr.name="gs:v0:y" attr.type="double" />
+  <key id="n.gs.v0.annotation" for="node" attr.name="gs:v0:annotation" attr.type="string" />
+  <key id="n.gs.v0.color" for="node" attr.name="gs:v0:color" attr.type="string" />
+  <key id="e.gs.v0.kind" for="edge" attr.name="gs:v0:kind" attr.type="string" />
+  <key id="e.gs.v0.network" for="edge" attr.name="gs:v0:network" attr.type="string" />
+  <key id="e.gs.v0.asset" for="edge" attr.name="gs:v0:asset" attr.type="string" />
+  <key id="e.gs.v0.asset_id" for="edge" attr.name="gs:v0:asset_id" attr.type="string" />
+  <key id="e.gs.v0.value_determined" for="edge" attr.name="gs:v0:value_determined" attr.type="boolean" />
+  <key id="e.gs.v0.tx_count" for="edge" attr.name="gs:v0:tx_count" attr.type="long" />
+  <key id="e.gs.v0.first_timestamp" for="edge" attr.name="gs:v0:first_timestamp" attr.type="string" />
+  <key id="e.gs.v0.last_timestamp" for="edge" attr.name="gs:v0:last_timestamp" attr.type="string" />
+  <key id="e.gs.v0.txs" for="edge" attr.name="gs:v0:txs" attr.type="string" />
+  <key id="e.gs.v0.value" for="edge" attr.name="gs:v0:value" attr.type="string" />
+  <key id="e.gs.v0.directed" for="edge" attr.name="gs:v0:directed" attr.type="boolean" />
+  <key id="e.gs.v0.conversion_type" for="edge" attr.name="gs:v0:conversion_type" attr.type="string" />
+  <key id="e.gs.v0.input_tx" for="edge" attr.name="gs:v0:input_tx" attr.type="string" />
+  <key id="e.gs.v0.output_tx" for="edge" attr.name="gs:v0:output_tx" attr.type="string" />
+  <key id="e.gs.v0.from_address" for="edge" attr.name="gs:v0:from_address" attr.type="string" />
+  <key id="e.gs.v0.to_address" for="edge" attr.name="gs:v0:to_address" attr.type="string" />
+  <graph id="G" edgedefault="directed">
+    <data key="g.gs.v0.format_version">0</data>
+    <data key="g.gs.v0.name">export test</data>
+    <data key="g.gs.v0.source">graphsense-pathfinder</data>
+    <data key="g.gs.v0.tx_mode">aggregate</data>
+    <data key="g.gs.v0.warnings">from lookup
+tx cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc (btc): not found on the backend, exported without flow edges
+tx dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd (btc): lookup failed, exported without flow edges
+4 tx(s) connect no two different addresses of the graph and are not in the aggregate view; use tx_mode=node to keep them</data>
+    <node id="bip122:000000000019d6689c085ae165831e93:1AAAinputAddress">
+      <data key="n.label">1AAAinputAddress</data>
+      <data key="n.gs.v0.kind">address</data>
+      <data key="n.gs.v0.network">btc</data>
+      <data key="n.gs.v0.address">1AAAinputAddress</data>
+      <data key="n.gs.v0.starting_point">true</data>
+      <data key="n.gs.v0.x">0.0</data>
+      <data key="n.gs.v0.y">0.0</data>
+    </node>
+    <node id="bip122:000000000019d6689c085ae165831e93:1BBBoutputAddress">
+      <data key="n.label">cash-out</data>
+      <data key="n.gs.v0.kind">address</data>
+      <data key="n.gs.v0.network">btc</data>
+      <data key="n.gs.v0.address">1BBBoutputAddress</data>
+      <data key="n.gs.v0.starting_point">false</data>
+      <data key="n.gs.v0.annotation">cash-out</data>
+      <data key="n.gs.v0.color">#ff000080</data>
+      <data key="n.gs.v0.x">10.0</data>
+      <data key="n.gs.v0.y">0.0</data>
+    </node>
+    <node id="eip155:1:0xabcdef0000000000000000000000000000000001">
+      <data key="n.label">0xabcdef0000000000000000000000000000000001</data>
+      <data key="n.gs.v0.kind">address</data>
+      <data key="n.gs.v0.network">eth</data>
+      <data key="n.gs.v0.address">0xabcdef0000000000000000000000000000000001</data>
+      <data key="n.gs.v0.starting_point">false</data>
+      <data key="n.gs.v0.x">0.0</data>
+      <data key="n.gs.v0.y">10.0</data>
+    </node>
+    <node id="eip155:1:0x00000000000000000000000000000000000000e2">
+      <data key="n.label">0x00000000000000000000000000000000000000e2</data>
+      <data key="n.gs.v0.kind">address</data>
+      <data key="n.gs.v0.network">eth</data>
+      <data key="n.gs.v0.address">0x00000000000000000000000000000000000000e2</data>
+      <data key="n.gs.v0.starting_point">false</data>
+      <data key="n.gs.v0.x">10.0</data>
+      <data key="n.gs.v0.y">10.0</data>
+    </node>
+    <node id="graphsense:trx:TXyzTronReceiver00000000000000000">
+      <data key="n.label">TXyzTronReceiver00000000000000000</data>
+      <data key="n.gs.v0.kind">address</data>
+      <data key="n.gs.v0.network">trx</data>
+      <data key="n.gs.v0.address">TXyzTronReceiver00000000000000000</data>
+      <data key="n.gs.v0.starting_point">false</data>
+      <data key="n.gs.v0.x">20.0</data>
+      <data key="n.gs.v0.y">10.0</data>
+    </node>
+    <edge id="flow/0" source="bip122:000000000019d6689c085ae165831e93:1AAAinputAddress" target="bip122:000000000019d6689c085ae165831e93:1BBBoutputAddress">
+      <data key="e.gs.v0.kind">flow</data>
+      <data key="e.gs.v0.network">btc</data>
+      <data key="e.gs.v0.asset">btc</data>
+      <data key="e.gs.v0.asset_id">bip122:000000000019d6689c085ae165831e93/slip44:0</data>
+      <data key="e.gs.v0.value_determined">false</data>
+      <data key="e.gs.v0.tx_count">1</data>
+      <data key="e.gs.v0.first_timestamp">2023-07-22T04:26:40Z</data>
+      <data key="e.gs.v0.last_timestamp">2023-07-22T04:26:40Z</data>
+      <data key="e.gs.v0.txs">bip122:000000000019d6689c085ae165831e93:tx:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</data>
+    </edge>
+    <edge id="flow/1" source="eip155:1:0xabcdef0000000000000000000000000000000001" target="eip155:1:0x00000000000000000000000000000000000000e2">
+      <data key="e.gs.v0.kind">flow</data>
+      <data key="e.gs.v0.network">eth</data>
+      <data key="e.gs.v0.asset">eth</data>
+      <data key="e.gs.v0.asset_id">eip155:1/slip44:60</data>
+      <data key="e.gs.v0.value">1000000000000000000</data>
+      <data key="e.gs.v0.value_determined">true</data>
+      <data key="e.gs.v0.tx_count">1</data>
+      <data key="e.gs.v0.first_timestamp">2023-11-14T22:13:20Z</data>
+      <data key="e.gs.v0.last_timestamp">2023-11-14T22:13:20Z</data>
+      <data key="e.gs.v0.txs">eip155:1:tx:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee</data>
+    </edge>
+    <edge id="flow/2" source="eip155:1:0x00000000000000000000000000000000000000e2" target="eip155:1:0xabcdef0000000000000000000000000000000001">
+      <data key="e.gs.v0.kind">flow</data>
+      <data key="e.gs.v0.network">eth</data>
+      <data key="e.gs.v0.asset">usdt</data>
+      <data key="e.gs.v0.value">2500000</data>
+      <data key="e.gs.v0.value_determined">true</data>
+      <data key="e.gs.v0.tx_count">1</data>
+      <data key="e.gs.v0.first_timestamp">2023-11-14T22:13:20Z</data>
+      <data key="e.gs.v0.last_timestamp">2023-11-14T22:13:20Z</data>
+      <data key="e.gs.v0.txs">eip155:1:tx:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee_T0</data>
+    </edge>
+    <edge id="flow/3" source="eip155:1:0x00000000000000000000000000000000000000e2" target="eip155:1:0xabcdef0000000000000000000000000000000001">
+      <data key="e.gs.v0.kind">flow</data>
+      <data key="e.gs.v0.network">eth</data>
+      <data key="e.gs.v0.asset">weth</data>
+      <data key="e.gs.v0.value">7</data>
+      <data key="e.gs.v0.value_determined">true</data>
+      <data key="e.gs.v0.tx_count">1</data>
+      <data key="e.gs.v0.first_timestamp">2023-11-14T22:13:20Z</data>
+      <data key="e.gs.v0.last_timestamp">2023-11-14T22:13:20Z</data>
+      <data key="e.gs.v0.txs">eip155:1:tx:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff</data>
+    </edge>
+    <edge id="agg/0" source="bip122:000000000019d6689c085ae165831e93:1AAAinputAddress" target="bip122:000000000019d6689c085ae165831e93:1BBBoutputAddress">
+      <data key="e.gs.v0.kind">agg</data>
+      <data key="e.gs.v0.network">btc</data>
+      <data key="e.gs.v0.directed">false</data>
+      <data key="e.gs.v0.txs">bip122:000000000019d6689c085ae165831e93:tx:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</data>
+    </edge>
+    <edge id="conversion/0" source="eip155:1:0xabcdef0000000000000000000000000000000001" target="eip155:1:0x00000000000000000000000000000000000000e2">
+      <data key="e.gs.v0.kind">conversion</data>
+      <data key="e.gs.v0.conversion_type">dex_swap</data>
+      <data key="e.gs.v0.input_tx">eip155:1:tx:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee_T0</data>
+      <data key="e.gs.v0.output_tx">eip155:1:tx:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff</data>
+      <data key="e.gs.v0.from_address">eip155:1:0xabcdef0000000000000000000000000000000001</data>
+      <data key="e.gs.v0.to_address">eip155:1:0x00000000000000000000000000000000000000e2</data>
+    </edge>
+  </graph>
+</graphml>

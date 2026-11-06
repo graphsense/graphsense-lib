@@ -1084,7 +1084,7 @@ async def test_hierarchical_layout_draws_backend_inflows_on_the_left(
         return {**spec, "txs": txs}, []
 
     monkeypatch.setattr(
-        "graphsenselib.mcp.tools.pathfinder_export.annotate_tx_flows", fake_annotate
+        "graphsenselib.mcp.tools.pathfinder_export.annotate_for_layout", fake_annotate
     )
     call_result = await _call(
         _mcp(), {"name": "inflow", "default_network": "btc", "spec": _INFLOW_SPEC}
@@ -1102,7 +1102,7 @@ async def test_failed_direction_lookup_falls_back_silently(monkeypatch) -> None:
         raise _httpx.ConnectError("backend down")
 
     monkeypatch.setattr(
-        "graphsenselib.mcp.tools.pathfinder_export.annotate_tx_flows", boom
+        "graphsenselib.mcp.tools.pathfinder_export.annotate_for_layout", boom
     )
     call_result = await _call(
         _mcp(), {"name": "inflow", "default_network": "btc", "spec": _INFLOW_SPEC}

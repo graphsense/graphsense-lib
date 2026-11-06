@@ -9,7 +9,7 @@ from pathlib import Path
 
 import click
 
-from .encoder import apply_hierarchical_layout, builder_from_spec, spec_from_pathfinder
+from .encoder import builder_from_spec, spec_from_pathfinder
 from .layout import layout_metrics
 from .parser import PathfinderData, decode_gs, decode_gs_bytes, structure
 from .summary import summarize
@@ -140,37 +140,23 @@ _HOST_ENV_VARS = ("GRAPHSENSE_HOST", "IKNAIO_HOST", "GS_HOST")
 _API_KEY_ENV_VARS = ("GRAPHSENSE_API_KEY", "IKNAIO_API_KEY", "GS_API_KEY")
 
 
-def _lookup_tx_flows(
-    spec: dict, api_url: str, api_key: str | None, network: str
-) -> tuple[dict, list[str]]:
-    """Ask the REST API which addresses send / receive each tx, and which
-    txs are the legs of a swap or bridge."""
+def _with_backend(api_url: str, api_key: str | None, run):
+    """Run ``run(backend)`` against a REST backend at ``api_url``."""
     # Imported here: httpx and the pathfinder package are only needed
     # when a lookup actually runs.
     import httpx
 
-    from graphsenselib.pathfinder import (
-        RestBackend,
-        annotate_conversions,
-        annotate_tx_flows,
-    )
+    from graphsenselib import pathfinder
 
-    async def run() -> tuple[dict, list[str]]:
+    async def main():
         headers = {"Authorization": api_key} if api_key else {}
         async with httpx.AsyncClient(
             base_url=api_url, headers=headers, timeout=60.0
         ) as client:
-            # One backend, so the conversion step reuses fetched txs.
-            backend = RestBackend(client)
-            flowed, warnings = await annotate_tx_flows(
-                spec, default_network=network, backend=backend
-            )
-            converted, more = await annotate_conversions(
-                flowed, default_network=network, backend=backend
-            )
-            return converted, warnings + more
+            # One backend, so later steps reuse fetched txs.
+            return await run(pathfinder.RestBackend(client))
 
-    return asyncio.run(run())
+    return asyncio.run(main())
 
 
 @gs_files_cli.command("layout")
@@ -227,38 +213,32 @@ def layout_cmd(
     the way Pathfinder arranges it on load (a U-turn: the other chain
     runs right to left below).
     """
+    from graphsenselib.pathfinder import relayout
+    from graphsenselib.pathfinder.relayout import default_network
+
     data = structure(decode_gs(file))
     if not isinstance(data, PathfinderData):
         raise click.UsageError("only Pathfinder files can be laid out")
 
     original = spec_from_pathfinder(data)
-    spec = spec_from_pathfinder(data, keep_positions=False)
-    network = data.addresses[0].id.currency if data.addresses else "btc"
+    network = default_network(data)
 
     if lookup and api_url:
-        spec, warnings = _lookup_tx_flows(spec, api_url, api_key, network)
-        for w in warnings:
-            click.echo(f"warning: {w}", err=True)
-    elif lookup:
-        click.echo(
-            "no API URL (--api-url / GRAPHSENSE_HOST): laying out without "
-            "flow direction, so inflows may be drawn on the right",
-            err=True,
+        laid, warnings = _with_backend(
+            api_url, api_key, lambda backend: relayout(data, backend)
         )
-
-    # The layout grows columns out of the starting points. A file without
-    # any gets its first address as a stand-in anchor, which is not
-    # written back as a starting point.
-    anchor = None
-    if spec["addresses"] and not any(
-        n.get("starting_point") for n in spec["addresses"] + spec["txs"]
-    ):
-        anchor = spec["addresses"][0]
-        anchor["starting_point"] = True
-    laid = apply_hierarchical_layout(spec)
-    if anchor is not None:
-        anchor["starting_point"] = False
-        laid["addresses"][0]["starting_point"] = False
+    else:
+        laid, _ = asyncio.run(relayout(data, None))
+        warnings = (
+            [
+                "no API URL (--api-url / GRAPHSENSE_HOST): laying out without "
+                "flow direction, so inflows may be drawn on the right"
+            ]
+            if lookup
+            else []
+        )
+    for w in warnings:
+        click.echo(f"warning: {w}", err=True)
 
     out = builder_from_spec(laid, name=data.name, default_network=network).write(output)
     click.echo(f"wrote {out} ({out.stat().st_size} bytes)", err=True)
@@ -282,3 +262,106 @@ def layout_cmd(
             ),
             err=True,
         )
+
+
+@gs_files_cli.command("convert")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Output path. Default: named after the graph, in the current directory.",
+)
+@click.option(
+    "--to",
+    "to",
+    type=click.Choice(["gs", "graphml"]),
+    default="graphml",
+    show_default=True,
+    help="Target format.",
+)
+@click.option(
+    "--tx-mode",
+    type=click.Choice(["node", "aggregate"]),
+    default="node",
+    show_default=True,
+    help=(
+        "Graph formats: one node per tx (lossless), or one edge per sender, "
+        "receiver and asset."
+    ),
+)
+@click.option(
+    "--layout",
+    type=click.Choice(["keep", "auto"]),
+    default="keep",
+    show_default=True,
+    help="Keep the positions, or lay the graph out afresh (as `layout`).",
+)
+@click.option(
+    "--include",
+    multiple=True,
+    type=click.Choice(["tags"]),
+    help="Graph formats: add address-level attribution. Repeatable.",
+)
+@click.option(
+    "--api-url",
+    envvar=list(_HOST_ENV_VARS),
+    default=None,
+    help=f"GraphSense REST base URL. Env: {', '.join(_HOST_ENV_VARS)}.",
+)
+@click.option(
+    "--api-key",
+    envvar=list(_API_KEY_ENV_VARS),
+    default=None,
+    help=f"API key for --api-url. Env: {', '.join(_API_KEY_ENV_VARS)}.",
+)
+def convert_cmd(
+    file: Path,
+    output: Path | None,
+    to: str,
+    tx_mode: str,
+    layout: str,
+    include: tuple[str, ...],
+    api_url: str | None,
+    api_key: str | None,
+) -> None:
+    """Convert a Pathfinder graph (.gs, or its JSON payload) to another format.
+
+    Graph formats need the REST API (--api-url) for the flows: a .gs file
+    stores which txs are on the graph, not which addresses they connect.
+    Without it every tx is exported without flow edges.
+    """
+    from graphsenselib.convert.graph_convert import convert
+
+    raw = file.read_bytes()
+    payload = json.loads(raw) if raw.lstrip()[:1] == b"[" else raw
+
+    def run(backend):
+        return convert(
+            payload,
+            backend,
+            to=to,
+            tx_mode=tx_mode,  # type: ignore[arg-type]
+            layout=layout,  # type: ignore[arg-type]
+            include=include,
+        )
+
+    try:
+        if api_url:
+            result = _with_backend(api_url, api_key, run)
+        else:
+            if to != "gs" or layout == "auto":
+                click.echo(
+                    "no API URL (--api-url / GRAPHSENSE_HOST): converting "
+                    "without lookups",
+                    err=True,
+                )
+            result = asyncio.run(run(None))
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    for w in result.warnings:
+        click.echo(f"warning: {w}", err=True)
+    out = output or Path(result.filename)
+    out.write_bytes(result.content)
+    click.echo(f"wrote {out} ({len(result.content)} bytes)", err=True)

@@ -22,6 +22,12 @@ sanity-checking (cheap, no I/O); use both when a backend is available
 and you want to surface semantic mistakes too.
 """
 
+from graphsenselib.pathfinder.relayout import (
+    LayoutBackend,
+    annotate_for_layout,
+    layout_spec,
+    relayout,
+)
 from graphsenselib.pathfinder.tx_flows import (
     ConversionsBackend,
     TxSidesBackend,
@@ -38,10 +44,14 @@ from graphsenselib.pathfinder.verify_structural import verify_structural
 __all__ = [
     "ConversionsBackend",
     "GraphsenseBackend",
+    "LayoutBackend",
     "RestBackend",
     "TxSidesBackend",
     "annotate_conversions",
+    "annotate_for_layout",
     "annotate_tx_flows",
+    "layout_spec",
+    "relayout",
     "verify_against_backend",
     "verify_structural",
 ]

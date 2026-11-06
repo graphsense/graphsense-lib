@@ -161,6 +161,7 @@ Class | Method | HTTP request | Description
 *GeneralApi* | [**get_capabilities**](docs/GeneralApi.md#get_capabilities) | **GET** /capabilities | Get per-network feature availability
 *GeneralApi* | [**get_statistics**](docs/GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 *GeneralApi* | [**search**](docs/GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
+*GraphApi* | [**convert_graph**](docs/GraphApi.md#convert_graph) | **POST** /graph/convert | Convert a Pathfinder graph to another format, or lay it out (beta)
 *GraphApi* | [**graph_compare**](docs/GraphApi.md#graph_compare) | **POST** /graph/compare | Compare multiple transactions (beta)
 *GraphApi* | [**graph_summary**](docs/GraphApi.md#graph_summary) | **POST** /graph/summary | Summarize a set of transactions and/or addresses (beta)
 *RatesApi* | [**get_exchange_rates**](docs/RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get fiat exchange rates at a block height
@@ -202,6 +203,9 @@ Class | Method | HTTP request | Description
  - [CoinJoinHeuristics](docs/CoinJoinHeuristics.md)
  - [Concept](docs/Concept.md)
  - [ConsensusEntry](docs/ConsensusEntry.md)
+ - [ConvertFormat](docs/ConvertFormat.md)
+ - [ConvertLayout](docs/ConvertLayout.md)
+ - [ConvertTxMode](docs/ConvertTxMode.md)
  - [CurrencyStats](docs/CurrencyStats.md)
  - [DirectChangeHeuristic](docs/DirectChangeHeuristic.md)
  - [Entity](docs/Entity.md)

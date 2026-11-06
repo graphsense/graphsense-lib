@@ -46,8 +46,7 @@ from graphsenselib.convert.gs_files import (
 from graphsenselib.mcp.tools.consolidated import _make_client
 from graphsenselib.pathfinder import (
     RestBackend,
-    annotate_conversions,
-    annotate_tx_flows,
+    annotate_for_layout,
     verify_against_backend,
     verify_structural,
 )
@@ -344,13 +343,9 @@ async def _lookup_tx_flows(
     try:
         async with client:
             backend = RestBackend(client, tx_cache=tx_cache)
-            spec_dict, problems = await annotate_tx_flows(
+            spec_dict, problems = await annotate_for_layout(
                 spec_dict, default_network=default_network, backend=backend
             )
-            spec_dict, more = await annotate_conversions(
-                spec_dict, default_network=default_network, backend=backend
-            )
-            problems += more
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         logger.warning(
             "build_pathfinder_file: tx direction lookup failed (%s); "

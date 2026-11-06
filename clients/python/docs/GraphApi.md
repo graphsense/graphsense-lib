@@ -4,9 +4,102 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**convert_graph**](GraphApi.md#convert_graph) | **POST** /graph/convert | Convert a Pathfinder graph to another format, or lay it out (beta)
 [**graph_compare**](GraphApi.md#graph_compare) | **POST** /graph/compare | Compare multiple transactions (beta)
 [**graph_summary**](GraphApi.md#graph_summary) | **POST** /graph/summary | Summarize a set of transactions and/or addresses (beta)
 
+
+# **convert_graph**
+> bytearray convert_graph(request_body, to=to, tx_mode=tx_mode, layout=layout, include=include)
+
+Convert a Pathfinder graph to another format, or lay it out (beta)
+
+**BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Takes a Pathfinder graph, either a .gs file (application/octet-stream) or the JSON payload the dashboard encodes (application/json), and returns it in the format `to`. `to=graphml` writes a GraphML document: every transaction is a node, every input or output touching an address of the graph an edge with its value in base units; the attribute keys (`gs:v0:*`) are experimental. `tx_mode=aggregate` writes one edge per sender, receiver and asset instead (total value, tx count, first/last timestamp, the txs); its value is exact or absent, never estimated: a UTXO tx with several sender addresses does not say who paid whom. `include=tags` adds the address-level attribution (no cluster tags), one lookup per address. `to=gs` returns a .gs file. `layout=auto` places every node afresh first, with senders left of their transaction. Each transaction is looked up once; a lookup that fails leaves that transaction without flow edges or direction and is reported in the X-Convert-Warnings header (count) and, for graph formats, in the document. The response is the file itself, named after the graph. At most 500 nodes and 4194304 bytes.
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.convert_format import ConvertFormat
+from graphsense.models.convert_layout import ConvertLayout
+from graphsense.models.convert_tx_mode import ConvertTxMode
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.GraphApi(api_client)
+    request_body = ['pathfinder', '1', 'first bitcoin transfer', [[['btc', '12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'], 0, 0, True, 0], [['btc', '1Q2TWHE3GMdB6BZKafqwxXtWAWgFt5Jvm3'], 8, 0, False, 0]], [[['btc', 'f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16'], 4, 0, False, 0]], [], [[['btc', '12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'], ['btc', '1Q2TWHE3GMdB6BZKafqwxXtWAWgFt5Jvm3'], [['btc', 'f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16']], 0]]] # List[object] | 
+    to = 'graphml' # ConvertFormat | Target format. (optional)
+    tx_mode = 'node' # ConvertTxMode | How transactions are written in graph formats: `node`, one node per transaction (lossless), or `aggregate`, one edge per sender, receiver and asset. (optional)
+    layout = 'keep' # ConvertLayout | `keep` the positions of the input, or `auto`: lay the graph out afresh. (optional)
+    include = 'tags' # str | Comma-separated enrichment for graph formats: `tags` (address-level attribution, one lookup per address). (optional)
+
+    try:
+        # Convert a Pathfinder graph to another format, or lay it out (beta)
+        api_response = api_instance.convert_graph(request_body, to=to, tx_mode=tx_mode, layout=layout, include=include)
+        print("The response of GraphApi->convert_graph:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling GraphApi->convert_graph: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **request_body** | [**List[object]**](object.md)|  | 
+ **to** | [**ConvertFormat**](.md)| Target format. | [optional] 
+ **tx_mode** | [**ConvertTxMode**](.md)| How transactions are written in graph formats: &#x60;node&#x60;, one node per transaction (lossless), or &#x60;aggregate&#x60;, one edge per sender, receiver and asset. | [optional] 
+ **layout** | [**ConvertLayout**](.md)| &#x60;keep&#x60; the positions of the input, or &#x60;auto&#x60;: lay the graph out afresh. | [optional] 
+ **include** | **str**| Comma-separated enrichment for graph formats: &#x60;tags&#x60; (address-level attribution, one lookup per address). | [optional] 
+
+### Return type
+
+**bytearray**
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json, application/octet-stream
+ - **Accept**: application/graphml+xml, application/octet-stream, application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | The converted graph, as a file download. |  -  |
+**400** | The body is not a Pathfinder graph (undecodable .gs file, invalid JSON, or an old Graph file), an unknown include, tx_mode or include given with to&#x3D;gs, or the graph has more than 500 nodes. |  -  |
+**413** | The body is larger than 4194304 bytes. |  -  |
+**422** | Validation Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **graph_compare**
 > GraphComparison graph_compare(graph_compare_request)

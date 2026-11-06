@@ -31,6 +31,9 @@ from graphsense.models.coin_join_consensus import CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
 from graphsense.models.concept import Concept
 from graphsense.models.consensus_entry import ConsensusEntry
+from graphsense.models.convert_format import ConvertFormat
+from graphsense.models.convert_layout import ConvertLayout
+from graphsense.models.convert_tx_mode import ConvertTxMode
 from graphsense.models.currency_stats import CurrencyStats
 from graphsense.models.direct_change_heuristic import DirectChangeHeuristic
 from graphsense.models.entity import Entity

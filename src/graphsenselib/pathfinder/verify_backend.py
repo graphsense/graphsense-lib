@@ -288,6 +288,10 @@ class RestBackend:
             response.raise_for_status()
         return response.json()
 
+    async def tx_body(self, network: str, tx_id: str) -> Optional[dict[str, Any]]:
+        """The tx response body with inputs and outputs, or None for a 404."""
+        return await self._get_tx(network, tx_id)
+
     async def tx_addresses(self, network: str, tx_id: str) -> Optional[frozenset[str]]:
         body = await self._get_tx(network, tx_id)
         return None if body is None else _addresses_from_tx_body(body)
@@ -303,6 +307,18 @@ class RestBackend:
     ) -> Optional[tuple[list[str], list[str]]]:
         body = await self._get_tx(network, tx_id)
         return None if body is None else tx_io_order_from_body(body)
+
+    async def address_tag_summary(
+        self, network: str, address: str
+    ) -> Optional[dict[str, Any]]:
+        """The address's own tag summary (no cluster tags), or None for a
+        404."""
+        response = await self._client.get(f"/{network}/addresses/{address}/tag_summary")
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            response.raise_for_status()
+        return response.json()
 
     async def tx_conversions(self, network: str, tx_id: str) -> list[dict[str, Any]]:
         """Swaps and bridge txs the tx takes part in, as the REST API lists
