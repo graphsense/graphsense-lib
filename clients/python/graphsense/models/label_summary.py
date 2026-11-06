@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing import Optional, Set
 from typing_extensions import Self
@@ -33,7 +33,9 @@ class LabelSummary(BaseModel):
     concepts: List[StrictStr]
     lastmod: StrictInt
     inherited_from: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["label", "count", "confidence", "relevance", "creators", "sources", "concepts", "lastmod", "inherited_from"]
+    actors: Optional[List[StrictStr]] = Field(default=None, description="Distinct actors of the tags merged into this label, sorted, including those of cluster-inherited tags. A label with actors is an actor label.")
+    tag_types: Optional[List[StrictStr]] = Field(default=None, description="Distinct tag types (actor, attribute, mention, ...) of the tags merged into this label, sorted.")
+    __properties: ClassVar[List[str]] = ["label", "count", "confidence", "relevance", "creators", "sources", "concepts", "lastmod", "inherited_from", "actors", "tag_types"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -95,7 +97,9 @@ class LabelSummary(BaseModel):
             "sources": obj.get("sources"),
             "concepts": obj.get("concepts"),
             "lastmod": obj.get("lastmod"),
-            "inherited_from": obj.get("inherited_from")
+            "inherited_from": obj.get("inherited_from"),
+            "actors": obj.get("actors"),
+            "tag_types": obj.get("tag_types")
         })
         return _obj
 

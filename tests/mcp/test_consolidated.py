@@ -1472,3 +1472,38 @@ def test_a_core_503_still_alerts(caplog):
         with pytest.raises(ToolError, match="HTTP 503"):
             _raise_backend_http_error(response, "/btc/addresses/1abc")
     assert [r.levelno for r in caplog.records] == [logging.ERROR]
+
+
+def test_slim_tag_summary_keeps_actors_only_where_set():
+    from graphsenselib.mcp.tools.consolidated import _slim_tag_summary
+
+    out = _slim_tag_summary(
+        {
+            "tag_count": 2,
+            "broad_category": "entity",
+            "label_summary": {
+                "usdc token": {
+                    "label": "USDC Token",
+                    "count": 1,
+                    "confidence": 0.9,
+                    "relevance": 0.5,
+                    "sources": ["https://example.test/a"],
+                    "actors": ["circle"],
+                    "tag_types": ["actor"],
+                },
+                "page title": {
+                    "label": "Page title",
+                    "count": 1,
+                    "confidence": 0.2,
+                    "relevance": 0.5,
+                    "sources": ["https://example.test/b"],
+                    "actors": [],
+                    "tag_types": ["mention"],
+                },
+            },
+        }
+    )
+    assert out is not None
+    assert out["labels"]["usdc token"]["actors"] == ["circle"]
+    assert "tag_types" not in out["labels"]["usdc token"]
+    assert "actors" not in out["labels"]["page title"]

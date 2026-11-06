@@ -15,6 +15,8 @@ Name | Type | Description | Notes
 **concepts** | **List[str]** |  | 
 **lastmod** | **int** |  | 
 **inherited_from** | **str** |  | [optional] 
+**actors** | **List[str]** | Distinct actors of the tags merged into this label, sorted, including those of cluster-inherited tags. A label with actors is an actor label. | [optional] 
+**tag_types** | **List[str]** | Distinct tag types (actor, attribute, mention, ...) of the tags merged into this label, sorted. | [optional] 
 
 ## Example
 

@@ -38,6 +38,8 @@ TAG_SUMMARY_EXAMPLE = {
             "sources": ["https://archive.org/donate/cryptocurrency"],
             "concepts": ["organization"],
             "lastmod": 1636675200,
+            "actors": ["internet_archive"],
+            "tag_types": ["actor"],
         }
     },
     "concept_tag_cloud": {"organization": {"cnt": 1, "weighted": 1.0}},
@@ -126,6 +128,21 @@ class LabelSummary(APIModel):
     concepts: list[str]
     lastmod: int
     inherited_from: Optional[str] = None
+    actors: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Distinct actors of the tags merged into this label, sorted, "
+            "including those of cluster-inherited tags. A label with actors "
+            "is an actor label."
+        ),
+    )
+    tag_types: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Distinct tag types (actor, attribute, mention, ...) of the tags "
+            "merged into this label, sorted."
+        ),
+    )
 
 
 class TagSummary(APIModel):

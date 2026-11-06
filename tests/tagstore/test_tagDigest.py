@@ -9,7 +9,7 @@ from graphsenselib.tagstore.algorithms.tag_digest import (
     compute_tag_digest,
 )
 from graphsenselib.tagstore.algorithms.obfuscate import obfuscate_tag_if_not_public
-from graphsenselib.tagstore.db.queries import TagPublic
+from graphsenselib.tagstore.db.queries import InheritedFrom, TagPublic
 
 
 def loadtestFile(file):
@@ -194,3 +194,75 @@ def test_tag_digest_exchange(tagsExchange):
 
     assert list(digest.concept_tag_cloud.keys())[0] == "exchange"
     assert list(digest.concept_tag_cloud.keys()) == ["exchange"]
+
+
+def _actor_tag(label, actor, tag_type="actor", confidence_level=100, **kw):
+    t = _mk_tag(label, **kw)
+    t.actor = actor
+    t.tag_type = tag_type
+    t.confidence_level = confidence_level
+    return t
+
+
+def test_label_digest_merges_actors_and_tag_types_per_label():
+    # "USDC Token" and "usdc token" normalize to one label.
+    digest = compute_tag_digest(
+        [
+            _actor_tag("USDC Token", "circle"),
+            _actor_tag("usdc token", None),
+            _actor_tag("Some page title", None, tag_type="mention"),
+            _actor_tag("Stablecoin", None, tag_type="attribute"),
+        ]
+    )
+    merged = digest.label_digest["usdc token"]
+    assert merged.count == 2
+    assert merged.actors == ["circle"]
+    assert merged.tag_types == ["actor"]
+    mention = digest.label_digest["some page title"]
+    assert mention.actors == []
+    assert mention.tag_types == ["mention"]
+    assert digest.label_digest["stablecoin"].tag_types == ["attribute"]
+
+
+def test_label_digest_lists_are_sorted_and_distinct():
+    digest = compute_tag_digest(
+        [
+            _actor_tag("Shared", "zeta"),
+            _actor_tag("Shared", "alpha", tag_type="mention"),
+            _actor_tag("Shared", "alpha"),
+            _actor_tag("Shared", "   "),  # blank is no actor
+        ]
+    )
+    entry = digest.label_digest["shared"]
+    assert entry.actors == ["alpha", "zeta"]
+    assert entry.tag_types == ["actor", "mention"]
+
+
+def test_label_digest_actors_ignore_the_high_confidence_threshold():
+    tags = [
+        _actor_tag("Strong", "strong"),
+        _actor_tag("Weak", "weak", confidence_level=10),
+    ]
+    digest = compute_tag_digest(
+        tags,
+        config=TagDigestComputationConfig().with_only_propagate_high_confidence_actors(),
+    )
+    assert digest.best_actor == "strong"
+    assert digest.label_digest["weak"].actors == ["weak"]
+
+
+def test_label_digest_keeps_cluster_inherited_actors():
+    digest = compute_tag_digest(
+        [_actor_tag("Definer", "acme", inherited_from=InheritedFrom.CLUSTER)]
+    )
+    entry = digest.label_digest["definer"]
+    assert entry.actors == ["acme"]
+    assert entry.inherited_from == "cluster"
+
+
+def test_label_digest_obfuscated_tag_gives_no_actor():
+    tag = _actor_tag("Secret", "secret_actor")
+    assert not tag.tagpack_is_public
+    digest = compute_tag_digest([obfuscate_tag_if_not_public(tag)])
+    for entry in digest.label_digest.values():
+        assert entry.actors == []

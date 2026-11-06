@@ -443,6 +443,8 @@ class LabelSummary(BaseModel):
     concepts: List[str] = Field(default_factory=list)
     lastmod: Optional[int] = None
     inherited_from: Optional[str] = None
+    actors: List[str] = Field(default_factory=list)
+    tag_types: List[str] = Field(default_factory=list)
 
 
 class CrossChainPubkeyRelatedAddress(BaseModel):

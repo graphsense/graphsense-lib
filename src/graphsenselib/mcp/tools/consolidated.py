@@ -285,15 +285,24 @@ def _matches_tag_filter(tag_summary: Optional[dict[str, Any]], needle: str) -> b
 # Per-label fields kept in the slim tag_summary. Provenance/audit fields
 # (creators, lastmod, inherited_from) and per-label `concepts` (already
 # aggregated in the top-level concept cloud) are dropped. `sources` stays —
-# it's the LLM's only path to attribute claims to a tagpack.
+# it's the LLM's only path to attribute claims to a tagpack. `actors` is kept
+# too, but only where set: it says which labels name a curated actor, and most
+# labels of a heavily tagged address have none.
 _LABEL_KEEP_FIELDS = frozenset({"count", "confidence", "relevance", "sources"})
+
+
+def _slim_label(entry: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in entry.items() if k in _LABEL_KEEP_FIELDS}
+    if entry.get("actors"):
+        out["actors"] = entry["actors"]
+    return out
 
 
 def _slim_tag_summary(ts: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """Reshape graphsense's TagSummary into a leaner LLM-friendly form.
 
     Keeps the analysis-relevant fields (counts, best label/actor, broad
-    category, per-label confidence/relevance/sources, concept weights)
+    category, per-label confidence/relevance/sources/actors, concept weights)
     and drops the provenance/audit ones (creators, lastmod,
     inherited_from). The concept_tag_cloud's `{cnt, weighted}` pair is
     flattened to a label→weight map. Renames `label_summary`→`labels`
@@ -316,7 +325,7 @@ def _slim_tag_summary(ts: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     label_summary = ts.get("label_summary")
     if isinstance(label_summary, dict) and label_summary:
         out["labels"] = {
-            label: {k: v for k, v in entry.items() if k in _LABEL_KEEP_FIELDS}
+            label: _slim_label(entry)
             for label, entry in label_summary.items()
             if isinstance(entry, dict)
         }

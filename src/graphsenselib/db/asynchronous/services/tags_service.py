@@ -365,6 +365,8 @@ class TagsService:
                     concepts=v.concepts,
                     lastmod=v.lastmod,
                     inherited_from=v.inherited_from,
+                    actors=v.actors,
+                    tag_types=v.tag_types,
                 )
                 for (key, v) in td.label_digest.items()
             },

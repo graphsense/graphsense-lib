@@ -21,6 +21,12 @@ class LabelDigest(BaseModel):
     concepts: List[str]
     lastmod: int
     inherited_from: Optional[str]
+    # Over all tags merged into this label (labels merge by normalized text,
+    # so one entry can mix tags). actors is the raw view: unlike best_actor it
+    # ignores only_propagate_high_confidence_actors, and it includes the
+    # actors of cluster-inherited tags.
+    actors: List[str] = []
+    tag_types: List[str] = []
 
 
 class TagCloudEntry(BaseModel):
@@ -276,6 +282,8 @@ def compute_tag_digest(
             "sumConfidence": 0,
             "creators": set(),
             "concepts": set(),
+            "actors": set(),
+            "tag_types": set(),
             "lastmod": 0,
             # AND-folded across the label's tags below: stays True only if every
             # tag contributing to this label is inherited. Must start True (the
@@ -341,6 +349,11 @@ def compute_tag_digest(
 
                 ls["concepts"].add(x)
 
+            actor = _actor_of(t)
+            if actor is not None:
+                ls["actors"].add(actor)
+            ls["tag_types"].add(t.tag_type)
+
             ls["cnt"] += 1
             ls["lbl"] = t.label
             ls["src"].add(t.source)
@@ -395,6 +408,8 @@ def compute_tag_digest(
             concepts=sorted(value["concepts"]),
             lastmod=value["lastmod"],
             inherited_from="cluster" if value["inherited"] else None,
+            actors=sorted(value["actors"]),
+            tag_types=sorted(value["tag_types"]),
         )
         for (key, value) in label_summary.items()
     }
