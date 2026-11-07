@@ -208,16 +208,18 @@ def is_thorchain_memo(memo: Optional[str]) -> bool:
     """
     Check if a memo string looks like a THORChain deposit memo.
 
-    THORChain memos start with action indicators:
-    - =, s, S: swap
+    THORChain memos start with action indicators (thornode's names):
+    - =, s, S: SWAP function. A cross-chain SWAP is what the conversions API
+      reports as a ``bridge``, not a ``dex_swap``.
     - +: add liquidity
     - -: withdraw liquidity
-    - ~: loan
+    - ~: register a THORName
 
     The first character alone also matched other protocols' memos, e.g.
-    Bridgers' ``Sys:to:USDT(TRON):T...`` ("s" is THORChain's short swap), so
-    the memo's function must also be one THORChain knows. This only ever
-    rejects memos the first-character test accepted; it accepts nothing new.
+    Bridgers' ``Sys:to:USDT(TRON):T...`` ("s" is thornode's short form of
+    SWAP), so the memo's function must also be one THORChain knows. This only
+    ever rejects memos the first-character test accepted; it accepts nothing
+    new.
     """
     if not memo or len(memo) < 2:
         return False

@@ -3,8 +3,14 @@
 The recorded txs are Bridgers BTC deposits (mempool.space, blocks 961912-961941)
 whose memo tag happens to start with "s"/"S", e.g.
 ``Sys:to:USDT(TRON):TTbUenkf5gj1iWLzwZsd2w3cog4Pni2qpY``. A first-character test
-took them for THORChain swaps, so the UTXO branch of get_conversions_from_db
-routed them into the THORChain path, which found no swap and answered ``[]``.
+took them for THORChain deposits ("s" is thornode's short SWAP function), so the
+UTXO branch of get_conversions_from_db sent them down the THORChain bridge path.
+That path could not decode a SWAP memo and returned ``[]``, the same answer a
+non-THORChain tx gets, so the API output was ``[]`` before the fix and is ``[]``
+after it. What the fix changes is which protocol claims the tx.
+
+Terms: SWAP is thornode's memo function name. A cross-chain THORChain SWAP is a
+``bridge`` conversion in the API, never a ``dex_swap``.
 """
 
 import json
