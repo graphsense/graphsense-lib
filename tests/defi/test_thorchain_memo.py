@@ -193,3 +193,100 @@ def test_receive_memos_stay_receives_not_deposits(memo):
     tx = {"outputs": [SimpleNamespace(address=[], value=0, script_hex=script)]}
     assert thorchain.is_thorchain_utxo_receive(tx)
     assert not thorchain.is_thorchain_utxo_deposit(tx)
+
+
+# thornode x/thorchain/memo/memo.go, stringToTxTypeMap at develop commit
+# 11bd39b3d279c3cc528c842ad5cfc30fac86980e (2026-11-06). Copied by hand, not
+# derived from THORCHAIN_DEPOSIT_FUNCTIONS, so a function thornode adds or the
+# allowlist drops shows up here.
+THORNODE_FUNCTIONS = {
+    "add", "+", "withdraw", "wd", "-", "swap", "s", "=", "=<", "m=<", "out",
+    "donate", "d", "bond", "unbond", "rebond", "leave", "reserve", "refund",
+    "migrate", "ragnarok", "noop", "consolidate", "name", "n", "~",
+    "reference", "r", "trade+", "trade-", "secure+", "secure-", "stable+",
+    "stable-", "pool+", "pool-", "switch", "tcy", "tcy+", "tcy-", "maint",
+    "operator", "bondyield",
+}  # fmt: skip
+# Functions THORChain itself writes on outbound/internal txs; never a deposit.
+THORNODE_NOT_A_DEPOSIT = {"out", "refund", "migrate", "ragnarok", "consolidate"}
+
+
+def test_deposit_functions_cover_every_thornode_inbound_function():
+    inbound = THORNODE_FUNCTIONS - THORNODE_NOT_A_DEPOSIT
+    assert inbound - thorchain.THORCHAIN_DEPOSIT_FUNCTIONS == set()
+
+
+def test_no_outbound_function_counts_as_a_deposit():
+    assert THORNODE_NOT_A_DEPOSIT & thorchain.THORCHAIN_DEPOSIT_FUNCTIONS == set()
+
+
+def _op_return_tx(memo):
+    script = "6a" + "{:02x}".format(len(memo.encode())) + memo.encode().hex()
+    return {
+        "tx_hash": bytes(32),
+        "block_id": 1,
+        "inputs": [SimpleNamespace(address=["bc1qsender"], value=10_000)],
+        "outputs": [
+            SimpleNamespace(address=["bc1qvault"], value=9_000, script_hex=None),
+            SimpleNamespace(address=[], value=0, script_hex=bytes.fromhex(script)),
+        ],
+        "total_input": 10_000,
+        "total_output": 9_000,
+    }
+
+
+async def _conversions(tx, monkeypatch, predicate):
+    """get_conversions_from_db for a btc tx under the given memo predicate.
+
+    The receive lookup needs a database; without one every THORChain deposit
+    becomes a partial bridge, which is enough to compare old and new."""
+
+    async def _no_receive(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(thorchain, "find_thorchain_receive_for_utxo_send", _no_receive)
+    monkeypatch.setattr(thorchain, "is_thorchain_memo", predicate)
+    return await get_conversions_from_db(
+        "btc", db=None, tx=tx, included_bridges=("thorchain",)
+    )
+
+
+@pytest.mark.parametrize(
+    "memo", ["s :BTC.BTC:bc1qxyz", "swap :BTC.BTC:bc1qxyz", "= :ETH.ETH:0xabc"]
+)
+@pytest.mark.asyncio
+async def test_trailing_whitespace_function_is_rejected_like_thornode(
+    memo, monkeypatch
+):
+    """The one change API users can see. thornode does not trim the function,
+    so it refunds these memos; the old check returned a partial bridge."""
+    real_predicate = thorchain.is_thorchain_memo
+    tx = _op_return_tx(memo)
+    assert len(await _conversions(tx, monkeypatch, _old_is_thorchain_memo)) == 1
+    assert await _conversions(tx, monkeypatch, real_predicate) == []
+
+
+THORCHAIN_DEPOSITS = json.loads(
+    (Path(__file__).parent / "btc_thorchain_deposit_txs.json").read_text()
+)
+
+
+@pytest.mark.parametrize("recorded", THORCHAIN_DEPOSITS, ids=lambda r: r["txid"][:16])
+@pytest.mark.asyncio
+async def test_real_thorchain_deposit_gives_the_same_bridge_as_before(
+    recorded, monkeypatch
+):
+    """A recorded BTC -> BSC.USDC THORChain swap deposit (mempool.space, block
+    974936; Midgard lists it as a successful swap) still becomes a bridge, and
+    the very same one the old check produced."""
+    real_predicate = thorchain.is_thorchain_memo
+    tx = to_cassandra_tx(recorded)
+    memo = thorchain.extract_memo_from_utxo_tx(tx)
+    assert memo.startswith("=:BSC.USDC:")
+
+    before = await _conversions(tx, monkeypatch, _old_is_thorchain_memo)
+    after = await _conversions(tx, monkeypatch, real_predicate)
+
+    assert len(after) == 1
+    assert after == before
+    assert after[0].fromPayment == recorded["txid"]
