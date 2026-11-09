@@ -25,7 +25,7 @@ def _service_with_blocks(timestamps: dict) -> BlocksService:
 
     db.get_block_timestamp = get_block_timestamp
     db.get_currency_statistics = AsyncMock(
-        return_value={"no_blocks": max(timestamps) + 1}
+        return_value={"no_blocks": max(timestamps, default=-1) + 1}
     )
     config = MagicMock()
     config.block_by_date_use_linear_search = False
@@ -94,3 +94,13 @@ async def test_date_between_blocks_with_block_zero_resolves():
     assert r.before_timestamp == 3000
     assert r.after_block == 3
     assert r.after_timestamp == 4000
+
+
+@pytest.mark.asyncio
+async def test_empty_chain_returns_empty():
+    svc = _service_with_blocks({})
+    r = await svc.get_block_by_date("btc", _date(1000))
+    assert r.before_block is None
+    assert r.before_timestamp is None
+    assert r.after_block is None
+    assert r.after_timestamp is None

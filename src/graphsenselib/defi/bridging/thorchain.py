@@ -176,20 +176,56 @@ def parse_op_return_memo(script_hex: str) -> Optional[str]:
 
 THORCHAIN_MEMO_PREFIXES = ["=", "s", "S", "+", "-", "~"]
 
+# The inbound functions of thornode's stringToTxTypeMap
+# (x/thorchain/memo/memo.go), matched case-insensitively as thornode does.
+# "a" and the loan forms ($+, loan+, $-, loan-) are no longer in the map but
+# appear on historical deposits. Outbound/internal functions (out, refund,
+# migrate, ragnarok, consolidate) are never a deposit.
+THORCHAIN_DEPOSIT_FUNCTIONS = frozenset(
+    {
+        "swap", "s", "=", "=<", "m=<",
+        "add", "a", "+",
+        "withdraw", "wd", "-",
+        "$+", "loan+", "$-", "loan-",
+        "donate", "d", "reserve", "noop",
+        "bond", "unbond", "rebond", "leave", "bondyield", "maint", "operator",
+        "name", "n", "~",
+        "reference", "r",
+        "trade+", "trade-", "secure+", "secure-", "stable+", "stable-",
+        "pool+", "pool-", "switch", "tcy", "tcy+", "tcy-",
+    }
+)  # fmt: skip
 
-def is_thorchain_memo(memo: str) -> bool:
+
+def _memo_function(memo: str) -> str:
+    """The function of a ``FUNCTION:PARAM...|comment`` memo, lowercased.
+
+    Not stripped: thornode does not trim the function either."""
+    return memo.split("|", 1)[0].split(":", 1)[0].lower()
+
+
+def is_thorchain_memo(memo: Optional[str]) -> bool:
     """
-    Check if a memo string looks like a THORChain memo.
+    Check if a memo string looks like a THORChain deposit memo.
 
-    THORChain memos start with action indicators:
-    - =, s, S: swap
+    THORChain memos start with action indicators (thornode's names):
+    - =, s, S: SWAP function. A cross-chain SWAP is what the conversions API
+      reports as a ``bridge``, not a ``dex_swap``.
     - +: add liquidity
     - -: withdraw liquidity
-    - ~: loan
+    - ~: register a THORName
+
+    The first character alone also matched other protocols' memos, e.g.
+    Bridgers' ``Sys:to:USDT(TRON):T...`` ("s" is thornode's short form of
+    SWAP), so the memo's function must also be one THORChain knows. This only
+    ever rejects memos the first-character test accepted; it accepts nothing
+    new.
     """
     if not memo or len(memo) < 2:
         return False
-    return memo[0] in THORCHAIN_MEMO_PREFIXES
+    if memo[0] not in THORCHAIN_MEMO_PREFIXES:
+        return False
+    return _memo_function(memo) in THORCHAIN_DEPOSIT_FUNCTIONS
 
 
 def extract_memo_from_utxo_tx(tx: Dict[str, Any]) -> Optional[str]:
