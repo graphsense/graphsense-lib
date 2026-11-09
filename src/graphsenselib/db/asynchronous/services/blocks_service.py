@@ -39,8 +39,6 @@ class ConfigProtocol(Protocol):
 
 
 async def find_insertion_point_async(accessor, x, low: int, high: int):
-    mid = 0
-
     while low <= high:
         mid = (high + low) // 2
         mid_item = await accessor(mid)
@@ -52,7 +50,7 @@ async def find_insertion_point_async(accessor, x, low: int, high: int):
         else:
             return mid
 
-    return mid - 1 if (mid_item > x) else mid
+    return high
 
 
 class BlocksService:
@@ -157,7 +155,10 @@ class BlocksService:
 
         if max_height is None and max_date is not None:
             bspec_max = await self.get_block_by_date(network, max_date)
-            max_height = bspec_max.before_block
+            # None leaves the upper bound open; -1 excludes every block.
+            max_height = (
+                bspec_max.before_block if bspec_max.before_block is not None else -1
+            )
 
         return (min_height, max_height)
 

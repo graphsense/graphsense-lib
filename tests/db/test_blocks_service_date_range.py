@@ -94,18 +94,16 @@ async def test_min_date_before_genesis_has_no_lower_bound():
 
 
 @pytest.mark.asyncio
-async def test_max_date_still_uses_before_block():
-    # Upper bound is inclusive of blocks up to and including max_date, so it
-    # keeps using before_block (last block with ts <= max_date). Guards against
-    # the min-side fix accidentally changing max-side behavior.
+@pytest.mark.parametrize("before_block,expected_max_height", [(150, 150), (None, -1)])
+async def test_max_date_uses_last_qualifying_block(before_block, expected_max_height):
     svc = _service_returning(
         BlockAtDate(
-            before_block=150,
-            before_timestamp=MIN_TS,
-            after_block=151,
-            after_timestamp=MIN_TS + 50,
+            before_block=before_block,
+            before_timestamp=MIN_TS if before_block is not None else None,
+            after_block=None,
+            after_timestamp=None,
         )
     )
     min_h, max_h = await svc.get_min_max_height("btc", None, None, None, MIN_DATE)
-    assert max_h == 150
+    assert max_h == expected_max_height
     assert min_h is None
