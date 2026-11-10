@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.config.tagstore_config import TagStoreReaderConfig
+from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES
 from pydantic import (
     ConfigDict,
     Field,
@@ -12,6 +13,14 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings
+
+
+# The bridges the readers look up by exact name in included_bridges. The
+# local ones are read in defi/conversions.py (the thorchain and symbiosis
+# literals there); the delegated ones come from their reader registry. Keep
+# this the only list of them: startup validates included_bridges against it.
+LOCAL_BRIDGES: Tuple[str, ...] = ("thorchain", "symbiosis")
+KNOWN_BRIDGES: Tuple[str, ...] = tuple(sorted({*LOCAL_BRIDGES, *DELEGATED_BRIDGES}))
 
 
 class SMTPConfig(BaseSettings):
@@ -329,7 +338,9 @@ class GSRestConfig(BaseSettings):
     )
     included_bridges: Tuple[str, ...] = Field(
         default_factory=tuple,
-        description="Included bridges in tx conversions",
+        description="Included bridges in tx conversions, by name "
+        f"(case-sensitive): {', '.join(KNOWN_BRIDGES)}. An unknown name is "
+        "warned about at startup and enables nothing.",
     )
     cow_protocol_swaps: bool = Field(
         default=True,

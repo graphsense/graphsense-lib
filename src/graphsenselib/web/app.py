@@ -50,6 +50,7 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
 from graphsenselib.web.config import (
+    KNOWN_BRIDGES,
     CurrencyRolesConfig,
     FileStoreConfig,
     GSRestConfig,
@@ -1116,6 +1117,26 @@ def _currency_role_gate(config: GSRestConfig):
     return roles_config, set()
 
 
+def _warn_unknown_included_bridges(config: GSRestConfig):
+    """A name in included_bridges that no reader knows enables nothing, and
+    nothing else would say so: the bridge is just missing from every
+    conversions answer. Warn, don't fail, as one config may be shared with an
+    older or newer image that knows other names. Exact match: the readers
+    compare case-sensitively."""
+    unknown = [
+        name
+        for i, name in enumerate(config.included_bridges)
+        if name not in KNOWN_BRIDGES and name not in config.included_bridges[:i]
+    ]
+    if unknown:
+        logger.warning(
+            "included_bridges names bridges no reader knows, so they enable "
+            "nothing: %s; known (case-sensitive): %s",
+            ", ".join(unknown),
+            ", ".join(KNOWN_BRIDGES),
+        )
+
+
 def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
@@ -1306,6 +1327,7 @@ def create_app(
 
     app.state.config = config
 
+    _warn_unknown_included_bridges(config)
     # External chain-data backends: added BEFORE the CORS middleware so it
     # ends up INSIDE it (Starlette: last added = outermost) — short-circuited
     # proxy responses must still receive CORS headers.
@@ -1707,6 +1729,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
 
     app.state.config = config
 
+    _warn_unknown_included_bridges(config)
     _setup_external_backends_middleware(app, config)
     # wired here too: the backends middleware skips fetching what the gate is
     # about to delete, so an app with the skip and no gate would filter rows
