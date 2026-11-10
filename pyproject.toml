@@ -261,6 +261,8 @@ markers = [
     "vcr:",
 ]
 asyncio_mode = "auto"
+# All async fixtures are function-scoped; pytest-asyncio >=1.4.1 warns when unset.
+asyncio_default_fixture_loop_scope = "function"
 # Warnings policy (was `-W error` on the pytest command line in the Makefile;
 # moved here so it applies to every invocation incl. bare `pytest` and CI).
 # `error` keeps deprecations in OUR code loud; the targeted ignore silences a
@@ -275,6 +277,9 @@ filterwarnings = [
     # falls back to the installed `httpx`. Test-infra only; the TestClient still
     # works on httpx. (Proper fix later: migrate to httpx2 or pin starlette.)
     "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    # anyio >=4.15 deprecates the anyio.abc.BlockingPortal alias, which
+    # starlette <1.10's TestClient still imports. Test-infra only.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
 ]
 
 [tool.ruff]
