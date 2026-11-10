@@ -293,3 +293,19 @@ def test_a_failed_merge_alerts_everything_the_skip_takes_out():
     (alert,) = alerts_of(records)
     assert "arb are left out of merged answers and their requests get 503" in alert
     assert "eth conversions lack the bridges it pairs" in alert
+
+
+def test_a_merge_failure_after_a_pairing_failure_is_alerted_again():
+    """The first alert named only the unpaired conversions; once a merge
+    fails too, the backend's networks are left out, and the operator gets a
+    second ERROR saying so. Further failures of that outage only warn."""
+    client, _ = merging_client(
+        slow, timeout_s=0.2, stats_answer=httpx.ConnectError("refused")
+    )
+    with records_of_the_middleware() as records:
+        client.get(CONVERSIONS)
+        client.get("/stats")
+        client.get(CONVERSIONS)
+    first, second = alerts_of(records)
+    assert "arb" not in first
+    assert "arb are left out of merged answers and their requests get 503" in second

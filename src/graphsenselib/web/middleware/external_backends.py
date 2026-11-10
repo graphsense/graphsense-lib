@@ -316,6 +316,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # backend URL -> when it stopped answering (time.monotonic), for
         # one alert per outage (module docstring)
         self.down_since: Dict[str, float] = {}
+        # backends whose outage was alerted for a failed pairing only
+        self.pairing_only_outage: Set[str] = set()
         # backend URL -> until when merges leave it out without asking it
         # (_now(), failure_skip_s in the module docstring)
         self.skip_until: Dict[str, float] = {}
@@ -821,8 +823,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """Log a failed call: ERROR (an alert) if the backend answered
         before, WARNING while it stays down. The alert says what the failure
         takes out: a failed pairing (`pairing`) starts no skip window, so it
-        costs only the bridges it would have paired."""
-        if base_url in self.down_since:
+        costs only the bridges it would have paired. An outage alerted for a
+        pairing only is alerted again when a merge or proxy call fails too,
+        since that one does take the backend's networks out."""
+        widens = not pairing and base_url in self.pairing_only_outage
+        if base_url in self.down_since and not widens:
             logger.warning(
                 "external backend %s still not answering: %s (%s)",
                 base_url,
@@ -830,7 +835,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 reason,
             )
             return
-        self.down_since[base_url] = time.monotonic()
+        self.down_since.setdefault(base_url, time.monotonic())
+        if pairing:
+            self.pairing_only_outage.add(base_url)
+        else:
+            self.pairing_only_outage.discard(base_url)
         logger.error(
             "external backend %s stopped answering (%s: %s) — %s until it answers"
             " again",
@@ -869,6 +878,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """The first answer after an outage ends it, logged once. Any answer
         ends a skip window too."""
         self.skip_until.pop(base_url, None)
+        self.pairing_only_outage.discard(base_url)
         since = self.down_since.pop(base_url, None)
         if since is None:
             return
