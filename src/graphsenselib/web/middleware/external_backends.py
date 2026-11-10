@@ -880,7 +880,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             trace["ms"] = _ms_since(started)
             trace["reason"] = f"transport_{type(exc).__name__}"
             self._merge_failed(
-                declined, base_url, path_and_query, repr(exc), pairing=pairing
+                declined, base_url, path_and_query, type(exc).__name__, pairing=pairing
             )
             if skip_on_failure:
                 self._skip(base_url)
@@ -949,14 +949,20 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         takes out: a failed pairing (`pairing`) starts no skip window, so it
         costs only the bridges it would have paired. An outage alerted for a
         pairing only is alerted again when a merge or proxy call fails too,
-        since that one does take the backend's networks out."""
+        since that one does take the backend's networks out.
+
+        The line carries the backend's origin, `what` (a method and path, or
+        a path) without any query, and `reason`: a status or an exception's
+        type name, never an exception's text, which a transport writes
+        itself and may quote the URL with whatever credential it carries."""
+        what = what.partition("?")[0]
         widens = not pairing and base_url in self.pairing_only_outage
         if base_url in self.down_since and not widens:
             logger.warning(
                 "external backend %s still not answering: %s (%s)",
                 _safe_backend(base_url),
                 what,
-                _redacted(reason, base_url),
+                reason,
             )
             return
         self.down_since.setdefault(base_url, time.monotonic())
@@ -969,7 +975,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             " again",
             _safe_backend(base_url),
             what,
-            _redacted(reason, base_url),
+            reason,
             self._outage_effect(base_url, pairing=pairing),
         )
 
@@ -1018,7 +1024,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """One call to a backend, sent once more if the connection dropped
         under it (module docstring). The second attempt gets a fresh
         connection: httpx drops a connection that failed from its pool. Its
-        failure, of whatever kind, is the caller's to handle."""
+        failure, of whatever kind, is the caller's to handle. The line names
+        the exception's type only (_backend_failed)."""
         try:
             return await self.client.request(method, url, **kwargs)
         except RETRY_ON_DROPPED_CONNECTION as exc:
@@ -1028,7 +1035,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 "external backend connection dropped on %s %s (%s), sending it again",
                 method,
                 _safe_url(url),
-                _redacted(repr(exc), url),
+                type(exc).__name__,
             )
         return await self.client.request(method, url, **kwargs)
 
@@ -1062,7 +1069,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
         except httpx.TransportError as exc:
             self._backend_failed(
-                backend.url, f"{request.method} {request.url.path}", repr(exc)
+                backend.url, f"{request.method} {request.url.path}", type(exc).__name__
             )
             self._skip(backend.url)
             return JSONResponse(
@@ -1382,19 +1389,6 @@ def _safe_url(url: str) -> str:
     parts = urlsplit(url)
     host = parts.netloc.rpartition("@")[2]
     return urlunsplit((parts.scheme, host, parts.path, "", ""))
-
-
-def _redacted(text: str, url: str) -> str:
-    """`text` (an exception's repr, say) with whatever of `url` is secret
-    blanked: the URL itself is written safe (_safe_url), and its query
-    string, userinfo and password, wherever else they appear, as ``***``."""
-    parts = urlsplit(url)
-    userinfo, at, _ = parts.netloc.rpartition("@")
-    text = text.replace(url, _safe_url(url))
-    for secret in (parts.query, userinfo if at else "", parts.password or ""):
-        if secret:
-            text = text.replace(secret, "***")
-    return text
 
 
 def _refusal_reason(response: httpx.Response) -> str:

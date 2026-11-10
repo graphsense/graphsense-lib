@@ -2,7 +2,7 @@
 
 A merged REST answer (/stats, /search, /capabilities, a twin list) whose
 external backend failed or declined is still a 200: the core networks' part,
-with the backend named in ``X-Ikn-Backends-Declined``
+with the backend named by its origin in ``X-Ikn-Backends-Declined``
 (web/middleware/external_backends.py). The dashboard reads that header. A
 model only reads the tool result, so without a note a search for a bnb
 address during an outage of the lite service reads as "not found on any
@@ -26,7 +26,10 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
 from mcp.types import TextContent
 
-from graphsenselib.web.middleware.external_backends import DECLINED_HEADER
+from graphsenselib.web.middleware.external_backends import (
+    DECLINED_HEADER,
+    _safe_backend,
+)
 
 # The backends the REST answers of the current tool call named as missing.
 # None outside a tool call: a REST call made elsewhere records nothing.
@@ -45,16 +48,19 @@ async def record_declined(response: Any) -> None:
 
 
 def networks_by_backend(app: Any) -> dict[str, list[str]]:
-    """Backend URL -> the networks it serves, from the REST app's config;
-    empty when the app has no external backends."""
+    """Backend origin -> the networks it serves, from the REST app's config;
+    empty when the app has no external backends. The header names a backend
+    by its origin (scheme, host, port: `_safe_backend`, never a path, a
+    userinfo or a query string), so the configured URLs are keyed the same
+    way, and backends sharing an origin pool their networks."""
     config = getattr(app.state, "config", None)
     backends = getattr(config, "external_backends", None)
     if backends is None or not backends.enabled:
         return {}
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, set[str]] = {}
     for network, backend in backends.networks.items():
-        grouped.setdefault(backend.url, []).append(network)
-    return {url: sorted(networks) for url, networks in grouped.items()}
+        grouped.setdefault(_safe_backend(backend.url), set()).add(network)
+    return {origin: sorted(networks) for origin, networks in grouped.items()}
 
 
 def declined_note(backends: set[str], networks: dict[str, list[str]]) -> str:
@@ -71,7 +77,7 @@ def declined_note(backends: set[str], networks: dict[str, list[str]]) -> str:
 
 class DeclinedBackendsNoteMiddleware(Middleware):
     """Prefix a tool result with `declined_note` when one of its REST answers
-    named a declined backend. `networks` maps backend URL -> networks
+    named a declined backend. `networks` maps backend origin -> networks
     (`networks_by_backend`)."""
 
     def __init__(self, networks: dict[str, list[str]]) -> None:

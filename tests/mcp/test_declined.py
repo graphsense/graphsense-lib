@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 
+import httpx
 from fastapi import FastAPI, Query, Response
 from fastmcp import Client, FastMCP
 
@@ -49,6 +50,73 @@ def test_networks_by_backend_reads_the_rest_config():
         state=SimpleNamespace(config=SimpleNamespace(external_backends=config))
     )
     assert networks_by_backend(app) == NETWORKS
+
+
+def test_networks_by_backend_keys_by_the_origin_the_header_carries():
+    """The header names a backend by its origin (scheme, host, port). A
+    configured URL with a path prefix, a trailing slash or a credential maps
+    to that origin, and backends sharing an origin pool their networks."""
+    config = ExternalBackendsConfig(
+        enabled=True,
+        networks={
+            "arb": {"url": "https://backend.test/api/"},
+            "bnb": {"url": "https://backend.test/"},
+            "trx": {"url": "https://user:pw@other.test:8443/?api_key=k"},
+        },
+    )
+    app = SimpleNamespace(
+        state=SimpleNamespace(config=SimpleNamespace(external_backends=config))
+    )
+    networks = networks_by_backend(app)
+    assert networks == {
+        "https://backend.test": ["arb", "bnb"],
+        "https://other.test:8443": ["trx"],
+    }
+    assert "arb, bnb" in declined_note({"https://backend.test"}, networks)
+    assert "trx" in declined_note({"https://other.test:8443"}, networks)
+
+
+async def test_the_note_names_the_network_of_a_backend_configured_with_a_path():
+    """End to end: the REST middleware declines a backend configured as
+    https://backend.test/api/ (naming its origin in the header), and the
+    tool result's note names its network."""
+    from fastapi import FastAPI
+    from starlette.responses import Response as StarletteResponse
+
+    from graphsenselib.web.middleware.external_backends import (
+        ExternalBackendMiddleware,
+    )
+
+    app = FastAPI()
+
+    @app.get("/stats", operation_id="get_statistics")
+    async def _stats():
+        return StarletteResponse(
+            content=b'{"currencies": []}', media_type="application/json"
+        )
+
+    def backend(request):
+        raise httpx.ConnectError("refused")
+
+    config = ExternalBackendsConfig(
+        enabled=True, networks={"arb": {"url": "https://backend.test/api/"}}
+    )
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=config,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+    )
+    app.state.config = SimpleNamespace(external_backends=config)
+    mcp = FastMCP.from_fastapi(
+        app=app,
+        httpx_client_kwargs={"event_hooks": {"response": [record_declined]}},
+    )
+    mcp.add_middleware(DeclinedBackendsNoteMiddleware(networks_by_backend(app)))
+    async with Client(mcp) as client:
+        result = await client.call_tool("get_statistics", {})
+    note = result.content[0].text
+    assert "Partial result: the service for arb did not answer" in note
+    assert "backend.test" not in note
 
 
 def test_no_external_backends_means_no_mapping():

@@ -424,9 +424,10 @@ def test_no_pairing_record_carries_the_backends_credentials():
     assert logging.ERROR in levels and logging.WARNING in levels
     assert any("sending it again" in r.getMessage() for r in records)
     assert any("answers again" in r.getMessage() for r in records)
-    # the exception's own text keeps the URL, written safe
-    (refused,) = [r for r in records if "refused:" in r.getMessage()]
-    assert "refused: https://backend.test/ with ***" in refused.getMessage()
+    # the exception's text is never written, only its type
+    assert not any("refused:" in r.getMessage() for r in records)
+    (refused,) = [r for r in records if "still not answering" in r.getMessage()]
+    assert "(ConnectError)" in refused.getMessage()
     assert len(records) >= 8
     for record in records:
         text = everything_in(record)
@@ -494,6 +495,115 @@ def test_no_proxy_or_merge_record_carries_the_backends_credentials():
         text = everything_in(record)
         assert SECRET not in text, text
         assert "key-9" not in text, text
+
+
+QUERY_SECRET = "QUERY_ONLY_SECRET"
+# a credential in the query only: no password whose redaction could shadow it
+QUERY_ONLY_URL = f"https://backend.test/?api_key={QUERY_SECRET}"
+
+
+def test_no_pairing_record_carries_a_query_only_credential_an_exception_quotes():
+    """An exception's text is the transport's, and may quote the URL or its
+    credential: no line carries it, only the exception's type, the origin
+    and the path without its query."""
+    script = {
+        "step": 0,
+        "answers": [
+            httpx.ConnectError(f"refused token {QUERY_SECRET}"),
+            httpx.ConnectError(f"still refusing token {QUERY_SECRET}"),
+            httpx.RemoteProtocolError(f"Server disconnected, token {QUERY_SECRET}"),
+            httpx.Response(200, json=[BRIDGE_ROW]),
+        ],
+    }
+
+    def backend(request):
+        answer = script["answers"][min(script["step"], len(script["answers"]) - 1)]
+        script["step"] += 1
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    client, _, _ = make_client(
+        delegated_conversions={"eth": {"url": QUERY_ONLY_URL}},
+        backend_answer=backend,
+    )
+    with every_record_of() as records:
+        # refused (the outage alert), refused again (still down), then a
+        # dropped connection whose retry answers (recovery)
+        answers = [client.get(CONVERSIONS) for _ in range(3)]
+    assert [a.status_code for a in answers] == [200] * 3
+    assert [a.json() for a in answers] == [[LOCAL_ROW, HALF_ROW]] * 2 + [
+        [LOCAL_ROW, BRIDGE_ROW]
+    ]
+    (alert,) = [r for r in records if r.levelno == logging.ERROR]
+    (still_down,) = [r for r in records if "still not answering" in r.getMessage()]
+    (retry,) = [r for r in records if "sending it again" in r.getMessage()]
+    for record, type_name in (
+        (alert, "ConnectError"),
+        (still_down, "ConnectError"),
+        (retry, "RemoteProtocolError"),
+    ):
+        message = record.getMessage()
+        assert type_name in message, message
+        assert "https://backend.test" in message, message
+        assert "token" not in message, message
+    # the path is named without its query
+    assert f"/eth/txs/{CCTP_BURN}/conversions" in alert.getMessage()
+    assert "only_bridges" not in alert.getMessage()
+    assert len(records) >= 5
+    for record in records:
+        text = everything_in(record)
+        assert QUERY_SECRET not in text, text
+        assert "api_key" not in text, text
+
+
+def test_no_proxy_or_merge_record_carries_a_query_only_credential_an_exception_quotes():
+    from fastapi import FastAPI
+    from starlette.responses import Response
+    from starlette.testclient import TestClient
+
+    from graphsenselib.web.config import ExternalBackendsConfig
+    from graphsenselib.web.middleware.external_backends import (
+        ExternalBackendMiddleware,
+    )
+
+    app = FastAPI()
+
+    @app.get("/stats")
+    async def stats():
+        return Response(content=b'{"currencies": []}', media_type="application/json")
+
+    def backend(request):
+        raise httpx.ConnectError(f"refused token {QUERY_SECRET} at {request.url}")
+
+    config = ExternalBackendsConfig(
+        enabled=True,
+        networks={"arb": {"url": QUERY_ONLY_URL}},
+        failure_skip_s=0,
+    )
+    app.add_middleware(
+        ExternalBackendMiddleware,
+        config=config,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(backend)),
+    )
+    client = TestClient(app)
+    with every_record_of() as records:
+        proxied = client.get(f"/arb/txs/{ARB_MINT}")
+        merged = client.get("/stats")
+    assert proxied.status_code == 503
+    assert merged.status_code == 200
+    assert merged.headers[DECLINED_HEADER] == "https://backend.test"
+    failures = [r for r in records if r.levelno >= logging.WARNING]
+    assert len(failures) == 2
+    for record in failures:
+        assert "ConnectError" in record.getMessage()
+        assert "https://backend.test" in record.getMessage()
+    assert f"GET /arb/txs/{ARB_MINT}" in failures[0].getMessage()
+    for record in records:
+        text = everything_in(record)
+        assert QUERY_SECRET not in text, text
+        assert "api_key" not in text, text
+        assert "token" not in text, text
 
 
 def test_a_malformed_rows_warning_names_the_origin_only():
