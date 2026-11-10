@@ -81,14 +81,26 @@ Decision rules:
    half bridges they complete (web/service/txs_service.py). The answer passes
    through untouched. The backend is asked for the same path, sub-tx suffix
    included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
-   name the tx are taken: the local detection answers swaps. A caller entitled
-   to no gated currency is offered no pairing (behind the gateway that is how
-   the client opt-out arrives), and a caller who lacks a gated currency one
-   of the rows names gets the half bridges: the rows replace all of them.
+   name the tx are taken: the local detection answers swaps. The route may
+   name the tx instead (``pair_bridges(tx_identifier=...)``): it passes the
+   bare hash when the requested root trace (``_I0``) is the whole tx, since
+   the backend scopes its answer to the sub-tx it is asked for and no bridge
+   leg is the root trace. A caller entitled to no gated currency is offered
+   no pairing (behind the gateway that is how the client opt-out arrives),
+   and a caller who lacks a gated currency one of the rows names gets the
+   half bridges: the rows replace all of them. A request that itself carries
+   ``only_bridges`` is offered no pairing either: it is the backend's own
+   upstream fallback asking (the adapter re-asks its upstream for what it
+   cannot serve), and pairing it would ask the backend again, and so on; it
+   gets the local answer, half bridges included.
    Without the backend's pairing the half bridge is the answer: a 404 or 501
    (it cannot pair the tx, or does not know it) is logged at INFO, any other
-   failure is handled as on a merge (below), within the same
-   merge_timeout_s.
+   failure is named in ``X-Ikn-Backends-Declined`` and logged as on a merge
+   (below), within the same merge_timeout_s. Unlike a merge, a pairing that
+   fails starts no ``failure_skip_s`` window: the pairing only enriches an
+   answer the core served itself, and one slow pairing must not hide the
+   backend's networks from ``/stats``, ``/search`` and the twin lists. A
+   window a merge started does cover the pairing, like every other call.
 
 Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
@@ -119,8 +131,8 @@ connections and delayed the core networks' own requests. So after a backend
 could not be reached or did not answer in time (on a merge or a proxy), merges
 leave it out without asking it for ``failure_skip_s`` (default 30 s), named in
 ``X-Ikn-Backends-Declined`` as before. An error answer or a 429 starts no such
-window (the backend is up), proxies still always ask it, and any answer ends
-the window early.
+window (the backend is up), nor does a failed bridge pairing (rule 6);
+proxies still always ask it, and any answer ends the window early.
 
 A connection that dropped is not an outage: the shared client keeps
 connections alive between calls, and a backend may close an idle one just as
@@ -702,6 +714,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         declined: Optional[List[str]] = None,
         tolerate_404: bool = False,
         tolerate_501: bool = False,
+        skip_on_failure: bool = True,
     ) -> Optional[dict]:
         """One merge fan-out call. Returns None when the backend declines or
         fails: a 429, no answer within merge_timeout_s, no connection, or any
@@ -719,7 +732,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
 
         A backend that failed within the last failure_skip_s is not asked at
         all: it is left out and named at once, without a log line (its outage
-        is already alerted)."""
+        is already alerted). A backend that cannot be reached starts that
+        window, unless `skip_on_failure` is off: the bridge pairing (rule 6)
+        only enriches an answer, so its failure must not hide the backend's
+        networks from the merges."""
         if _now() < self.skip_until.get(base_url, 0.0):
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
@@ -743,7 +759,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
         except httpx.TransportError as exc:
             self._merge_failed(declined, base_url, path_and_query, repr(exc))
-            self._skip(base_url)
+            if skip_on_failure:
+                self._skip(base_url)
             return None
         if response.status_code == 429:
             if declined is not None and base_url not in declined:
@@ -926,6 +943,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         backend = self.config.delegated_conversions.get(match.group(1).lower())
         if backend is None or (self.gated and not self._entitled(request, self.gated)):
             return None
+        if "only_bridges" in request.query_params:
+            # the backend's own upstream fallback asking us (it re-asks its
+            # upstream for what it cannot serve, with only_bridges): offering
+            # the pairing would ask the backend again, and so on
+            return None
         return backend
 
     async def _offering_bridge_pairing(
@@ -948,11 +970,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         request: Request,
         backend: ExternalBackendConfig,
         declined: List[str],
+        *,
+        tx_identifier: Optional[str] = None,
     ) -> List[ExternalConversion]:
-        """Rule 6: the bridge rows the backend pairs for the requested tx.
-        [] when it cannot pair it (a 404 or 501, logged at INFO) or fails
-        (logged with why, _fetch_json); a failure is named in `declined`."""
+        """Rule 6: the bridge rows the backend pairs for the requested tx, or
+        for `tx_identifier` when the conversions route names one (the bare
+        hash when the requested root trace is the whole tx). [] when the
+        backend cannot pair it (a 404 or 501, logged at INFO) or fails (logged
+        with why, _fetch_json); a failure is named in `declined`, and does not
+        start a skip window: the pairing only enriches an answer."""
         network, identifier = _CONVERSIONS_PATH.match(request.url.path).groups()
+        if tx_identifier is not None:
+            identifier = tx_identifier
         # percent-encoded: the local lookup ignores whitespace in a hash
         # (bytes.fromhex), so a control character can get this far. Only the
         # bridges: the tx's swaps are the local detection's, so the backend
@@ -974,16 +1003,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                     # it cannot pair the tx (yet), or does not know it
                     tolerate_404=True,
                     tolerate_501=True,
+                    # the merges keep asking it (module docstring)
+                    skip_on_failure=False,
                 )
         except TimeoutError:
-            # as a hung backend (_fetch_json): named, alerted, left out
+            # as a hung backend (_fetch_json): named and alerted, but not
+            # skipped
             self._merge_failed(
                 declined,
                 backend.url,
                 path,
                 f"no answer within {self.config.merge_timeout_s} s",
             )
-            self._skip(backend.url)
             return []
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half

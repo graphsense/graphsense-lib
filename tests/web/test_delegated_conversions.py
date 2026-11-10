@@ -528,7 +528,11 @@ def test_a_failed_backend_leaves_the_half_bridge_and_is_named(answer, level):
 @pytest.mark.parametrize(
     "error", [httpx.ConnectError("refused"), httpx.ReadTimeout("hung")]
 )
-def test_an_unreachable_or_hung_backend_is_left_out_for_a_while(error, monkeypatch):
+def test_an_unreachable_or_hung_backend_is_asked_again_by_the_next_pairing(
+    error, monkeypatch
+):
+    """A pairing only adds to the answer, so its failure starts no skip
+    window: the next pairing asks again. The outage is alerted once."""
     now = [1000.0]
     monkeypatch.setattr(external_backends, "_now", lambda: now[0])
     client, seen, _ = make_client(fail_with=error)
@@ -537,19 +541,15 @@ def test_an_unreachable_or_hung_backend_is_left_out_for_a_while(error, monkeypat
     for response in answers:
         assert response.json() == [LOCAL_ROW, HALF_ROW]
         assert response.headers[DECLINED_HEADER] == BACKEND_URL
-    # asked once in its skip window, and one alert saying what it takes out
-    assert len(seen) == 1
+    assert len(seen) == 2
     (alert,) = [r.getMessage() for r in records if r.levelno == logging.ERROR]
     assert "eth conversions lack the bridges it pairs" in alert
-    now[0] += 31
-    client.get(CONVERSIONS)
-    assert len(seen) == 2
 
 
 def test_merge_timeout_s_bounds_the_whole_call():
     """httpx applies the timeout per phase: a backend that answers in slow
-    pieces is not timed out by it. The pairing gets merge_timeout_s in all,
-    and a backend that runs over is handled as a hung one."""
+    pieces is not timed out by it. The pairing gets merge_timeout_s in all;
+    running over declines and alerts, and the next pairing asks again."""
 
     async def slow(request):
         await asyncio.sleep(3)
@@ -565,8 +565,7 @@ def test_merge_timeout_s_bounds_the_whole_call():
     for answer in (response, again):
         assert answer.json() == [LOCAL_ROW, HALF_ROW]
         assert answer.headers[DECLINED_HEADER] == BACKEND_URL
-    # left out for failure_skip_s, as a hung backend is
-    assert len(seen) == 1
+    assert len(seen) == 2
     assert any(r.levelno == logging.ERROR for r in records)
 
 
