@@ -92,6 +92,40 @@ async def test_ambiguous_matches_keep_halves(half_count, pair_count):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("side", ["from", "to"])
+@pytest.mark.parametrize(
+    "updates,paired",
+    [
+        ({}, True),
+        ({"asset": "native"}, False),
+        ({"amount": "0x1"}, False),
+        ({"network": "arb"}, False),
+        ({"asset_transfer": "11" * 32 + "_T694"}, False),
+    ],
+)
+async def test_bare_half_matches_only_its_tx_network_asset_and_amount(
+    side, updates, paired
+):
+    pair = dict(BRIDGE_ROW)
+    if side == "to":
+        for key in BRIDGE_ROW:
+            if key.startswith("from_"):
+                other = key.replace("from_", "to_", 1)
+                pair[key], pair[other] = BRIDGE_ROW[other], BRIDGE_ROW[key]
+    half = {**pair, f"{side}_asset_transfer": "0X" + CCTP_BURN[2:].upper()}
+    half[f"{'to' if side == 'from' else 'from'}_asset_transfer"] = "pending"
+    pair.update({f"{side}_{key}": value for key, value in updates.items()})
+    assert await merge([half], [pair]) == ([pair] if paired else [half])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("half_count,pair_count", [(2, 1), (1, 2), (2, 2)])
+async def test_ambiguous_bare_matches_keep_halves(half_count, pair_count):
+    halves = [{**HALF_ROW, "from_asset_transfer": CCTP_BURN}] * half_count
+    assert await merge(halves, [BRIDGE_ROW] * pair_count) == halves
+
+
+@pytest.mark.asyncio
 async def test_accepted_pair_drops_local_row_naming_its_leg():
     local = {
         **LOCAL_ROW,

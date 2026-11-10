@@ -351,22 +351,28 @@ def test_no_row_but_a_bridge_of_the_tx_is_taken(row):
 
 
 @pytest.mark.parametrize(
-    "transfer, paired",
+    "transfer, bare_half, paired",
     [
-        (f"0X{CCTP_BURN[2:].upper()}_T694", True),
-        (f"{CCTP_BURN[2:]}_T1", False),
-        (CCTP_BURN[2:], False),
+        (f"0X{CCTP_BURN[2:].upper()}_T694", False, True),
+        (f"{CCTP_BURN[2:]}_T1", False, False),
+        (CCTP_BURN[2:], False, False),
+        (f"{CCTP_BURN[2:]}_T694", True, True),
     ],
-    ids=["its leg", "another transfer", "the tx"],
+    ids=["its leg", "another transfer", "the tx", "bare half"],
 )
 def test_a_paired_bridge_takes_the_place_of_the_half_bridge_it_names(
-    transfer, paired
+    transfer, bare_half, paired
 ):
-    """Only a row naming the half bridge's own leg (in lower case, without
-    0x) completes it; a row naming another transfer of the tx, or the bare
-    tx, is not asked for and is dropped, and the half bridge stays."""
+    """A bare half can match a transfer, but a precise half needs that transfer."""
     bridge = {**BRIDGE_ROW, "from_asset_transfer": transfer}
-    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
+    logs = FIXTURE["v2_burn"]["logs"]
+    if bare_half:
+        funding = next(log for log in logs if log["log_index"] == 694)
+        logs = [{**funding, "log_index": 693}, *logs]
+    client, _, _ = make_client(
+        log_rows=db_rows("v2_burn", logs),
+        backend_answer=httpx.Response(200, json=[bridge]),
+    )
     expected = [LOCAL_ROW, bridge] if paired else [LOCAL_ROW, HALF_ROW]
     assert client.get(CONVERSIONS).json() == expected
 

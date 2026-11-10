@@ -93,7 +93,8 @@ async def get_tx_conversions(
     half of (defi/bridging/delegated.py) are half rows, unless pair_bridges
     (the external backends middleware's rule 6) pairs them. A paired row
     replaces the one half row whose known leg it names (same transfer and
-    network on that side); a half no row names stays, a row naming no half
+    network on that side, or a bare tx with matching asset and amount);
+    a half no row names stays, a row naming no half
     was not asked for and is dropped, and an ambiguous match keeps the half.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
@@ -139,11 +140,21 @@ async def get_tx_conversions(
 def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
     for side in ("from", "to"):
         transfer = getattr(half, f"{side}_asset_transfer").lower().removeprefix("0x")
+        if transfer in _PLACEHOLDERS or getattr(half, f"{side}_network") != getattr(
+            row, f"{side}_network"
+        ):
+            continue
+        paired_transfer = (
+            getattr(row, f"{side}_asset_transfer").lower().removeprefix("0x")
+        )
+        if transfer == paired_transfer:
+            return True
+        # A bare leg has no unique Transfer; its asset and amount must agree.
         if (
-            transfer not in _PLACEHOLDERS
-            and transfer
-            == getattr(row, f"{side}_asset_transfer").lower().removeprefix("0x")
-            and getattr(half, f"{side}_network") == getattr(row, f"{side}_network")
+            "_" not in transfer
+            and transfer == paired_transfer.partition("_")[0]
+            and getattr(half, f"{side}_asset") == getattr(row, f"{side}_asset")
+            and getattr(half, f"{side}_amount") == getattr(row, f"{side}_amount")
         ):
             return True
     return False
