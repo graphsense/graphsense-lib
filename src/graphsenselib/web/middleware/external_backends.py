@@ -88,7 +88,10 @@ Decision rules:
    leg is the root trace. A caller entitled to no gated currency is offered
    no pairing (behind the gateway that is how the client opt-out arrives),
    and a caller who lacks a gated currency one of the rows names gets the
-   half bridges: the rows replace all of them. A request that itself carries
+   half bridges: not one row is taken. Each row would replace only the half
+   whose leg it names (web/service/txs_service.py), so the rows the caller
+   may see could be kept; the whole answer is withheld instead, the safe
+   side. A request that itself carries
    ``only_bridges`` is offered no pairing either: it is the backend's own
    upstream fallback asking (the adapter re-asks its upstream for what it
    cannot serve), and pairing it would ask the backend again, and so on; it
@@ -715,6 +718,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         tolerate_404: bool = False,
         tolerate_501: bool = False,
         skip_on_failure: bool = True,
+        pairing: bool = False,
     ) -> Optional[dict]:
         """One merge fan-out call. Returns None when the backend declines or
         fails: a 429, no answer within merge_timeout_s, no connection, or any
@@ -735,7 +739,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         is already alerted). A backend that cannot be reached starts that
         window, unless `skip_on_failure` is off: the bridge pairing (rule 6)
         only enriches an answer, so its failure must not hide the backend's
-        networks from the merges."""
+        networks from the merges. `pairing` says so to the alert, which then
+        names only the conversions left unpaired."""
         if _now() < self.skip_until.get(base_url, 0.0):
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
@@ -758,7 +763,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 timeout=self.config.merge_timeout_s,
             )
         except httpx.TransportError as exc:
-            self._merge_failed(declined, base_url, path_and_query, repr(exc))
+            self._merge_failed(
+                declined, base_url, path_and_query, repr(exc), pairing=pairing
+            )
             if skip_on_failure:
                 self._skip(base_url)
             return None
@@ -783,7 +790,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         if response.status_code != 200:
             self._merge_failed(
-                declined, base_url, path_and_query, f"HTTP {response.status_code}"
+                declined,
+                base_url,
+                path_and_query,
+                f"HTTP {response.status_code}",
+                pairing=pairing,
             )
             return None
         self._backend_answered(base_url)
@@ -795,15 +806,22 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         base_url: str,
         path_and_query: str,
         reason: str,
+        *,
+        pairing: bool = False,
     ) -> None:
-        """A merge call that failed: the backend is named in the response."""
+        """A merge call that failed: the backend is named in the response.
+        `pairing` when it was the bridge pairing (rule 6) that failed."""
         if declined is not None and base_url not in declined:
             declined.append(base_url)
-        self._backend_failed(base_url, path_and_query, reason)
+        self._backend_failed(base_url, path_and_query, reason, pairing=pairing)
 
-    def _backend_failed(self, base_url: str, what: str, reason: str) -> None:
+    def _backend_failed(
+        self, base_url: str, what: str, reason: str, *, pairing: bool = False
+    ) -> None:
         """Log a failed call: ERROR (an alert) if the backend answered
-        before, WARNING while it stays down."""
+        before, WARNING while it stays down. The alert says what the failure
+        takes out: a failed pairing (`pairing`) starts no skip window, so it
+        costs only the bridges it would have paired."""
         if base_url in self.down_since:
             logger.warning(
                 "external backend %s still not answering: %s (%s)",
@@ -819,14 +837,16 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             base_url,
             what,
             reason,
-            self._outage_effect(base_url),
+            self._outage_effect(base_url, pairing=pairing),
         )
 
-    def _outage_effect(self, base_url: str) -> str:
-        """What a backend's outage takes out, for its alert."""
+    def _outage_effect(self, base_url: str, *, pairing: bool = False) -> str:
+        """What a backend's outage takes out, for its alert. A failed
+        pairing leaves the backend's networks merged and served (no skip
+        window), so only the conversions it pairs are named."""
         effects = []
         networks = self._backends_by_url().get(base_url, set())
-        if networks:
+        if networks and not pairing:
             effects.append(
                 f"{', '.join(sorted(networks))} are left out of merged answers"
                 " and their requests get 503"
@@ -1005,6 +1025,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                     tolerate_501=True,
                     # the merges keep asking it (module docstring)
                     skip_on_failure=False,
+                    pairing=True,
                 )
         except TimeoutError:
             # as a hung backend (_fetch_json): named and alerted, but not
@@ -1014,12 +1035,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 backend.url,
                 path,
                 f"no answer within {self.config.merge_timeout_s} s",
+                pairing=True,
             )
             return []
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
             # bridges are served, never a 500
-            self._merge_failed(declined, backend.url, path, repr(exc))
+            self._merge_failed(declined, backend.url, path, repr(exc), pairing=True)
             return []
         if doc is None:
             if backend.url not in declined:
@@ -1052,8 +1074,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         ]
         networks = {n for row in bridges for n in (row.from_network, row.to_network)}
         if self._entitled(request, networks) != networks:
-            # the rows replace every half bridge of the tx, so a caller who may
-            # see only some of them keeps the half bridges instead
+            # each row replaces only the half bridge whose leg it names
+            # (txs_service.py), so the rows the caller may see could be kept;
+            # a caller who may see only some of them keeps every half bridge
+            # instead, the safe side (module docstring)
             return []
         return bridges
 

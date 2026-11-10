@@ -255,3 +255,41 @@ def test_a_merge_that_could_not_reach_the_backend_still_skips_the_pairing():
     assert response.json() == [LOCAL_ROW, HALF_ROW]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
     assert [r.url.path for r in seen] == ["/stats"]
+
+
+# ---------------------------------------------------------------------------
+# the alert says what the failure took out
+# ---------------------------------------------------------------------------
+
+
+def alerts_of(records):
+    return [r.getMessage() for r in records if r.levelno == logging.ERROR]
+
+
+def test_a_failed_pairing_alerts_only_the_conversions_it_leaves_unpaired():
+    """A pairing failure starts no skip window, so the backend's networks
+    are still merged and served: the one ERROR an operator sees must not
+    claim arb is left out, only that eth conversions lack its bridges."""
+    client, _ = merging_client(slow, timeout_s=0.2)
+    with records_of_the_middleware() as records:
+        response = client.get(CONVERSIONS)
+    assert response.headers[DECLINED_HEADER] == BACKEND_URL
+    (alert,) = alerts_of(records)
+    assert "eth conversions lack the bridges it pairs" in alert
+    assert "arb" not in alert
+    assert "left out" not in alert and "503" not in alert
+
+
+def test_a_failed_merge_alerts_everything_the_skip_takes_out():
+    """Unchanged: a merge failure skips the backend, pairing included, so its
+    alert names both what the merges and the pairing lose."""
+    client, _ = merging_client(
+        httpx.Response(200, json=[BRIDGE_ROW]),
+        stats_answer=httpx.ConnectError("refused"),
+    )
+    with records_of_the_middleware() as records:
+        stats = client.get("/stats")
+    assert stats.headers[DECLINED_HEADER] == BACKEND_URL
+    (alert,) = alerts_of(records)
+    assert "arb are left out of merged answers and their requests get 503" in alert
+    assert "eth conversions lack the bridges it pairs" in alert
