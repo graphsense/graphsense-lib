@@ -26,7 +26,7 @@ depositor, and moves nothing. When several fit, the leg is the tx itself.
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from graphsenselib.defi.bridging.models import Bridge
 from graphsenselib.utils.transactions import (
@@ -70,6 +70,17 @@ class _CctpVersion:
     message_received: bytes
     # DepositForBurn's indexed burnToken; the depositor is the topic after it
     burn_token_topic: int
+    # 1 or 2, for the log
+    number: int
+
+
+@dataclass(frozen=True)
+class _Skipped:
+    """A CCTP event that is no half bridge: the reason code the log carries
+    (``unfunded_burn``, ``no_minter_burn``) and what it says in words."""
+
+    reason: str
+    what: str
 
 
 def _hex(s: str) -> bytes:
@@ -77,6 +88,7 @@ def _hex(s: str) -> bytes:
 
 
 _CCTP_V1 = _CctpVersion(
+    number=1,
     token_messenger=_hex("0xbd3fa81b58ba92a82136038b25adec7066af3155"),
     message_transmitter=_hex("0x0a992d191deec32afe36203ad87d7d289a738f81"),
     token_minter=_hex("0xc4922d64a24675e16e1586e3e3aa56c06fabe907"),
@@ -95,6 +107,7 @@ _CCTP_V1 = _CctpVersion(
     burn_token_topic=2,
 )
 _CCTP_V2 = _CctpVersion(
+    number=2,
     token_messenger=_hex("0x28b5a0e9c621a5badaa536219b3a228c8168cf5d"),
     message_transmitter=_hex("0x81d40f21f12a8f0e3252bccb954d722d4c464b64"),
     token_minter=_hex("0xfd78ee919681417d192449715b2594ab58f5d002"),
@@ -143,12 +156,21 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
         read, version = event
         try:
             bridge = read(log, logs[since:position], logs[position + 1 :], version)
-            if bridge is None:
-                logger.debug(
-                    "CCTP event %s of tx %s: DepositForBurn without its funding "
-                    "Transfer, not a burn",
+            if isinstance(bridge, _Skipped):
+                # at INFO, with a logfmt tail: the gs-rest side of "did a
+                # burn get skipped" is answered from the log alone
+                tx_hash = "0x" + bytes(log["tx_hash"]).hex()
+                logger.info(
+                    "CCTP event %s of tx %s: DepositForBurn %s, not a burn"
+                    " | event=cctp_half_skipped reason=%s tx=%s log_index=%s"
+                    " version=%s",
                     log["log_index"],
-                    bytes(log["tx_hash"]).hex(),
+                    tx_hash,
+                    bridge.what,
+                    bridge.reason,
+                    tx_hash,
+                    log["log_index"],
+                    version.number,
                 )
             else:
                 bridges.append(bridge)
@@ -165,13 +187,14 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
 
 def _burn(
     log: Log, before: List[Log], after: List[Log], version: _CctpVersion
-) -> Optional[Bridge]:
-    """A DepositForBurn: eth sends, the mint is still to come. None when no
-    Transfer funded it, or the TokenMinter burned nothing: a real burn always moves the amount from the depositor
-    to the TokenMinter in the same call, but V1's replaceDepositForBurn
-    re-emits the event of an earlier burn (same amount, nonce and depositor,
-    maybe a new recipient) without moving funds, so it is no bridge. V2 has no
-    replace, but the rule costs nothing there."""
+) -> Union[Bridge, _Skipped]:
+    """A DepositForBurn: eth sends, the mint is still to come. Skipped when
+    no Transfer funded it, or the TokenMinter burned nothing: a real burn
+    always moves the amount from the depositor to the TokenMinter in the same
+    call, but V1's replaceDepositForBurn re-emits the event of an earlier
+    burn (same amount, nonce and depositor, maybe a new recipient) without
+    moving funds, so it is no bridge. V2 has no replace, but the rule costs
+    nothing there."""
     topics = log["topics"]
     token = bytes(topics[version.burn_token_topic])[-20:]
     depositor = bytes(topics[version.burn_token_topic + 1])[-20:]
@@ -181,8 +204,10 @@ def _burn(
     # USDC sent to the TokenMinter in the same tx is not a burn: the minter
     # must also have burned the amount (Transfer to the zero address)
     burned = _transfers(before, token, version.token_minter, bytes(20), amount)
-    if not funding or not burned:
-        return None
+    if not funding:
+        return _Skipped("unfunded_burn", "without its funding Transfer")
+    if not burned:
+        return _Skipped("no_minter_burn", "without the TokenMinter's burn")
     return Bridge(
         fromAddress=_address(depositor),
         fromAsset=_address(token),

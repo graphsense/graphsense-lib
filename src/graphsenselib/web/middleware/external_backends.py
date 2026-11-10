@@ -197,8 +197,10 @@ import json
 import logging
 import re
 import time
+import uuid
+from contextvars import ContextVar
 from typing import Dict, List, Optional, Set
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
@@ -232,6 +234,19 @@ SERVED_BY_VALUE = "external-backend"
 # they declined (429) or failed (unreachable, timed out, error answer). A
 # partial answer that looks complete is the failure mode this exists to prevent.
 DECLINED_HEADER = "X-Ikn-Backends-Declined"
+
+# One id per request, so a backend's log lines can be joined with ours: an
+# incoming ``X-Request-Id`` is kept when it is well-formed (the adapter's own
+# rule: at most 64 of [A-Za-z0-9._-]), else one is minted (RequestIdMiddleware).
+# It is echoed on the response, sent on every backend call (merge, pairing,
+# proxy), and put on this logger's lines (RequestIdFilter).
+REQUEST_ID_HEADER = "X-Request-Id"
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+
+# a reason code a backend's 501 body may name (``"reason": "mint_not_found"``);
+# anything else is logged as the status
+_REASON_CODE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 # how long a client should wait after a proxied request found its backend
 # unreachable: the adapter's own overload answers say 30 s as well
@@ -292,6 +307,65 @@ _EVM_NETWORK = "eth"
 _CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
 _CONVERSIONS = TypeAdapter(List[ExternalConversion])
 _BRIDGE_TX = "bridge_tx"
+
+
+class RequestIdMiddleware:
+    """One request id per HTTP request (REQUEST_ID_HEADER): the incoming one
+    when well-formed, else a minted uuid4 hex. It is echoed on the response
+    and held in ``request_id_var`` while the request runs, for the backend
+    calls and the log lines of this module. Pure ASGI: no buffering, and
+    non-HTTP scopes pass through."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        incoming = next(
+            (
+                value
+                for name, value in scope.get("headers", ())
+                if name == REQUEST_ID_HEADER.lower().encode()
+            ),
+            b"",
+        ).decode("latin-1")
+        request_id = incoming if _REQUEST_ID.match(incoming) else uuid.uuid4().hex
+
+        async def send_with_id(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    *message.get("headers", []),
+                    (REQUEST_ID_HEADER.lower().encode(), request_id.encode()),
+                ]
+                message = {**message, "headers": headers}
+            await send(message)
+
+        token = request_id_var.set(request_id)
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            request_id_var.reset(token)
+
+
+class RequestIdFilter(logging.Filter):
+    """Put the running request's id on a record: as ``record.request_id``,
+    and appended to the message as ``request_id=<id>`` unless the message
+    names it already (the event lines of this module do). The plain
+    formatter (web/app.py:setup_logging) prints no extra attribute, so the
+    message is where the id must go. A record logged outside a request
+    (startup) is left as it is."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        request_id = request_id_var.get()
+        record.request_id = request_id
+        if request_id is not None:
+            message = record.getMessage()
+            if "request_id=" not in message:
+                record.msg = f"{message} request_id={request_id}"
+                record.args = ()
+        return True
 
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
@@ -711,6 +785,17 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         return request.headers.get(self.config.consumer_header)
 
+    def _request_id(self) -> str:
+        """The running request's id (RequestIdMiddleware), minted here when
+        none was set (an app built without the middleware): the calls of
+        one request then still share one id, since the var is set in the
+        request's own context and never leaks into another's."""
+        request_id = request_id_var.get()
+        if request_id is None:
+            request_id = uuid.uuid4().hex
+            request_id_var.set(request_id)
+        return request_id
+
     async def _fetch_json(
         self,
         request: Request,
@@ -721,6 +806,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         tolerate_501: bool = False,
         skip_on_failure: bool = True,
         pairing: bool = False,
+        trace: Optional[dict] = None,
     ) -> Optional[dict]:
         """One merge fan-out call. Returns None when the backend declines or
         fails: a 429, no answer within merge_timeout_s, no connection, or any
@@ -742,18 +828,32 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         window, unless `skip_on_failure` is off: the bridge pairing (rule 6)
         only enriches an answer, so its failure must not hide the backend's
         networks from the merges. `pairing` says so to the alert, which then
-        names only the conversions left unpaired."""
+        names only the conversions left unpaired.
+
+        `trace`, when given, is filled with what happened, for the caller's
+        own log line: ``status`` (absent without an answer), ``ms``,
+        ``backend_request_id`` (the backend's X-Request-Id), and, when None
+        comes back, ``reason``: ``skipped``, ``transport_<Type>``,
+        ``rate_limited``, ``not_found``, ``http_<status>``, or the ``reason``
+        a tolerated 501's body names."""
+        if trace is None:
+            trace = {}
         if _now() < self.skip_until.get(base_url, 0.0):
+            trace["reason"] = "skipped"
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
             return None
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            REQUEST_ID_HEADER: self._request_id(),
+        }
         api_key = self._api_key_for_url(base_url)
         if api_key:
             headers["Authorization"] = api_key
         consumer = self._consumer_of(request)
         if consumer:
             headers["X-Consumer-Username"] = consumer
+        started = time.monotonic()
         # The one exception this module handles: a backend that cannot be
         # reached or does not answer in time is a partial answer, exactly
         # like a declined one (module docstring), not a 500 for every network.
@@ -765,13 +865,19 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 timeout=self.config.merge_timeout_s,
             )
         except httpx.TransportError as exc:
+            trace["ms"] = _ms_since(started)
+            trace["reason"] = f"transport_{type(exc).__name__}"
             self._merge_failed(
                 declined, base_url, path_and_query, repr(exc), pairing=pairing
             )
             if skip_on_failure:
                 self._skip(base_url)
             return None
+        trace["ms"] = _ms_since(started)
+        trace["status"] = response.status_code
+        trace["backend_request_id"] = response.headers.get(REQUEST_ID_HEADER)
         if response.status_code == 429:
+            trace["reason"] = "rate_limited"
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
             logger.warning(
@@ -785,12 +891,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             self._backend_answered(base_url)
             return None
         if tolerate_404 and response.status_code == 404:
+            trace["reason"] = "not_found"
             self._backend_answered(base_url)
             return None
         if tolerate_501 and response.status_code == 501:
+            trace["reason"] = _refusal_reason(response)
             self._backend_answered(base_url)
             return None
         if response.status_code != 200:
+            trace["reason"] = f"http_{response.status_code}"
             self._merge_failed(
                 declined,
                 base_url,
@@ -914,7 +1023,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         url = backend.url.rstrip("/") + request.url.path
         if request.url.query:
             url += "?" + str(request.url.query)
-        headers = {"Accept": request.headers.get("accept", "application/json")}
+        headers = {
+            "Accept": request.headers.get("accept", "application/json"),
+            REQUEST_ID_HEADER: self._request_id(),
+        }
         if backend.api_key:
             headers["Authorization"] = backend.api_key
         consumer = self._consumer_of(request)
@@ -1006,9 +1118,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """Rule 6: the bridge rows the backend pairs for the requested tx, or
         for `tx_identifier` when the conversions route names one (the bare
         hash when the requested root trace is the whole tx). [] when the
-        backend cannot pair it (a 404 or 501, logged at INFO) or fails (logged
-        with why, _fetch_json); a failure is named in `declined`, and does not
-        start a skip window: the pairing only enriches an answer."""
+        backend cannot pair it (a 404 or 501) or fails (logged with why,
+        _fetch_json); a failure is named in `declined`, and does not start a
+        skip window: the pairing only enriches an answer.
+
+        Every call logs one INFO ``event=bridge_pairing`` line (_log_pairing)
+        saying what was asked, what came back, how long it took and why
+        nothing was taken, when nothing was."""
         network, identifier = _CONVERSIONS_PATH.match(request.url.path).groups()
         if tx_identifier is not None:
             identifier = tx_identifier
@@ -1016,9 +1132,12 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # (bytes.fromhex), so a control character can get this far. Only the
         # bridges: the tx's swaps are the local detection's, so the backend
         # need not read or price them.
-        path = (
-            f"/{network.lower()}/txs/{quote(identifier, safe='')}/conversions"
-            "?only_bridges=true"
+        sent = quote(identifier, safe="")
+        path = f"/{network.lower()}/txs/{sent}/conversions?only_bridges=true"
+        trace: dict = {}
+        started = time.monotonic()
+        log = functools.partial(
+            self._log_pairing, request, backend, network, sent, path, trace, started
         )
         try:
             # httpx times each phase out on its own, so a backend answering in
@@ -1036,6 +1155,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                     # the merges keep asking it (module docstring)
                     skip_on_failure=False,
                     pairing=True,
+                    trace=trace,
                 )
         except TimeoutError:
             # as a hung backend (_fetch_json): named and alerted, but not
@@ -1047,19 +1167,16 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 f"no answer within {self.config.merge_timeout_s} s",
                 pairing=True,
             )
+            log(rows=0, reason="timeout")
             return []
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
             # bridges are served, never a 500
             self._merge_failed(declined, backend.url, path, repr(exc), pairing=True)
+            log(rows=0, reason="invalid_json")
             return []
         if doc is None:
-            if backend.url not in declined:
-                logger.info(
-                    "external backend %s cannot pair %s (404 or 501)",
-                    backend.url,
-                    path,
-                )
+            log(rows=0, reason=trace.get("reason", "no_answer"))
             return []
         try:
             rows = _CONVERSIONS.validate_python(doc)
@@ -1073,6 +1190,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 path,
                 exc.error_count(),
             )
+            log(rows=0, reason="invalid_rows")
             return []
         # the local lookup ignores whitespace in a hash (bytes.fromhex)
         tx = "".join(_tx_of(identifier).split())
@@ -1088,8 +1206,115 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             # (txs_service.py), so the rows the caller may see could be kept;
             # a caller who may see only some of them keeps every half bridge
             # instead, the safe side (module docstring)
+            log(rows=len(bridges), reason="entitlement")
             return []
+        log(rows=len(bridges), reason="paired" if bridges else "empty")
         return bridges
+
+    def _log_pairing(
+        self,
+        request: Request,
+        backend: ExternalBackendConfig,
+        network: str,
+        sent: str,
+        path: str,
+        trace: dict,
+        started: float,
+        *,
+        rows: int,
+        reason: str,
+    ) -> None:
+        """The one INFO line of a pairing call, with a logfmt tail (LogQL
+        ``| logfmt``): the backend (its URL without credentials), the network
+        and the identifier sent, the status (``-`` without an answer), the
+        time, the bridge rows that name the tx, and the reason: the 501
+        body's ``reason`` when the backend sent one, else a gs-rest-side
+        code (``paired``, ``empty``, ``not_found``, ``timeout``,
+        ``transport_<Type>``, ``rate_limited``, ``http_<status>``,
+        ``invalid_json``, ``invalid_rows``, ``entitlement``, ``skipped``).
+        Never the api key: the headers are not logged."""
+        safe = _safe_backend(backend.url)
+        ms = trace.get("ms", _ms_since(started))
+        fields = logfmt(
+            {
+                "event": "bridge_pairing",
+                "backend": safe,
+                "network": network.lower(),
+                "tx": sent,
+                "status": trace.get("status", "-"),
+                "ms": ms,
+                "rows": rows,
+                "reason": reason,
+                "backend_request_id": trace.get("backend_request_id"),
+                "request_id": request_id_var.get(),
+                "consumer": self._consumer_of(request),
+            }
+        )
+        if reason == "paired":
+            logger.info(
+                "external backend %s paired %s: %d rows in %.0f ms | %s",
+                safe,
+                path,
+                rows,
+                ms,
+                fields,
+            )
+        else:
+            logger.info(
+                "external backend %s cannot pair %s (%s) | %s",
+                safe,
+                path,
+                reason,
+                fields,
+            )
+
+
+def logfmt(fields: dict) -> str:
+    """The fields as a logfmt tail: a None value is left out, a bool is
+    true/false, a float keeps one decimal, and a value with a space, a
+    quote, an equals sign or a backslash is quoted. The plain formatter
+    (web/app.py:setup_logging) prints no record attribute, so a line's
+    fields go into its message, where LogQL's ``| logfmt`` reads them."""
+    parts = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            text = "true" if value else "false"
+        elif isinstance(value, float):
+            text = f"{value:.1f}"
+        else:
+            text = str(value)
+        if not text or not text.isprintable() or re.search(r'[\s"=\\]', text):
+            text = '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
+
+
+def _ms_since(started: float) -> float:
+    return (time.monotonic() - started) * 1000.0
+
+
+def _safe_backend(url: str) -> str:
+    """A backend's base URL without the credentials it may carry."""
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    host = parts.netloc.rpartition("@")[2]
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
+def _refusal_reason(response: httpx.Response) -> str:
+    """The ``reason`` code a backend's 501 body names, when it names one
+    (the adapter does: ``mint_not_found``, ``iris_pending``, ...); else the
+    status, ``http_501``."""
+    try:
+        reason = response.json().get("reason")
+    except (ValueError, AttributeError):
+        reason = None
+    if isinstance(reason, str) and _REASON_CODE.match(reason):
+        return reason
+    return f"http_{response.status_code}"
 
 
 def _tx_of(transfer: str) -> str:

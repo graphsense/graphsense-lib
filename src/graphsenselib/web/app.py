@@ -66,6 +66,8 @@ from graphsenselib.web.middleware.external_backends import (
     RETRY_AFTER_HEADER,
     SERVED_BY_HEADER,
     ExternalBackendMiddleware,
+    RequestIdFilter,
+    RequestIdMiddleware,
     make_backend_client,
 )
 from graphsenselib.web.middleware.plugins import PluginMiddleware
@@ -484,6 +486,11 @@ def setup_logging(
         "graphsenselib.web.middleware.external_backends"
     )
     backends_logger.setLevel(level)
+    # the request's id (RequestIdMiddleware) on its lines, installed once
+    if not any(isinstance(f, RequestIdFilter) for f in backends_logger.filters):
+        backends_logger.addFilter(RequestIdFilter())
+    # likewise the bridge readers, whose skipped-burn lines are INFO
+    logging.getLogger("graphsenselib.defi.bridging").setLevel(level)
 
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
@@ -1348,6 +1355,11 @@ def create_app(
     # Advertise deprecation on responses from routes marked deprecated=True.
     app.add_middleware(DeprecationHeaderMiddleware)
 
+    # One request id per request, taken from X-Request-Id or minted, echoed
+    # on the response and sent to the external backends
+    # (middleware/external_backends.py).
+    app.add_middleware(RequestIdMiddleware)
+
     # Added last so it runs first: an oversized body must be refused before
     # any other middleware or FastAPI's own body parsing touches it.
     app.add_middleware(
@@ -1737,6 +1749,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     _setup_currency_roles_middleware(app, config)
     _setup_cors_middleware(app, config)
     app.add_middleware(PluginMiddleware)
+    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         RequestBodySizeLimitMiddleware,
         max_body_bytes=config.max_request_body_bytes,

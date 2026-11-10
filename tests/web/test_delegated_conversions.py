@@ -158,12 +158,17 @@ def records_of_the_middleware():
     logger = logging.getLogger("graphsenselib.web.middleware.external_backends")
     handler = Sink(level=logging.INFO)
     logger.addHandler(handler)
-    previous, logger.level = logger.level, logging.INFO
+    # setLevel, not an assignment: it clears the logger's isEnabledFor cache,
+    # which a test that logged at INFO while the level was unset has filled
+    # with "INFO disabled" (the pairing and merge lines are logged in tests
+    # that capture nothing)
+    previous = logger.level
+    logger.setLevel(logging.INFO)
     try:
         yield records
     finally:
         logger.removeHandler(handler)
-        logger.level = previous
+        logger.setLevel(previous)
 
 
 def fake_db(log_rows, indexed):
@@ -527,8 +532,9 @@ def test_a_backend_that_cannot_pair_the_tx_leaves_the_half_bridge(status):
         response = client.get(CONVERSIONS)
     assert response.json() == [LOCAL_ROW, HALF_ROW]
     assert DECLINED_HEADER not in response.headers
-    (record,) = records
-    assert record.levelno == logging.INFO
+    # the pairing's line and the merge's, nothing alerts
+    assert [r.levelno for r in records] == [logging.INFO, logging.INFO]
+    (record,) = [r for r in records if "event=bridge_pairing" in r.getMessage()]
     assert f"{BACKEND_URL} cannot pair /eth/txs/{CCTP_BURN}/conversions" in (
         record.getMessage()
     )
@@ -553,7 +559,8 @@ def test_a_failed_backend_leaves_the_half_bridge_and_is_named(answer, level):
     assert response.status_code == 200
     assert response.json() == [LOCAL_ROW, HALF_ROW]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
-    assert [r.levelno for r in records] == [level]
+    # the alert, then the pairing's INFO line and the merge's
+    assert [r.levelno for r in records] == [level, logging.INFO, logging.INFO]
 
 
 @pytest.mark.parametrize(
