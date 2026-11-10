@@ -6,6 +6,7 @@ each emitted by Circle's eth TokenMessenger of that version.
 """
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -138,28 +139,67 @@ def test_the_same_tx_without_its_cctp_event_is_none(part):
     assert half_bridges("eth", rows, CCTP) == ()
 
 
-def test_a_leg_whose_transfer_is_not_found_is_the_tx():
-    """Without its one funding Transfer the burn still is a bridge; its leg is
-    then the tx itself."""
+def test_a_burn_without_its_funding_transfer_is_not_a_bridge(caplog):
+    """A DepositForBurn that no Transfer to the TokenMinter funded moved
+    nothing: it is no bridge, not a bridge with the tx as its leg."""
     logs = [
         log
         for log in FIXTURE["v2_burn"]["logs"]
         if log["log_index"] != 694  # the funding Transfer
     ]
-    (bridge,) = half_bridges("eth", db_rows("v2_burn", logs), CCTP)
-    assert bridge == HALF_BRIDGES["v2_burn"].model_copy(
-        update={"fromPayment": bare("v2_burn")}
+    with caplog.at_level(logging.DEBUG, logger="graphsenselib.defi.bridging"):
+        assert half_bridges("eth", db_rows("v2_burn", logs), CCTP) == ()
+    assert "not a burn" in caplog.text
+    assert bare("v2_burn") in caplog.text and "698" in caplog.text
+
+
+@pytest.mark.parametrize("part, burn", [("v1_burn", 48), ("v2_burn", 696)])
+def test_a_funded_burn_event_without_the_minters_burn_is_not_a_bridge(part, burn):
+    """USDC sent to the TokenMinter beside a replacement looks funded; only
+    the minter's burn (Transfer to the zero address) shows a real burn."""
+    logs = [log for log in FIXTURE[part]["logs"] if log["log_index"] != burn]
+    assert half_bridges("eth", db_rows(part, logs), CCTP) == ()
+
+
+def v1_replacement(offset=0):
+    """What V1's replaceDepositForBurn emits: MessageSent and DepositForBurn,
+    the amount, nonce and depositor of the original, no Transfer."""
+    return [
+        {**log, "log_index": log["log_index"] + offset}
+        for log in FIXTURE["v1_burn"]["logs"]
+        if log["log_index"] in (49, 50)
+    ]
+
+
+def test_a_v1_replacement_is_not_a_half_bridge():
+    assert half_bridges("eth", db_rows("v1_burn", v1_replacement()), CCTP) == ()
+
+
+def test_a_replacement_beside_a_real_burn_leaves_the_real_one():
+    """Each DepositForBurn is judged by its own segment of the logs."""
+    logs = v1_replacement(offset=-10) + FIXTURE["v1_burn"]["logs"]
+    assert half_bridges("eth", db_rows("v1_burn", logs), CCTP) == (
+        HALF_BRIDGES["v1_burn"],
+    )
+
+
+def test_a_real_burn_followed_by_a_replacement_is_one_half_bridge():
+    """The replacement does not reuse the burn's funding Transfer."""
+    logs = FIXTURE["v1_burn"]["logs"] + v1_replacement(offset=10)
+    assert half_bridges("eth", db_rows("v1_burn", logs), CCTP) == (
+        HALF_BRIDGES["v1_burn"],
     )
 
 
 def test_a_leg_with_two_fitting_transfers_is_the_tx():
     """Two Transfers of the same amount to the TokenMinter cannot be told
-    apart."""
+    apart; the burn is funded, so it is a bridge, with the tx as its leg."""
     logs = FIXTURE["v2_burn"]["logs"]
     funding = next(log for log in logs if log["log_index"] == 694)
     twice = [{**funding, "log_index": 690}, *logs]
-    (bridge,) = half_bridges("eth", db_rows("v2_burn", twice), CCTP)
-    assert bridge.fromPayment == bare("v2_burn")
+    assert half_bridges("eth", db_rows("v2_burn", twice), CCTP) == (
+        HALF_BRIDGES["v2_burn"].model_copy(update={"fromPayment": bare("v2_burn")}),
+    )
 
 
 def test_two_mints_in_one_tx_each_come_from_their_own_source():

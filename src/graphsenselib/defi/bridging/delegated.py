@@ -19,7 +19,9 @@ chain and MintAndWithdraw on the minting chain, where the MessageTransmitter's
 MessageReceived names the chain the USDC was burned on. A burn's leg is the
 Transfer that funded it (depositor to TokenMinter), a mint's the Transfer that
 paid the recipient, each found among the logs since the previous burn or
-mint; when not exactly one Transfer fits, the leg is the tx itself.
+mint. When none fits a DepositForBurn, the event is not a burn: V1's
+replaceDepositForBurn re-emits it for an earlier burn, with its amount and
+depositor, and moves nothing. When several fit, the leg is the tx itself.
 """
 
 import logging
@@ -140,9 +142,16 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
             continue
         read, version = event
         try:
-            bridges.append(
-                read(log, logs[since:position], logs[position + 1 :], version)
-            )
+            bridge = read(log, logs[since:position], logs[position + 1 :], version)
+            if bridge is None:
+                logger.debug(
+                    "CCTP event %s of tx %s: DepositForBurn without its funding "
+                    "Transfer, not a burn",
+                    log["log_index"],
+                    bytes(log["tx_hash"]).hex(),
+                )
+            else:
+                bridges.append(bridge)
         except (IndexError, ValueError) as exc:
             logger.warning(
                 "CCTP event %s of tx %s does not decode: %r",
@@ -156,14 +165,24 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
 
 def _burn(
     log: Log, before: List[Log], after: List[Log], version: _CctpVersion
-) -> Bridge:
-    """A DepositForBurn: eth sends, the mint is still to come."""
+) -> Optional[Bridge]:
+    """A DepositForBurn: eth sends, the mint is still to come. None when no
+    Transfer funded it, or the TokenMinter burned nothing: a real burn always moves the amount from the depositor
+    to the TokenMinter in the same call, but V1's replaceDepositForBurn
+    re-emits the event of an earlier burn (same amount, nonce and depositor,
+    maybe a new recipient) without moving funds, so it is no bridge. V2 has no
+    replace, but the rule costs nothing there."""
     topics = log["topics"]
     token = bytes(topics[version.burn_token_topic])[-20:]
     depositor = bytes(topics[version.burn_token_topic + 1])[-20:]
     amount, recipient, domain = _words(log["data"], 3)
     network = _CCTP_NETWORKS.get(domain)
     funding = _transfers(before, token, depositor, version.token_minter, amount)
+    # USDC sent to the TokenMinter in the same tx is not a burn: the minter
+    # must also have burned the amount (Transfer to the zero address)
+    burned = _transfers(before, token, version.token_minter, bytes(20), amount)
+    if not funding or not burned:
+        return None
     return Bridge(
         fromAddress=_address(depositor),
         fromAsset=_address(token),
@@ -242,7 +261,8 @@ def _first(logs: List[Log], topic0: bytes, emitter: bytes) -> Optional[Log]:
 
 
 def _leg(event: Log, transfers: List[Log]) -> str:
-    """The asset transfer of an event's leg: its one Transfer, or the tx."""
+    """The asset transfer of an event's leg: its one Transfer, or, when several
+    fit and cannot be told apart, the tx."""
     tx_hash = bytes(event["tx_hash"]).hex()
     if len(transfers) != 1:
         return tx_hash
