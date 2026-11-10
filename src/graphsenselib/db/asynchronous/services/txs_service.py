@@ -150,6 +150,7 @@ class TxConversions:
 
     conversions: Tuple[ExternalConversion, ...] = ()
     half_bridges: Tuple[ExternalConversion, ...] = ()
+    whole_tx: bool = False
 
 
 class TxsService:
@@ -695,4 +696,4 @@ class TxsService:
             self._conversion_from_bridge(bridge)
             for bridge in filter(wanted, detected.half_bridges)
         )
-        return TxConversions(tuple(conversions), half_bridges)
+        return TxConversions(tuple(conversions), half_bridges, whole_tx=whole_tx)

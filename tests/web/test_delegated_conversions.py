@@ -307,7 +307,14 @@ def test_any_other_eth_tx_is_passed_through_and_reads_what_it_read_before():
 def test_the_bridge_the_backend_pairs_takes_the_half_bridges_place(part, side):
     tx = FIXTURE[part]["tx_hash"]
     leg = half_row(part)[f"{side}_asset_transfer"]
-    bridge = {**BRIDGE_ROW, f"{side}_asset_transfer": leg}
+    other = "to" if side == "from" else "from"
+    # the leg on eth, the other chain's on arb, as the backend pairs it
+    bridge = {
+        **BRIDGE_ROW,
+        f"{side}_asset_transfer": leg,
+        f"{side}_network": "eth",
+        f"{other}_network": "arb",
+    }
     answer = httpx.Response(200, json=[{**bridge, **FIAT}, SWAP_ROW])
     client, seen, _ = make_client(
         log_rows=db_rows(part), indexed=(tx,), backend_answer=answer
@@ -344,36 +351,54 @@ def test_no_row_but_a_bridge_of_the_tx_is_taken(row):
 
 
 @pytest.mark.parametrize(
-    "transfer",
-    [f"0X{CCTP_BURN[2:].upper()}_T694", f"{CCTP_BURN[2:]}_T1", CCTP_BURN[2:]],
+    "transfer, paired",
+    [
+        (f"0X{CCTP_BURN[2:].upper()}_T694", True),
+        (f"{CCTP_BURN[2:]}_T1", False),
+        (CCTP_BURN[2:], False),
+    ],
     ids=["its leg", "another transfer", "the tx"],
 )
-def test_the_paired_bridges_take_the_half_bridges_place(transfer):
-    """However the backend names the tx's leg: it pairs all of a tx's bridges
-    or none."""
+def test_a_paired_bridge_takes_the_place_of_the_half_bridge_it_names(
+    transfer, paired
+):
+    """Only a row naming the half bridge's own leg (in lower case, without
+    0x) completes it; a row naming another transfer of the tx, or the bare
+    tx, is not asked for and is dropped, and the half bridge stays."""
     bridge = {**BRIDGE_ROW, "from_asset_transfer": transfer}
     client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
-    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, bridge]
+    expected = [LOCAL_ROW, bridge] if paired else [LOCAL_ROW, HALF_ROW]
+    assert client.get(CONVERSIONS).json() == expected
 
 
-def test_the_paired_bridges_replace_every_half_bridge_of_the_tx():
-    """A backend answers all of a tx's bridges or none (the CCTP adapter 501s
-    when one cannot be paired), so a paired answer stands for the whole tx."""
+def test_a_paired_bridge_replaces_only_the_half_bridge_it_names():
+    """Two burns in one tx, one paired: the other stays a half bridge."""
     logs = FIXTURE["v2_burn"]["logs"]
     again = [{**log, "log_index": log["log_index"] + 100} for log in logs]
     client, _, _ = make_client(
         log_rows=db_rows("v2_burn", logs + again),
         backend_answer=httpx.Response(200, json=[BRIDGE_ROW]),
     )
-    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, BRIDGE_ROW]
+    rows = client.get(CONVERSIONS).json()
+    assert rows[0] == LOCAL_ROW and rows[-1] == BRIDGE_ROW
+    (half,) = rows[1:-1]
+    assert half["from_asset_transfer"] == f"{CCTP_BURN[2:]}_T794"
+    assert half["to_asset_transfer"] == "pending"
 
 
 def test_a_local_row_naming_a_leg_of_a_paired_bridge_is_dropped():
     """It is that bridge too; transfers are compared in lower case and
     without 0x."""
-    bridge = {**BRIDGE_ROW, "from_asset_transfer": f"0X{CCTP_BURN[2:].upper()}_T690"}
-    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
-    assert client.get(CONVERSIONS).json() == [bridge]
+    swap = dataclasses.replace(
+        LOCAL_SWAP, toPayment=f"0X{CCTP_BURN[2:].upper()}_T694"
+    )
+    with patch(
+        "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[swap]
+    ):
+        client, _, _ = make_client(
+            backend_answer=httpx.Response(200, json=[BRIDGE_ROW])
+        )
+        assert client.get(CONVERSIONS).json() == [BRIDGE_ROW]
 
 
 @pytest.mark.parametrize("placeholder", ["pending", "Unknown"])

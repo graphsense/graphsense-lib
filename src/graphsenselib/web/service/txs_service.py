@@ -1,9 +1,14 @@
+from collections import Counter
 from typing import Awaitable, Callable, Optional, Sequence, Set
 
 from graphsenselib.db.asynchronous.services.models import (
     ExternalConversion as ServiceExternalConversion,
 )
 from graphsenselib.defi.bridging.delegated import PENDING, UNKNOWN
+from graphsenselib.utils.transactions import (
+    SubTransactionIdentifier,
+    SubTransactionType,
+)
 from graphsenselib.web.models import ExternalConversion
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
@@ -81,14 +86,18 @@ async def get_tx_conversions(
     currency,
     tx_hash,
     pair_bridges: Optional[
-        Callable[[], Awaitable[Sequence[ServiceExternalConversion]]]
+        Callable[..., Awaitable[Sequence[ServiceExternalConversion]]]
     ] = None,
 ):
     """The tx's conversions as API rows. The bridges graphsense-lib finds only
     half of (defi/bridging/delegated.py) are half rows, unless pair_bridges
-    (the external backends middleware's rule 6) answers the tx's bridges:
-    those then take the half rows' place. A backend pairs all of a tx's
-    bridges or none, and may name a leg otherwise than the half row does."""
+    (the external backends middleware's rule 6) pairs them. A paired row
+    replaces the one half row whose known leg it names (same transfer and
+    network on that side); a half no row names stays, a row naming no half
+    was not asked for and is dropped, and an ambiguous match keeps the half.
+    So with several bridges in a tx, one bridge's pairing never hides
+    another's half. A root-trace request (<hash>_I<n> that is the whole tx)
+    asks the backend for the bare hash."""
     result = await ctx.services.txs_service.get_conversions(
         currency,
         tx_hash,
@@ -99,12 +108,45 @@ async def get_tx_conversions(
     halves = [to_api_external_conversion(conv) for conv in result.half_bridges]
     paired = []
     if halves and pair_bridges is not None:
-        paired = [ExternalConversion(**r.model_dump()) for r in await pair_bridges()]
-    if not paired:
-        return rows + halves
-    # a local row naming a leg of a paired bridge is that bridge too
+        identifier = SubTransactionIdentifier.from_string(tx_hash)
+        if result.whole_tx and identifier.tx_type is SubTransactionType.InternalTx:
+            bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
+        else:
+            bridges = await pair_bridges()
+        paired = [ExternalConversion(**r.model_dump()) for r in bridges]
+
+    matches = [
+        [i for i, half in enumerate(halves) if _matches_half(row, half)]
+        for row in paired
+    ]
+    counts = Counter(i for indices in matches for i in indices)
+    accepted = [
+        (row, indices[0])
+        for row, indices in zip(paired, matches)
+        if len(indices) == 1 and counts[indices[0]] == 1
+    ]
+    paired = [row for row, _ in accepted]
+    replaced = {i for _, i in accepted}
+    # Only accepted pairs may remove local conversions naming their legs.
     named = set().union(*map(_asset_transfers, paired))
-    return [row for row in rows if not _asset_transfers(row) & named] + paired
+    return (
+        [row for row in rows if not _asset_transfers(row) & named]
+        + [half for i, half in enumerate(halves) if i not in replaced]
+        + paired
+    )
+
+
+def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
+    for side in ("from", "to"):
+        transfer = getattr(half, f"{side}_asset_transfer").lower().removeprefix("0x")
+        if (
+            transfer not in _PLACEHOLDERS
+            and transfer
+            == getattr(row, f"{side}_asset_transfer").lower().removeprefix("0x")
+            and getattr(half, f"{side}_network") == getattr(row, f"{side}_network")
+        ):
+            return True
+    return False
 
 
 def _asset_transfers(row: ExternalConversion) -> Set[str]:
