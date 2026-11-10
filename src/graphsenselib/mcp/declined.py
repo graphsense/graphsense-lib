@@ -65,12 +65,14 @@ def networks_by_backend(app: Any) -> dict[str, list[str]]:
 
 def declined_note(backends: set[str], networks: dict[str, list[str]]) -> str:
     """The note for a result whose REST answers were missing `backends`. It
-    names networks, never backend URLs (internal hostnames)."""
+    names networks, never backend URLs (internal hostnames). A header names
+    only a backend's origin, so it names every network served there, and
+    says the result may not cover them: one of those may still have answered."""
     missing = sorted({n for url in backends for n in networks.get(url, [])})
     which = ", ".join(missing) if missing else "the externally served networks"
     return (
         f"Partial result: the service for {which} did not answer, so this "
-        "result does not cover them. For those networks a missing hit or "
+        "result may not cover them. For those networks a missing hit or "
         "statistic means not checked, not not found. Retry in a few minutes."
     )
 

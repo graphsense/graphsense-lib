@@ -1194,7 +1194,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
             # bridges are served, never a 500
-            self._merge_failed(declined, backend.url, path, repr(exc), pairing=True)
+            # the type only: a decoding error quotes the body it could not read
+            self._merge_failed(
+                declined, backend.url, path, type(exc).__name__, pairing=True
+            )
             log(rows=0, reason="invalid_json")
             return []
         if doc is None:

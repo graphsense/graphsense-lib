@@ -681,3 +681,24 @@ def test_a_skipped_burn_line_carries_the_request_id(monkeypatch):
         reader_logger.removeHandler(handler)
     (record,) = [r for r in records if "event=cctp_half_skipped" in r.getMessage()]
     assert record.getMessage().endswith("request_id=req-7")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"\xff" + QUERY_SECRET.encode(), b'{"rows": "' + QUERY_SECRET.encode()],
+    ids=["malformed utf-8", "truncated json"],
+)
+def test_no_record_quotes_an_unreadable_body(body):
+    """A decoding error quotes the bytes it could not read, and a backend's
+    body may hold anything: only the error's type is logged."""
+    client, _, _ = make_client(
+        delegated_conversions={"eth": {"url": QUERY_ONLY_URL}},
+        backend_answer=httpx.Response(200, content=body),
+    )
+    with every_record_of() as records:
+        answer = client.get(CONVERSIONS)
+    assert answer.json() == [LOCAL_ROW, HALF_ROW]
+    assert records
+    for record in records:
+        assert QUERY_SECRET not in record.getMessage()
+        assert QUERY_SECRET not in str(record.__dict__)
