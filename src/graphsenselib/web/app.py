@@ -486,11 +486,17 @@ def setup_logging(
         "graphsenselib.web.middleware.external_backends"
     )
     backends_logger.setLevel(level)
-    # the request's id (RequestIdMiddleware) on its lines, installed once
-    if not any(isinstance(f, RequestIdFilter) for f in backends_logger.filters):
-        backends_logger.addFilter(RequestIdFilter())
     # likewise the bridge readers, whose skipped-burn lines are INFO
     logging.getLogger("graphsenselib.defi.bridging").setLevel(level)
+    # The request's id (RequestIdMiddleware) on their lines, installed once.
+    # A logger's filters apply to the records it creates, not to a child's
+    # that propagate through it, so the filter goes on the logger of the
+    # module that logs the skipped-burn lines (defi/bridging/delegated.py),
+    # not on the readers' parent.
+    delegated_logger = logging.getLogger("graphsenselib.defi.bridging.delegated")
+    for request_logger in (backends_logger, delegated_logger):
+        if not any(isinstance(f, RequestIdFilter) for f in request_logger.filters):
+            request_logger.addFilter(RequestIdFilter())
 
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)

@@ -25,6 +25,7 @@ depositor, and moves nothing. When several fit, the leg is the tx itself.
 """
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -157,21 +158,7 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
         try:
             bridge = read(log, logs[since:position], logs[position + 1 :], version)
             if isinstance(bridge, _Skipped):
-                # at INFO, with a logfmt tail: the gs-rest side of "did a
-                # burn get skipped" is answered from the log alone
-                tx_hash = "0x" + bytes(log["tx_hash"]).hex()
-                logger.info(
-                    "CCTP event %s of tx %s: DepositForBurn %s, not a burn"
-                    " | event=cctp_half_skipped reason=%s tx=%s log_index=%s"
-                    " version=%s",
-                    log["log_index"],
-                    tx_hash,
-                    bridge.what,
-                    bridge.reason,
-                    tx_hash,
-                    log["log_index"],
-                    version.number,
-                )
+                _log_skipped(log, bridge, version)
             else:
                 bridges.append(bridge)
         except (IndexError, ValueError) as exc:
@@ -183,6 +170,32 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
             )
         since = position + 1
     return bridges
+
+
+def _log_skipped(log: Log, skipped: "_Skipped", version: _CctpVersion) -> None:
+    """At INFO, with a logfmt tail: the gs-rest side of "did a burn get
+    skipped" is answered from the log alone. A diagnostic: a failure in
+    writing it is contained, so it never changes the answer."""
+    try:
+        tx_hash = "0x" + bytes(log["tx_hash"]).hex()
+        logger.info(
+            "CCTP event %s of tx %s: DepositForBurn %s, not a burn"
+            " | event=cctp_half_skipped reason=%s tx=%s log_index=%s"
+            " version=%s",
+            log["log_index"],
+            tx_hash,
+            skipped.what,
+            skipped.reason,
+            tx_hash,
+            log["log_index"],
+            version.number,
+        )
+    except Exception as exc:
+        if logging.raiseExceptions:
+            try:
+                sys.stderr.write(f"--- log line (cctp_half_skipped) dropped: {exc!r}\n")
+            except Exception:
+                pass
 
 
 def _burn(

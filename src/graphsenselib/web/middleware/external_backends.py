@@ -196,10 +196,11 @@ import functools
 import json
 import logging
 import re
+import sys
 import time
 import uuid
 from contextvars import ContextVar
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
@@ -241,12 +242,16 @@ DECLINED_HEADER = "X-Ikn-Backends-Declined"
 # It is echoed on the response, sent on every backend call (merge, pairing,
 # proxy), and put on this logger's lines (RequestIdFilter).
 REQUEST_ID_HEADER = "X-Request-Id"
-_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# matched whole (fullmatch): ``$`` alone would accept a trailing newline
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 
 # a reason code a backend's 501 body may name (``"reason": "mint_not_found"``);
 # anything else is logged as the status
-_REASON_CODE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_REASON_CODE = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# the largest 501 body read for its reason: a diagnostic must not cost a
+# parse of whatever a backend sends
+_MAX_DIAGNOSTIC_BODY = 64 * 1024
 
 # how long a client should wait after a proxied request found its backend
 # unreachable: the adapter's own overload answers say 30 s as well
@@ -331,7 +336,7 @@ class RequestIdMiddleware:
             ),
             b"",
         ).decode("latin-1")
-        request_id = incoming if _REQUEST_ID.match(incoming) else uuid.uuid4().hex
+        request_id = _valid_request_id(incoming) or uuid.uuid4().hex
 
         async def send_with_id(message):
             if message["type"] == "http.response.start":
@@ -355,16 +360,23 @@ class RequestIdFilter(logging.Filter):
     names it already (the event lines of this module do). The plain
     formatter (web/app.py:setup_logging) prints no extra attribute, so the
     message is where the id must go. A record logged outside a request
-    (startup) is left as it is."""
+    (startup) is left as it is.
+
+    A failure here (a message that does not format, say) must not reach the
+    request handler: the record passes on as it is, and the handler reports
+    the formatting error the usual way (Handler.handleError)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        request_id = request_id_var.get()
-        record.request_id = request_id
-        if request_id is not None:
-            message = record.getMessage()
-            if "request_id=" not in message:
-                record.msg = f"{message} request_id={request_id}"
-                record.args = ()
+        try:
+            request_id = request_id_var.get()
+            record.request_id = request_id
+            if request_id is not None:
+                message = record.getMessage()
+                if "request_id=" not in message:
+                    record.msg = f"{message} request_id={request_id}"
+                    record.args = ()
+        except Exception as exc:
+            _report_log_failure("request id filter", exc)
         return True
 
 
@@ -875,7 +887,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         trace["ms"] = _ms_since(started)
         trace["status"] = response.status_code
-        trace["backend_request_id"] = response.headers.get(REQUEST_ID_HEADER)
+        # validated before it is logged: a backend's header is its own
+        trace["backend_request_id"] = _valid_request_id(
+            response.headers.get(REQUEST_ID_HEADER, "")
+        )
         if response.status_code == 429:
             trace["reason"] = "rate_limited"
             if declined is not None and base_url not in declined:
@@ -883,7 +898,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             logger.warning(
                 "external backend %s declined %s for consumer %s (429, retry after %s)"
                 " — those networks are MISSING from an otherwise-200 answer",
-                base_url,
+                _safe_backend(base_url),
                 path_and_query,
                 consumer or "<anonymous>",
                 response.headers.get(RETRY_AFTER_HEADER, "unspecified"),
@@ -939,9 +954,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if base_url in self.down_since and not widens:
             logger.warning(
                 "external backend %s still not answering: %s (%s)",
-                base_url,
+                _safe_backend(base_url),
                 what,
-                reason,
+                _redacted(reason, base_url),
             )
             return
         self.down_since.setdefault(base_url, time.monotonic())
@@ -952,9 +967,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         logger.error(
             "external backend %s stopped answering (%s: %s) — %s until it answers"
             " again",
-            base_url,
+            _safe_backend(base_url),
             what,
-            reason,
+            _redacted(reason, base_url),
             self._outage_effect(base_url, pairing=pairing),
         )
 
@@ -993,7 +1008,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return
         logger.warning(
             "external backend %s answers again after %.0f s",
-            base_url,
+            _safe_backend(base_url),
             time.monotonic() - since,
         )
 
@@ -1010,10 +1025,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             if not retry:
                 raise
             logger.info(
-                "external backend connection dropped on %s %s (%r), sending it again",
+                "external backend connection dropped on %s %s (%s), sending it again",
                 method,
-                url,
-                exc,
+                _safe_url(url),
+                _redacted(repr(exc), url),
             )
         return await self.client.request(method, url, **kwargs)
 
@@ -1186,7 +1201,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             logger.warning(
                 "external backend %s answered %s with malformed conversions"
                 " (%d validation errors) — the bridges it pairs are MISSING",
-                backend.url,
+                _safe_backend(backend.url),
                 path,
                 exc.error_count(),
             )
@@ -1225,56 +1240,64 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         reason: str,
     ) -> None:
         """The one INFO line of a pairing call, with a logfmt tail (LogQL
-        ``| logfmt``): the backend (its URL without credentials), the network
+        ``| logfmt``): the backend (its origin, _safe_backend), the network
         and the identifier sent, the status (``-`` without an answer), the
         time, the bridge rows that name the tx, and the reason: the 501
         body's ``reason`` when the backend sent one, else a gs-rest-side
         code (``paired``, ``empty``, ``not_found``, ``timeout``,
         ``transport_<Type>``, ``rate_limited``, ``http_<status>``,
         ``invalid_json``, ``invalid_rows``, ``entitlement``, ``skipped``).
-        Never the api key: the headers are not logged."""
-        safe = _safe_backend(backend.url)
-        ms = trace.get("ms", _ms_since(started))
-        fields = logfmt(
-            {
-                "event": "bridge_pairing",
-                "backend": safe,
-                "network": network.lower(),
-                "tx": sent,
-                "status": trace.get("status", "-"),
-                "ms": ms,
-                "rows": rows,
-                "reason": reason,
-                "backend_request_id": trace.get("backend_request_id"),
-                "request_id": request_id_var.get(),
-                "consumer": self._consumer_of(request),
-            }
-        )
-        if reason == "paired":
-            logger.info(
-                "external backend %s paired %s: %d rows in %.0f ms | %s",
-                safe,
-                path,
-                rows,
-                ms,
-                fields,
+        Never the api key: the headers are not logged.
+
+        A diagnostic: a failure in building or writing it is contained
+        (log_safely), so it never changes the pairing's answer."""
+
+        def emit() -> None:
+            safe = _safe_backend(backend.url)
+            ms = trace.get("ms", _ms_since(started))
+            fields = logfmt(
+                {
+                    "event": "bridge_pairing",
+                    "backend": safe,
+                    "network": network.lower(),
+                    "tx": sent,
+                    "status": trace.get("status", "-"),
+                    "ms": ms,
+                    "rows": rows,
+                    "reason": reason,
+                    "backend_request_id": trace.get("backend_request_id"),
+                    "request_id": request_id_var.get(),
+                    "consumer": self._consumer_of(request),
+                }
             )
-        else:
-            logger.info(
-                "external backend %s cannot pair %s (%s) | %s",
-                safe,
-                path,
-                reason,
-                fields,
-            )
+            if reason == "paired":
+                logger.info(
+                    "external backend %s paired %s: %d rows in %.0f ms | %s",
+                    safe,
+                    path,
+                    rows,
+                    ms,
+                    fields,
+                )
+            else:
+                logger.info(
+                    "external backend %s cannot pair %s (%s) | %s",
+                    safe,
+                    path,
+                    reason,
+                    fields,
+                )
+
+        log_safely("bridge_pairing", emit)
 
 
 def logfmt(fields: dict) -> str:
     """The fields as a logfmt tail: a None value is left out, a bool is
     true/false, a float keeps one decimal, and a value with a space, a
-    quote, an equals sign or a backslash is quoted. The plain formatter
-    (web/app.py:setup_logging) prints no record attribute, so a line's
-    fields go into its message, where LogQL's ``| logfmt`` reads them."""
+    quote, an equals sign, a backslash or a control character is quoted
+    (logfmt_value). The plain formatter (web/app.py:setup_logging) prints
+    no record attribute, so a line's fields go into its message, where
+    LogQL's ``| logfmt`` reads them."""
     parts = []
     for key, value in fields.items():
         if value is None:
@@ -1285,34 +1308,110 @@ def logfmt(fields: dict) -> str:
             text = f"{value:.1f}"
         else:
             text = str(value)
-        if not text or not text.isprintable() or re.search(r'[\s"=\\]', text):
-            text = '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-        parts.append(f"{key}={text}")
+        parts.append(f"{key}={logfmt_value(text)}")
     return " ".join(parts)
+
+
+_NEEDS_QUOTING = re.compile(r'[\s"=\\]')
+_NAMED_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def logfmt_value(text: str) -> str:
+    """One logfmt value: as it is when it needs no quoting, else quoted,
+    with backslash and quote escaped and every control character written
+    as ``\\n``, ``\\r``, ``\\t`` or ``\\xNN`` (``\\uNNNN`` beyond Latin-1),
+    so a value can never break the line it is on."""
+    if text and text.isprintable() and not _NEEDS_QUOTING.search(text):
+        return text
+    return '"' + "".join(_escaped(char) for char in text) + '"'
+
+
+def _escaped(char: str) -> str:
+    named = _NAMED_ESCAPES.get(char)
+    if named is not None:
+        return named
+    if char.isprintable() or char == " ":
+        return char
+    code = ord(char)
+    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}"
+
+
+def log_safely(what: str, emit: Callable[[], None]) -> None:
+    """Run `emit`, a diagnostic's construction and logging, and contain any
+    failure in it: a log line must never change an answer. A cancellation
+    or another BaseException passes through; an Exception is reported to
+    stderr, as logging's own handlers report theirs."""
+    try:
+        emit()
+    except Exception as exc:
+        _report_log_failure(what, exc)
+
+
+def _report_log_failure(what: str, exc: BaseException) -> None:
+    """Say on stderr that a log line was dropped, when logging would say so
+    itself (logging.raiseExceptions); never raise."""
+    if not logging.raiseExceptions:
+        return
+    try:
+        sys.stderr.write(f"--- log line ({what}) dropped: {exc!r}\n")
+    except Exception:
+        pass
 
 
 def _ms_since(started: float) -> float:
     return (time.monotonic() - started) * 1000.0
 
 
+def _valid_request_id(value: str) -> Optional[str]:
+    """`value` when it is a well-formed request id, else None."""
+    return value if _REQUEST_ID.fullmatch(value) else None
+
+
 def _safe_backend(url: str) -> str:
-    """A backend's base URL without the credentials it may carry."""
+    """The name a backend goes by in a log line or a response header: its
+    origin (scheme, host, port), never the userinfo or the query string a
+    configured URL may carry credentials in."""
     parts = urlsplit(url)
-    if "@" not in parts.netloc:
-        return url
     host = parts.netloc.rpartition("@")[2]
-    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+    return urlunsplit((parts.scheme, host, "", "", ""))
+
+
+def _safe_url(url: str) -> str:
+    """A request URL for a log line: its origin and path, no userinfo and
+    no query."""
+    parts = urlsplit(url)
+    host = parts.netloc.rpartition("@")[2]
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def _redacted(text: str, url: str) -> str:
+    """`text` (an exception's repr, say) with whatever of `url` is secret
+    blanked: the URL itself is written safe (_safe_url), and its query
+    string, userinfo and password, wherever else they appear, as ``***``."""
+    parts = urlsplit(url)
+    userinfo, at, _ = parts.netloc.rpartition("@")
+    text = text.replace(url, _safe_url(url))
+    for secret in (parts.query, userinfo if at else "", parts.password or ""):
+        if secret:
+            text = text.replace(secret, "***")
+    return text
 
 
 def _refusal_reason(response: httpx.Response) -> str:
     """The ``reason`` code a backend's 501 body names, when it names one
     (the adapter does: ``mint_not_found``, ``iris_pending``, ...); else the
-    status, ``http_501``."""
+    status, ``http_501``. A diagnostic: a body too big to be a refusal
+    (_MAX_DIAGNOSTIC_BODY) is not parsed, and whatever fails in reading it
+    (a body that is not JSON, one nested past the recursion limit, one that
+    cannot be read) is the status."""
     try:
-        reason = response.json().get("reason")
-    except (ValueError, AttributeError):
+        if len(response.content) > _MAX_DIAGNOSTIC_BODY:
+            reason = None
+        else:
+            reason = response.json().get("reason")
+    except Exception:
         reason = None
-    if isinstance(reason, str) and _REASON_CODE.match(reason):
+    if isinstance(reason, str) and _REASON_CODE.fullmatch(reason):
         return reason
     return f"http_{response.status_code}"
 
@@ -1349,7 +1448,9 @@ def _declined_header(declined: List[str]) -> dict:
     """Name the backends whose rows are missing, or say nothing when none are.
     An empty header would assert "nothing declined" on every response, which is
     a claim this middleware cannot make about a backend it never called."""
-    return {DECLINED_HEADER: ", ".join(declined)} if declined else {}
+    if not declined:
+        return {}
+    return {DECLINED_HEADER: ", ".join(_safe_backend(url) for url in declined)}
 
 
 def _strip_legacy_capabilities(entry: dict) -> dict:

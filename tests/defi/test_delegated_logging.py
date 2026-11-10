@@ -62,3 +62,29 @@ def test_a_real_burn_logs_nothing(caplog):
     with caplog.at_level(logging.DEBUG, logger=LOGGER):
         assert len(half_bridges("eth", db_rows("v2_burn"), CCTP)) == 1
     assert skipped_lines(caplog) == []
+
+
+def test_a_handler_failing_on_the_skipped_line_leaves_the_answer():
+    """A logging failure never changes an answer: the skipped burn is still
+    no half bridge, and the tx's real bridges are still found."""
+    logger = logging.getLogger(LOGGER)
+
+    class Faulty(logging.Handler):
+        def emit(self, record):
+            if "event=cctp_half_skipped" in record.getMessage():
+                raise RuntimeError("handler failed")
+
+    handler = Faulty(level=logging.INFO)
+    logger.addHandler(handler)
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+        logs = [
+            log
+            for log in FIXTURE["v2_burn"]["logs"]
+            if log["log_index"] != 694  # the funding Transfer
+        ]
+        assert half_bridges("eth", db_rows("v2_burn", logs), CCTP) == ()
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)

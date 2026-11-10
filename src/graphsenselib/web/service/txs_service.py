@@ -10,7 +10,11 @@ from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
 )
-from graphsenselib.web.middleware.external_backends import logfmt
+from graphsenselib.web.middleware.external_backends import (
+    log_safely,
+    logfmt,
+    logfmt_value,
+)
 from graphsenselib.web.models import ExternalConversion
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
@@ -170,29 +174,37 @@ def _log_merge(
     were, how many rows the pairing answered, how many replaced a half, how
     many named no half or an ambiguous one (several rows for one half, or
     one row for several), how many local rows an accepted pair removed, and
-    how many halves stayed."""
-    ambiguous = paired_rows - accepted - no_match
-    _merge_logger.info(
-        "bridge merge of %s: %d of %d paired rows accepted, %d of %d halves kept | %s",
-        tx_hash,
-        accepted,
-        paired_rows,
-        kept_halves,
-        halves,
-        logfmt(
-            {
-                "event": "bridge_merge",
-                "tx": tx_hash,
-                "halves": halves,
-                "paired_rows": paired_rows,
-                "accepted": accepted,
-                "ambiguous": ambiguous,
-                "no_match": no_match,
-                "local_dropped": local_dropped,
-                "kept_halves": kept_halves,
-            }
-        ),
-    )
+    how many halves stayed. A diagnostic: a failure in it is contained
+    (log_safely) and never changes the answer; the tx is written escaped
+    (logfmt_value), since the local lookup ignores whitespace in a hash and
+    a control character in the path can get this far."""
+
+    def emit() -> None:
+        ambiguous = paired_rows - accepted - no_match
+        _merge_logger.info(
+            "bridge merge of %s: %d of %d paired rows accepted, %d of %d halves kept"
+            " | %s",
+            logfmt_value(tx_hash),
+            accepted,
+            paired_rows,
+            kept_halves,
+            halves,
+            logfmt(
+                {
+                    "event": "bridge_merge",
+                    "tx": tx_hash,
+                    "halves": halves,
+                    "paired_rows": paired_rows,
+                    "accepted": accepted,
+                    "ambiguous": ambiguous,
+                    "no_match": no_match,
+                    "local_dropped": local_dropped,
+                    "kept_halves": kept_halves,
+                }
+            ),
+        )
+
+    log_safely("bridge_merge", emit)
 
 
 def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
