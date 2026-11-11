@@ -1,6 +1,15 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
+# Secret scan of the staged diff (.gitleaks.toml, .gitleaksignore); --redact
+# prints file, line and rule only, never the value. The CI job
+# (.github/workflows/secret_scan.yml) scans the whole history with the same
+# gitleaks version: bump both together. pre-commit builds the hook itself (it
+# fetches Go if needed), so no local gitleaks install is required.
+- repo: https://github.com/gitleaks/gitleaks
+  rev: v8.30.0
+  hooks:
+    - id: gitleaks
 # ruff and uv run from the dev environment, not from pinned hook repos: a
 # hook `rev` is a second version next to uv.lock that Dependabot never bumps,
 # so the hook and CI's `make lint` drifted apart (0.15 here vs 0.17 locked).
