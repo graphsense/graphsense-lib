@@ -1150,6 +1150,28 @@ def _warn_unknown_included_bridges(config: GSRestConfig):
         )
 
 
+def _warn_unknown_external_backends_keys(config: GSRestConfig):
+    """external_backends and its backends accept unknown keys, so that a
+    config shared with a newer image still loads (web/config.py). Warn about
+    each one: it may be a newer image's key, or a misspelling that would
+    otherwise change nothing without a word."""
+    eb_config = config.external_backends
+    if eb_config is None:
+        return
+    unknown = [f"external_backends.{key}" for key in eb_config.model_extra or {}]
+    for group in ("networks", "delegated_conversions"):
+        for network, backend in getattr(eb_config, group).items():
+            unknown += [
+                f"external_backends.{group}.{network}.{key}"
+                for key in backend.model_extra or {}
+            ]
+    if unknown:
+        logger.warning(
+            "Ignoring config keys this version does not know: %s",
+            ", ".join(unknown),
+        )
+
+
 def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
@@ -1341,6 +1363,7 @@ def create_app(
     app.state.config = config
 
     _warn_unknown_included_bridges(config)
+    _warn_unknown_external_backends_keys(config)
     # External chain-data backends: added BEFORE the CORS middleware so it
     # ends up INSIDE it (Starlette: last added = outermost) — short-circuited
     # proxy responses must still receive CORS headers.
@@ -1748,6 +1771,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     app.state.config = config
 
     _warn_unknown_included_bridges(config)
+    _warn_unknown_external_backends_keys(config)
     _setup_external_backends_middleware(app, config)
     # wired here too: the backends middleware skips fetching what the gate is
     # about to delete, so an app with the skip and no gate would filter rows

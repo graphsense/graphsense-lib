@@ -111,9 +111,19 @@ class FileStoreConfig(BaseSettings):
     )
 
 
+# external_backends and its backends accept keys they do not know, like the
+# top level (GSRestConfig): a config file is shared by the images that run
+# side by side during a rollout, and an older image must not refuse a key a
+# newer one added. Startup warns about every unknown key (web/app.py), so a
+# misspelling is not silent.
+_TOLERANT = ConfigDict(extra="allow")
+
+
 class ExternalBackendConfig(BaseSettings):
     """One external chain-data backend serving one network (see
     middleware/external_backends.py)."""
+
+    model_config = _TOLERANT
 
     url: str = Field(..., description="Base URL of the external backend")
     api_key: Optional[str] = Field(
@@ -125,6 +135,8 @@ class ExternalBackendConfig(BaseSettings):
 class ExternalBackendsConfig(BaseSettings):
     """Networks served by GraphSense-API-compatible external backends
     instead of a Cassandra keyspace (see middleware/external_backends.py)."""
+
+    model_config = _TOLERANT
 
     enabled: bool = Field(
         default=False,
