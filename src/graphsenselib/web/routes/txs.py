@@ -207,12 +207,13 @@ async def get_tx_conversions(
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """List DeFi conversions for a transaction."""
-    result = await service.get_tx_conversions(
+    return await service.get_tx_conversions(
         ctx,
         currency=currency.lower(),
         tx_hash=tx_hash,
+        # offered by the external backends middleware (its rule 6)
+        pair_bridges=getattr(request.state, "pair_bridges", None),
     )
-    return result
 
 
 @router.get(

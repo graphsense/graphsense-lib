@@ -25,6 +25,7 @@ from graphsenselib.config import AppConfig
 from graphsenselib.config.tagstore_config import set_active_tagstore_config
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
+from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES
 from graphsenselib.errors import (
     AddressNotFoundException,
     BadUserInputException,
@@ -49,6 +50,7 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
 from graphsenselib.web.config import (
+    KNOWN_BRIDGES,
     CurrencyRolesConfig,
     FileStoreConfig,
     GSRestConfig,
@@ -64,6 +66,8 @@ from graphsenselib.web.middleware.external_backends import (
     RETRY_AFTER_HEADER,
     SERVED_BY_HEADER,
     ExternalBackendMiddleware,
+    RequestIdFilter,
+    RequestIdMiddleware,
     make_backend_client,
 )
 from graphsenselib.web.middleware.plugins import PluginMiddleware
@@ -476,6 +480,23 @@ def setup_logging(
     FORMAT = "%(asctime)s %(message)s"
     logging.basicConfig(format=FORMAT)
     app_logger.setLevel(level)
+    # The external backends middleware logs to a sibling logger tree: without
+    # its own level it would keep the root's WARNING and drop its INFO lines.
+    backends_logger = logging.getLogger(
+        "graphsenselib.web.middleware.external_backends"
+    )
+    backends_logger.setLevel(level)
+    # likewise the bridge readers, whose skipped-burn lines are INFO
+    logging.getLogger("graphsenselib.defi.bridging").setLevel(level)
+    # The request's id (RequestIdMiddleware) on their lines, installed once.
+    # A logger's filters apply to the records it creates, not to a child's
+    # that propagate through it, so the filter goes on the logger of the
+    # module that logs the skipped-burn lines (defi/bridging/delegated.py),
+    # not on the readers' parent.
+    delegated_logger = logging.getLogger("graphsenselib.defi.bridging.delegated")
+    for request_logger in (backends_logger, delegated_logger):
+        if not any(isinstance(f, RequestIdFilter) for f in request_logger.filters):
+            request_logger.addFilter(RequestIdFilter())
 
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
@@ -499,10 +520,7 @@ def setup_logging(
         # REST routes.
         mcp_logger = logging.getLogger("graphsenselib.mcp")
         # The external backends middleware logs at ERROR exactly once per
-        # outage of a backend (its module docstring), a sibling tree as well.
-        backends_logger = logging.getLogger(
-            "graphsenselib.web.middleware.external_backends"
-        )
+        # outage of a backend (its module docstring).
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
@@ -1112,15 +1130,40 @@ def _currency_role_gate(config: GSRestConfig):
     return roles_config, set()
 
 
+def _warn_unknown_included_bridges(config: GSRestConfig):
+    """A name in included_bridges that no reader knows enables nothing, and
+    nothing else would say so: the bridge is just missing from every
+    conversions answer. Warn, don't fail, as one config may be shared with an
+    older or newer image that knows other names. Exact match: the readers
+    compare case-sensitively."""
+    unknown = [
+        name
+        for i, name in enumerate(config.included_bridges)
+        if name not in KNOWN_BRIDGES and name not in config.included_bridges[:i]
+    ]
+    if unknown:
+        logger.warning(
+            "included_bridges names bridges no reader knows, so they enable "
+            "nothing: %s; known (case-sensitive): %s",
+            ", ".join(unknown),
+            ", ".join(KNOWN_BRIDGES),
+        )
+
+
 def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     """Serve configured networks from external backends (config toggle).
 
     No-op unless `external_backends.enabled` is set with at least one
-    network — the app is then byte-identical to one without the feature.
-    The shared httpx client lives on app.state so teardown can close it.
+    network or delegated_conversions entry — the app is then byte-identical
+    to one without the feature. The shared httpx client lives on app.state
+    so teardown can close it.
     """
     eb_config = config.external_backends
-    if eb_config is None or not eb_config.enabled or not eb_config.networks:
+    if (
+        eb_config is None
+        or not eb_config.enabled
+        or not (eb_config.networks or eb_config.delegated_conversions)
+    ):
         return
     client = make_backend_client(eb_config)
     app.state.external_backends_client = client
@@ -1139,7 +1182,7 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
     # startup log rather than by re-reading the config.
     logger.info(
         "External backends enabled for networks: %s (fan-out: %s; caller identity: %s)",
-        ", ".join(sorted(eb_config.networks)),
+        ", ".join(sorted(eb_config.networks)) or "none",
         f"skipped for currencies without a {roles_config.currency_role_prefix}* role"
         if gated
         else "not role-gated, every caller fans out",
@@ -1147,6 +1190,17 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
         if eb_config.consumer_header
         else "NOT relayed, so the backend paces every caller as one",
     )
+    if eb_config.delegated_conversions:
+        logger.info(
+            "External backends pair the bridges in conversions on: %s",
+            ", ".join(sorted(eb_config.delegated_conversions)),
+        )
+        if not set(DELEGATED_BRIDGES) & set(config.included_bridges):
+            logger.warning(
+                "delegated_conversions pairs nothing: included_bridges names "
+                "none of %s, so no half bridge is found to pair",
+                ", ".join(DELEGATED_BRIDGES),
+            )
 
 
 # Response headers the dashboard reads, named because the "*" wildcard does not
@@ -1286,6 +1340,7 @@ def create_app(
 
     app.state.config = config
 
+    _warn_unknown_included_bridges(config)
     # External chain-data backends: added BEFORE the CORS middleware so it
     # ends up INSIDE it (Starlette: last added = outermost) — short-circuited
     # proxy responses must still receive CORS headers.
@@ -1305,6 +1360,11 @@ def create_app(
 
     # Advertise deprecation on responses from routes marked deprecated=True.
     app.add_middleware(DeprecationHeaderMiddleware)
+
+    # One request id per request, taken from X-Request-Id or minted, echoed
+    # on the response and sent to the external backends
+    # (middleware/external_backends.py).
+    app.add_middleware(RequestIdMiddleware)
 
     # Added last so it runs first: an oversized body must be refused before
     # any other middleware or FastAPI's own body parsing touches it.
@@ -1687,6 +1747,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
 
     app.state.config = config
 
+    _warn_unknown_included_bridges(config)
     _setup_external_backends_middleware(app, config)
     # wired here too: the backends middleware skips fetching what the gate is
     # about to delete, so an app with the skip and no gate would filter rows
@@ -1694,6 +1755,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     _setup_currency_roles_middleware(app, config)
     _setup_cors_middleware(app, config)
     app.add_middleware(PluginMiddleware)
+    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         RequestBodySizeLimitMiddleware,
         max_body_bytes=config.max_request_body_bytes,
