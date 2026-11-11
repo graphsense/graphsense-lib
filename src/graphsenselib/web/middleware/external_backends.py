@@ -17,6 +17,11 @@ Decision rules:
    external backend mints its own entity ids, which mean nothing in the local
    id space (and vice versa), so both sides of that id family must stay with
    the backend that minted them.
+
+   A proxied ``/txs/{tx}/conversions`` answer passes through too, also when
+   it names a leg on eth that Cassandra, lagging the chain tip, has not
+   indexed yet. That leg then answers 404 until it is indexed, which ends
+   the dashboard's walk of that one row; the tx's other conversions stay.
 2. ``/stats`` is answered locally, then the per-currency entries of each
    backend (filtered to its configured networks) are merged into the
    ``currencies`` list. Local scalars (version, request_timestamp) win — they
@@ -66,6 +71,39 @@ Decision rules:
 
    ``merge_related_addresses: false`` switches this rule off, so each side
    answers exactly as without this feature.
+6. ``GET /{network}/txs/{tx}/conversions`` of a network in
+   ``delegated_conversions`` (e.g. eth) is answered locally, and its backend
+   may pair the bridges graphsense-lib finds only half of (Circle CCTP,
+   defi/bridging/delegated.py): it reads one leg in the tx's logs but cannot
+   find the other chain's. This middleware offers the pairing on
+   ``request.state.pair_bridges``; the conversions route calls it only for a
+   tx with such a half bridge, and puts the backend's rows in place of the
+   half bridges they complete (web/service/txs_service.py). The answer passes
+   through untouched. The backend is asked for the same path, sub-tx suffix
+   included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
+   name the tx are taken: the local detection answers swaps. The route may
+   name the tx instead (``pair_bridges(tx_identifier=...)``): it passes the
+   bare hash when the requested root trace (``_I0``) is the whole tx, since
+   the backend scopes its answer to the sub-tx it is asked for and no bridge
+   leg is the root trace. A caller entitled to no gated currency is offered
+   no pairing (behind the gateway that is how the client opt-out arrives),
+   and a caller who lacks a gated currency one of the rows names gets the
+   half bridges: not one row is taken. Each row would replace only the half
+   whose leg it names (web/service/txs_service.py), so the rows the caller
+   may see could be kept; the whole answer is withheld instead, the safe
+   side. A request that itself carries
+   ``only_bridges`` is offered no pairing either: it is the backend's own
+   upstream fallback asking (the adapter re-asks its upstream for what it
+   cannot serve), and pairing it would ask the backend again, and so on; it
+   gets the local answer, half bridges included.
+   Without the backend's pairing the half bridge is the answer: a 404 or 501
+   (it cannot pair the tx, or does not know it) is logged at INFO, any other
+   failure is named in ``X-Ikn-Backends-Declined`` and logged as on a merge
+   (below), within the same merge_timeout_s. Unlike a merge, a pairing that
+   fails starts no ``failure_skip_s`` window: the pairing only enriches an
+   answer the core served itself, and one slow pairing must not hide the
+   backend's networks from ``/stats``, ``/search`` and the twin lists. A
+   window a merge started does cover the pairing, like every other call.
 
 Client opt-out: a request carrying ``X-Ikn-Currency-Opt-Out: all-light`` is served
 exactly as without this feature — no proxying, no merging, not one call to a
@@ -96,8 +134,8 @@ connections and delayed the core networks' own requests. So after a backend
 could not be reached or did not answer in time (on a merge or a proxy), merges
 leave it out without asking it for ``failure_skip_s`` (default 30 s), named in
 ``X-Ikn-Backends-Declined`` as before. An error answer or a 429 starts no such
-window (the backend is up), proxies still always ask it, and any answer ends
-the window early.
+window (the backend is up), nor does a failed bridge pairing (rule 6);
+proxies still always ask it, and any answer ends the window early.
 
 A connection that dropped is not an outage: the shared client keeps
 connections alive between calls, and a backend may close an idle one just as
@@ -154,18 +192,25 @@ own address, charged to nobody and subtracted from everybody.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
+import sys
 import time
-from typing import Dict, List, Optional, Set
+import uuid
+from contextvars import ContextVar
+from typing import Callable, Dict, List, Optional, Set
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
+from pydantic import TypeAdapter, ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from graphsenselib.db.asynchronous.services.models import ExternalConversion
 from graphsenselib.web.config import (
     CurrencyRolesConfig,
     ExternalBackendConfig,
@@ -190,6 +235,23 @@ SERVED_BY_VALUE = "external-backend"
 # they declined (429) or failed (unreachable, timed out, error answer). A
 # partial answer that looks complete is the failure mode this exists to prevent.
 DECLINED_HEADER = "X-Ikn-Backends-Declined"
+
+# One id per request, so a backend's log lines can be joined with ours: an
+# incoming ``X-Request-Id`` is kept when it is well-formed (the adapter's own
+# rule: at most 64 of [A-Za-z0-9._-]), else one is minted (RequestIdMiddleware).
+# It is echoed on the response, sent on every backend call (merge, pairing,
+# proxy), and put on this logger's lines (RequestIdFilter).
+REQUEST_ID_HEADER = "X-Request-Id"
+# matched whole (fullmatch): ``$`` alone would accept a trailing newline
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+
+# a reason code a backend's 501 body may name (``"reason": "mint_not_found"``);
+# anything else is logged as the status
+_REASON_CODE = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# the largest 501 body read for its reason: a diagnostic must not cost a
+# parse of whatever a backend sends
+_MAX_DIAGNOSTIC_BODY = 64 * 1024
 
 # how long a client should wait after a proxied request found its backend
 # unreachable: the adapter's own overload answers say 30 s as well
@@ -246,6 +308,77 @@ _PUBKEY_RELATION = "pubkey"
 # are asked about it, and the local pubkey table is asked as it
 _EVM_NETWORK = "eth"
 
+# a tx's conversions: the bridge rows a backend pairs for the tx (rule 6)
+_CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
+_CONVERSIONS = TypeAdapter(List[ExternalConversion])
+_BRIDGE_TX = "bridge_tx"
+
+
+class RequestIdMiddleware:
+    """One request id per HTTP request (REQUEST_ID_HEADER): the incoming one
+    when well-formed, else a minted uuid4 hex. It is echoed on the response
+    and held in ``request_id_var`` while the request runs, for the backend
+    calls and the log lines of this module. Pure ASGI: no buffering, and
+    non-HTTP scopes pass through."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        incoming = next(
+            (
+                value
+                for name, value in scope.get("headers", ())
+                if name == REQUEST_ID_HEADER.lower().encode()
+            ),
+            b"",
+        ).decode("latin-1")
+        request_id = _valid_request_id(incoming) or uuid.uuid4().hex
+
+        async def send_with_id(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    *message.get("headers", []),
+                    (REQUEST_ID_HEADER.lower().encode(), request_id.encode()),
+                ]
+                message = {**message, "headers": headers}
+            await send(message)
+
+        token = request_id_var.set(request_id)
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            request_id_var.reset(token)
+
+
+class RequestIdFilter(logging.Filter):
+    """Put the running request's id on a record: as ``record.request_id``,
+    and appended to the message as ``request_id=<id>`` unless the message
+    names it already (the event lines of this module do). The plain
+    formatter (web/app.py:setup_logging) prints no extra attribute, so the
+    message is where the id must go. A record logged outside a request
+    (startup) is left as it is.
+
+    A failure here (a message that does not format, say) must not reach the
+    request handler: the record passes on as it is, and the handler reports
+    the formatting error the usual way (Handler.handleError)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            request_id = request_id_var.get()
+            record.request_id = request_id
+            if request_id is not None:
+                message = record.getMessage()
+                if "request_id=" not in message:
+                    record.msg = f"{message} request_id={request_id}"
+                    record.args = ()
+        except Exception as exc:
+            _report_log_failure("request id filter", exc)
+        return True
+
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
     def __init__(
@@ -269,6 +402,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # backend URL -> when it stopped answering (time.monotonic), for
         # one alert per outage (module docstring)
         self.down_since: Dict[str, float] = {}
+        # backends whose outage was alerted for a failed pairing only
+        self.pairing_only_outage: Set[str] = set()
         # backend URL -> until when merges leave it out without asking it
         # (_now(), failure_skip_s in the module docstring)
         self.skip_until: Dict[str, float] = {}
@@ -295,7 +430,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         }
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if not (self.config.enabled and self.config.networks):
+        if not self.config.enabled or not (
+            self.config.networks or self.config.delegated_conversions
+        ):
             return await call_next(request)
         self._lowercase_network(request)
         opt_out = {
@@ -310,6 +447,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         short_circuit = await self._route(request)
         if short_circuit is not None:
             return short_circuit
+        backend = self._conversions_backend(request)
+        if backend is not None:
+            return await self._offering_bridge_pairing(request, call_next, backend)
         if not self._wants_merge(request):
             return await call_next(request)
         response = await call_next(request)
@@ -366,7 +506,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
 
     def _wants_merge(self, request: Request) -> bool:
         """True when the local response must be merged with backend answers."""
-        if request.method != "GET":
+        if request.method != "GET" or not self.config.networks:
             return False
         if request.url.path in ("/stats", "/capabilities"):
             return True
@@ -637,7 +777,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         return entitled
 
     def _api_key_for_url(self, base_url: str) -> Optional[str]:
-        for backend in self.config.networks.values():
+        backends = [
+            *self.config.networks.values(),
+            *self.config.delegated_conversions.values(),
+        ]
+        for backend in backends:
             if backend.url == base_url and backend.api_key:
                 return backend.api_key
         return None
@@ -653,6 +797,17 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return None
         return request.headers.get(self.config.consumer_header)
 
+    def _request_id(self) -> str:
+        """The running request's id (RequestIdMiddleware), minted here when
+        none was set (an app built without the middleware): the calls of
+        one request then still share one id, since the var is set in the
+        request's own context and never leaks into another's."""
+        request_id = request_id_var.get()
+        if request_id is None:
+            request_id = uuid.uuid4().hex
+            request_id_var.set(request_id)
+        return request_id
+
     async def _fetch_json(
         self,
         request: Request,
@@ -661,6 +816,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         declined: Optional[List[str]] = None,
         tolerate_404: bool = False,
         tolerate_501: bool = False,
+        skip_on_failure: bool = True,
+        pairing: bool = False,
+        trace: Optional[dict] = None,
     ) -> Optional[dict]:
         """One merge fan-out call. Returns None when the backend declines or
         fails: a 429, no answer within merge_timeout_s, no connection, or any
@@ -678,18 +836,36 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
 
         A backend that failed within the last failure_skip_s is not asked at
         all: it is left out and named at once, without a log line (its outage
-        is already alerted)."""
+        is already alerted). A backend that cannot be reached starts that
+        window, unless `skip_on_failure` is off: the bridge pairing (rule 6)
+        only enriches an answer, so its failure must not hide the backend's
+        networks from the merges. `pairing` says so to the alert, which then
+        names only the conversions left unpaired.
+
+        `trace`, when given, is filled with what happened, for the caller's
+        own log line: ``status`` (absent without an answer), ``ms``,
+        ``backend_request_id`` (the backend's X-Request-Id), and, when None
+        comes back, ``reason``: ``skipped``, ``transport_<Type>``,
+        ``rate_limited``, ``not_found``, ``http_<status>``, or the ``reason``
+        a tolerated 501's body names."""
+        if trace is None:
+            trace = {}
         if _now() < self.skip_until.get(base_url, 0.0):
+            trace["reason"] = "skipped"
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
             return None
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            REQUEST_ID_HEADER: self._request_id(),
+        }
         api_key = self._api_key_for_url(base_url)
         if api_key:
             headers["Authorization"] = api_key
         consumer = self._consumer_of(request)
         if consumer:
             headers["X-Consumer-Username"] = consumer
+        started = time.monotonic()
         # The one exception this module handles: a backend that cannot be
         # reached or does not answer in time is a partial answer, exactly
         # like a declined one (module docstring), not a 500 for every network.
@@ -701,16 +877,28 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 timeout=self.config.merge_timeout_s,
             )
         except httpx.TransportError as exc:
-            self._merge_failed(declined, base_url, path_and_query, repr(exc))
-            self._skip(base_url)
+            trace["ms"] = _ms_since(started)
+            trace["reason"] = f"transport_{type(exc).__name__}"
+            self._merge_failed(
+                declined, base_url, path_and_query, type(exc).__name__, pairing=pairing
+            )
+            if skip_on_failure:
+                self._skip(base_url)
             return None
+        trace["ms"] = _ms_since(started)
+        trace["status"] = response.status_code
+        # validated before it is logged: a backend's header is its own
+        trace["backend_request_id"] = _valid_request_id(
+            response.headers.get(REQUEST_ID_HEADER, "")
+        )
         if response.status_code == 429:
+            trace["reason"] = "rate_limited"
             if declined is not None and base_url not in declined:
                 declined.append(base_url)
             logger.warning(
                 "external backend %s declined %s for consumer %s (429, retry after %s)"
                 " — those networks are MISSING from an otherwise-200 answer",
-                base_url,
+                _safe_backend(base_url),
                 path_and_query,
                 consumer or "<anonymous>",
                 response.headers.get(RETRY_AFTER_HEADER, "unspecified"),
@@ -718,14 +906,21 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             self._backend_answered(base_url)
             return None
         if tolerate_404 and response.status_code == 404:
+            trace["reason"] = "not_found"
             self._backend_answered(base_url)
             return None
         if tolerate_501 and response.status_code == 501:
+            trace["reason"] = _refusal_reason(response)
             self._backend_answered(base_url)
             return None
         if response.status_code != 200:
+            trace["reason"] = f"http_{response.status_code}"
             self._merge_failed(
-                declined, base_url, path_and_query, f"HTTP {response.status_code}"
+                declined,
+                base_url,
+                path_and_query,
+                f"HTTP {response.status_code}",
+                pairing=pairing,
             )
             return None
         self._backend_answered(base_url)
@@ -737,33 +932,72 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         base_url: str,
         path_and_query: str,
         reason: str,
+        *,
+        pairing: bool = False,
     ) -> None:
-        """A merge call that failed: the backend is named in the response."""
+        """A merge call that failed: the backend is named in the response.
+        `pairing` when it was the bridge pairing (rule 6) that failed."""
         if declined is not None and base_url not in declined:
             declined.append(base_url)
-        self._backend_failed(base_url, path_and_query, reason)
+        self._backend_failed(base_url, path_and_query, reason, pairing=pairing)
 
-    def _backend_failed(self, base_url: str, what: str, reason: str) -> None:
+    def _backend_failed(
+        self, base_url: str, what: str, reason: str, *, pairing: bool = False
+    ) -> None:
         """Log a failed call: ERROR (an alert) if the backend answered
-        before, WARNING while it stays down."""
-        if base_url in self.down_since:
+        before, WARNING while it stays down. The alert says what the failure
+        takes out: a failed pairing (`pairing`) starts no skip window, so it
+        costs only the bridges it would have paired. An outage alerted for a
+        pairing only is alerted again when a merge or proxy call fails too,
+        since that one does take the backend's networks out.
+
+        The line carries the backend's origin, `what` (a method and path, or
+        a path) without any query, and `reason`: a status or an exception's
+        type name, never an exception's text, which a transport writes
+        itself and may quote the URL with whatever credential it carries."""
+        what = what.partition("?")[0]
+        widens = not pairing and base_url in self.pairing_only_outage
+        if base_url in self.down_since and not widens:
             logger.warning(
                 "external backend %s still not answering: %s (%s)",
-                base_url,
+                _safe_backend(base_url),
                 what,
                 reason,
             )
             return
-        self.down_since[base_url] = time.monotonic()
-        networks = self._backends_by_url().get(base_url, set())
+        self.down_since.setdefault(base_url, time.monotonic())
+        if pairing:
+            self.pairing_only_outage.add(base_url)
+        else:
+            self.pairing_only_outage.discard(base_url)
         logger.error(
-            "external backend %s stopped answering (%s: %s) — %s are left out of"
-            " merged answers and their requests get 503 until it answers again",
-            base_url,
+            "external backend %s stopped answering (%s: %s) — %s until it answers"
+            " again",
+            _safe_backend(base_url),
             what,
             reason,
-            ", ".join(sorted(networks)),
+            self._outage_effect(base_url, pairing=pairing),
         )
+
+    def _outage_effect(self, base_url: str, *, pairing: bool = False) -> str:
+        """What a backend's outage takes out, for its alert. A failed
+        pairing leaves the backend's networks merged and served (no skip
+        window), so only the conversions it pairs are named."""
+        effects = []
+        networks = self._backends_by_url().get(base_url, set())
+        if networks and not pairing:
+            effects.append(
+                f"{', '.join(sorted(networks))} are left out of merged answers"
+                " and their requests get 503"
+            )
+        paired = sorted(
+            network
+            for network, backend in self.config.delegated_conversions.items()
+            if backend.url == base_url
+        )
+        if paired:
+            effects.append(f"{', '.join(paired)} conversions lack the bridges it pairs")
+        return "; ".join(effects)
 
     def _skip(self, base_url: str) -> None:
         """Leave a backend that could not be reached or did not answer in
@@ -774,12 +1008,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """The first answer after an outage ends it, logged once. Any answer
         ends a skip window too."""
         self.skip_until.pop(base_url, None)
+        self.pairing_only_outage.discard(base_url)
         since = self.down_since.pop(base_url, None)
         if since is None:
             return
         logger.warning(
             "external backend %s answers again after %.0f s",
-            base_url,
+            _safe_backend(base_url),
             time.monotonic() - since,
         )
 
@@ -789,17 +1024,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """One call to a backend, sent once more if the connection dropped
         under it (module docstring). The second attempt gets a fresh
         connection: httpx drops a connection that failed from its pool. Its
-        failure, of whatever kind, is the caller's to handle."""
+        failure, of whatever kind, is the caller's to handle. The line names
+        the exception's type only (_backend_failed)."""
         try:
             return await self.client.request(method, url, **kwargs)
         except RETRY_ON_DROPPED_CONNECTION as exc:
             if not retry:
                 raise
             logger.info(
-                "external backend connection dropped on %s %s (%r), sending it again",
+                "external backend connection dropped on %s %s (%s), sending it again",
                 method,
-                url,
-                exc,
+                _safe_url(url),
+                type(exc).__name__,
             )
         return await self.client.request(method, url, **kwargs)
 
@@ -809,7 +1045,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         url = backend.url.rstrip("/") + request.url.path
         if request.url.query:
             url += "?" + str(request.url.query)
-        headers = {"Accept": request.headers.get("accept", "application/json")}
+        headers = {
+            "Accept": request.headers.get("accept", "application/json"),
+            REQUEST_ID_HEADER: self._request_id(),
+        }
         if backend.api_key:
             headers["Authorization"] = backend.api_key
         consumer = self._consumer_of(request)
@@ -830,7 +1069,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
         except httpx.TransportError as exc:
             self._backend_failed(
-                backend.url, f"{request.method} {request.url.path}", repr(exc)
+                backend.url, f"{request.method} {request.url.path}", type(exc).__name__
             )
             self._skip(backend.url)
             return JSONResponse(
@@ -855,6 +1094,329 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             media_type=backend_response.headers.get("content-type"),
             headers=headers,
         )
+
+    def _conversions_backend(self, request: Request) -> Optional[ExternalBackendConfig]:
+        """The backend that pairs the bridges of this request's conversions
+        (rule 6), or None. None too for a caller entitled to no gated
+        currency: behind the gateway that is how the client opt-out arrives."""
+        if request.method != "GET":
+            return None
+        match = _CONVERSIONS_PATH.match(request.url.path)
+        if match is None:
+            return None
+        backend = self.config.delegated_conversions.get(match.group(1).lower())
+        if backend is None or (self.gated and not self._entitled(request, self.gated)):
+            return None
+        if "only_bridges" in request.query_params:
+            # the backend's own upstream fallback asking us (it re-asks its
+            # upstream for what it cannot serve, with only_bridges): offering
+            # the pairing would ask the backend again, and so on
+            return None
+        return backend
+
+    async def _offering_bridge_pairing(
+        self, request: Request, call_next, backend: ExternalBackendConfig
+    ) -> Response:
+        """Rule 6: the conversions route may have `backend` pair the bridges
+        it finds only half of; the answer passes through untouched, apart
+        from naming the backend in the declined header when that failed."""
+        declined: List[str] = []
+        # read by the conversions route (routes/txs.py)
+        request.state.pair_bridges = functools.partial(
+            self._paired_bridges, request, backend, declined
+        )
+        response = await call_next(request)
+        response.headers.update(_declined_header(declined))
+        return response
+
+    async def _paired_bridges(
+        self,
+        request: Request,
+        backend: ExternalBackendConfig,
+        declined: List[str],
+        *,
+        tx_identifier: Optional[str] = None,
+    ) -> List[ExternalConversion]:
+        """Rule 6: the bridge rows the backend pairs for the requested tx, or
+        for `tx_identifier` when the conversions route names one (the bare
+        hash when the requested root trace is the whole tx). [] when the
+        backend cannot pair it (a 404 or 501) or fails (logged with why,
+        _fetch_json); a failure is named in `declined`, and does not start a
+        skip window: the pairing only enriches an answer.
+
+        Every call logs one INFO ``event=bridge_pairing`` line (_log_pairing)
+        saying what was asked, what came back, how long it took and why
+        nothing was taken, when nothing was."""
+        network, identifier = _CONVERSIONS_PATH.match(request.url.path).groups()
+        if tx_identifier is not None:
+            identifier = tx_identifier
+        # percent-encoded: the local lookup ignores whitespace in a hash
+        # (bytes.fromhex), so a control character can get this far. Only the
+        # bridges: the tx's swaps are the local detection's, so the backend
+        # need not read or price them.
+        sent = quote(identifier, safe="")
+        path = f"/{network.lower()}/txs/{sent}/conversions?only_bridges=true"
+        trace: dict = {}
+        started = time.monotonic()
+        log = functools.partial(
+            self._log_pairing, request, backend, network, sent, path, trace, started
+        )
+        try:
+            # httpx times each phase out on its own, so a backend answering in
+            # slow pieces could hold the conversions far longer: the pairing
+            # gets merge_timeout_s in all
+            async with asyncio.timeout(self.config.merge_timeout_s):
+                doc = await self._fetch_json(
+                    request,
+                    backend.url,
+                    path,
+                    declined=declined,
+                    # it cannot pair the tx (yet), or does not know it
+                    tolerate_404=True,
+                    tolerate_501=True,
+                    # the merges keep asking it (module docstring)
+                    skip_on_failure=False,
+                    pairing=True,
+                    trace=trace,
+                )
+        except TimeoutError:
+            # as a hung backend (_fetch_json): named and alerted, but not
+            # skipped
+            self._merge_failed(
+                declined,
+                backend.url,
+                path,
+                f"no answer within {self.config.merge_timeout_s} s",
+                pairing=True,
+            )
+            log(rows=0, reason="timeout")
+            return []
+        except (ValueError, httpx.DecodingError) as exc:
+            # an answer whose body cannot be read is a failed one: the half
+            # bridges are served, never a 500
+            # the type only: a decoding error quotes the body it could not read
+            self._merge_failed(
+                declined, backend.url, path, type(exc).__name__, pairing=True
+            )
+            log(rows=0, reason="invalid_json")
+            return []
+        if doc is None:
+            log(rows=0, reason=trace.get("reason", "no_answer"))
+            return []
+        try:
+            rows = _CONVERSIONS.validate_python(doc)
+        except ValidationError as exc:
+            if backend.url not in declined:
+                declined.append(backend.url)
+            logger.warning(
+                "external backend %s answered %s with malformed conversions"
+                " (%d validation errors) — the bridges it pairs are MISSING",
+                _safe_backend(backend.url),
+                path,
+                exc.error_count(),
+            )
+            log(rows=0, reason="invalid_rows")
+            return []
+        # the local lookup ignores whitespace in a hash (bytes.fromhex)
+        tx = "".join(_tx_of(identifier).split())
+        bridges = [
+            row
+            for row in rows
+            if row.conversion_type == _BRIDGE_TX
+            and tx in {_tx_of(row.from_asset_transfer), _tx_of(row.to_asset_transfer)}
+        ]
+        networks = {n for row in bridges for n in (row.from_network, row.to_network)}
+        if self._entitled(request, networks) != networks:
+            # each row replaces only the half bridge whose leg it names
+            # (txs_service.py), so the rows the caller may see could be kept;
+            # a caller who may see only some of them keeps every half bridge
+            # instead, the safe side (module docstring)
+            log(rows=len(bridges), reason="entitlement")
+            return []
+        log(rows=len(bridges), reason="paired" if bridges else "empty")
+        return bridges
+
+    def _log_pairing(
+        self,
+        request: Request,
+        backend: ExternalBackendConfig,
+        network: str,
+        sent: str,
+        path: str,
+        trace: dict,
+        started: float,
+        *,
+        rows: int,
+        reason: str,
+    ) -> None:
+        """The one INFO line of a pairing call, with a logfmt tail (LogQL
+        ``| logfmt``): the backend (its origin, _safe_backend), the network
+        and the identifier sent, the status (``-`` without an answer), the
+        time, the bridge rows that name the tx, and the reason: the 501
+        body's ``reason`` when the backend sent one, else a gs-rest-side
+        code (``paired``, ``empty``, ``not_found``, ``timeout``,
+        ``transport_<Type>``, ``rate_limited``, ``http_<status>``,
+        ``invalid_json``, ``invalid_rows``, ``entitlement``, ``skipped``).
+        Never the api key: the headers are not logged.
+
+        A diagnostic: a failure in building or writing it is contained
+        (log_safely), so it never changes the pairing's answer."""
+
+        def emit() -> None:
+            safe = _safe_backend(backend.url)
+            ms = trace.get("ms", _ms_since(started))
+            fields = logfmt(
+                {
+                    "event": "bridge_pairing",
+                    "backend": safe,
+                    "network": network.lower(),
+                    "tx": sent,
+                    "status": trace.get("status", "-"),
+                    "ms": ms,
+                    "rows": rows,
+                    "reason": reason,
+                    "backend_request_id": trace.get("backend_request_id"),
+                    "request_id": request_id_var.get(),
+                    "consumer": self._consumer_of(request),
+                }
+            )
+            if reason == "paired":
+                logger.info(
+                    "external backend %s paired %s: %d rows in %.0f ms | %s",
+                    safe,
+                    path,
+                    rows,
+                    ms,
+                    fields,
+                )
+            else:
+                logger.info(
+                    "external backend %s cannot pair %s (%s) | %s",
+                    safe,
+                    path,
+                    reason,
+                    fields,
+                )
+
+        log_safely("bridge_pairing", emit)
+
+
+def logfmt(fields: dict) -> str:
+    """The fields as a logfmt tail: a None value is left out, a bool is
+    true/false, a float keeps one decimal, and a value with a space, a
+    quote, an equals sign, a backslash or a control character is quoted
+    (logfmt_value). The plain formatter (web/app.py:setup_logging) prints
+    no record attribute, so a line's fields go into its message, where
+    LogQL's ``| logfmt`` reads them."""
+    parts = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            text = "true" if value else "false"
+        elif isinstance(value, float):
+            text = f"{value:.1f}"
+        else:
+            text = str(value)
+        parts.append(f"{key}={logfmt_value(text)}")
+    return " ".join(parts)
+
+
+_NEEDS_QUOTING = re.compile(r'[\s"=\\]')
+_NAMED_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def logfmt_value(text: str) -> str:
+    """One logfmt value: as it is when it needs no quoting, else quoted,
+    with backslash and quote escaped and every control character written
+    as ``\\n``, ``\\r``, ``\\t`` or ``\\xNN`` (``\\uNNNN`` beyond Latin-1),
+    so a value can never break the line it is on."""
+    if text and text.isprintable() and not _NEEDS_QUOTING.search(text):
+        return text
+    return '"' + "".join(_escaped(char) for char in text) + '"'
+
+
+def _escaped(char: str) -> str:
+    named = _NAMED_ESCAPES.get(char)
+    if named is not None:
+        return named
+    if char.isprintable() or char == " ":
+        return char
+    code = ord(char)
+    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}"
+
+
+def log_safely(what: str, emit: Callable[[], None]) -> None:
+    """Run `emit`, a diagnostic's construction and logging, and contain any
+    failure in it: a log line must never change an answer. A cancellation
+    or another BaseException passes through; an Exception is reported to
+    stderr, as logging's own handlers report theirs."""
+    try:
+        emit()
+    except Exception as exc:
+        _report_log_failure(what, exc)
+
+
+def _report_log_failure(what: str, exc: BaseException) -> None:
+    """Say on stderr that a log line was dropped, when logging would say so
+    itself (logging.raiseExceptions); never raise."""
+    if not logging.raiseExceptions:
+        return
+    try:
+        sys.stderr.write(f"--- log line ({what}) dropped: {exc!r}\n")
+    except Exception:
+        pass
+
+
+def _ms_since(started: float) -> float:
+    return (time.monotonic() - started) * 1000.0
+
+
+def _valid_request_id(value: str) -> Optional[str]:
+    """`value` when it is a well-formed request id, else None."""
+    return value if _REQUEST_ID.fullmatch(value) else None
+
+
+def _safe_backend(url: str) -> str:
+    """The name a backend goes by in a log line or a response header: its
+    origin (scheme, host, port), never the userinfo or the query string a
+    configured URL may carry credentials in."""
+    parts = urlsplit(url)
+    host = parts.netloc.rpartition("@")[2]
+    return urlunsplit((parts.scheme, host, "", "", ""))
+
+
+def _safe_url(url: str) -> str:
+    """A request URL for a log line: its origin and path, no userinfo and
+    no query."""
+    parts = urlsplit(url)
+    host = parts.netloc.rpartition("@")[2]
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def _refusal_reason(response: httpx.Response) -> str:
+    """The ``reason`` code a backend's 501 body names, when it names one
+    (the adapter does: ``mint_not_found``, ``iris_pending``, ...); else the
+    status, ``http_501``. A diagnostic: a body too big to be a refusal
+    (_MAX_DIAGNOSTIC_BODY) is not parsed, and whatever fails in reading it
+    (a body that is not JSON, one nested past the recursion limit, one that
+    cannot be read) is the status."""
+    try:
+        if len(response.content) > _MAX_DIAGNOSTIC_BODY:
+            reason = None
+        else:
+            reason = response.json().get("reason")
+    except Exception:
+        reason = None
+    if isinstance(reason, str) and _REASON_CODE.fullmatch(reason):
+        return reason
+    return f"http_{response.status_code}"
+
+
+def _tx_of(transfer: str) -> str:
+    """The tx an asset transfer or a tx identifier names: its hash without
+    the sub-tx suffix, in lower case and without 0x."""
+    return transfer.partition("_")[0].lower().removeprefix("0x")
 
 
 def make_backend_client(config: ExternalBackendsConfig) -> httpx.AsyncClient:
@@ -883,7 +1445,9 @@ def _declined_header(declined: List[str]) -> dict:
     """Name the backends whose rows are missing, or say nothing when none are.
     An empty header would assert "nothing declined" on every response, which is
     a claim this middleware cannot make about a backend it never called."""
-    return {DECLINED_HEADER: ", ".join(declined)} if declined else {}
+    if not declined:
+        return {}
+    return {DECLINED_HEADER: ", ".join(_safe_backend(url) for url in declined)}
 
 
 def _strip_legacy_capabilities(entry: dict) -> dict:

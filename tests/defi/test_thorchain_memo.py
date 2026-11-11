@@ -74,7 +74,7 @@ async def test_bridgers_memo_never_reaches_the_thorchain_send_path(monkeypatch):
     result = await get_conversions_from_db(
         "btc", db=None, tx=tx, included_bridges=("thorchain",)
     )
-    assert result == []
+    assert result.conversions == () and result.half_bridges == ()
 
 
 def _old_is_thorchain_memo(memo):
@@ -246,9 +246,10 @@ async def _conversions(tx, monkeypatch, predicate):
 
     monkeypatch.setattr(thorchain, "find_thorchain_receive_for_utxo_send", _no_receive)
     monkeypatch.setattr(thorchain, "is_thorchain_memo", predicate)
-    return await get_conversions_from_db(
+    detected = await get_conversions_from_db(
         "btc", db=None, tx=tx, included_bridges=("thorchain",)
     )
+    return list(detected.conversions)
 
 
 @pytest.mark.parametrize(
