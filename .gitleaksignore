@@ -1,0 +1,3 @@
+# Reviewed false positives, one gitleaks fingerprint (commit:file:rule:line) per line.
+# A made-up lock owner uuid in a test, not a credential:
+f0b8fd5460029c72683b38cd20de072a53d7d308:tests/utils/test_locking.py:generic-api-key:277

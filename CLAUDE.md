@@ -45,6 +45,13 @@ Traps, each of which has already bitten once:
   hook repo (`astral-sh/ruff-pre-commit`, `uv-pre-commit`) is a second version
   nothing bumps — it had the hook on ruff 0.15 while CI linted with 0.17. Do not
   switch them back.
+- **Secret scan: gitleaks, in the hook (staged diff) and in CI (`secret_scan.yml`,
+  whole history).** Both use `--redact`. The hook is the pinned upstream repo,
+  which pre-commit builds itself, so no local install is needed; CI downloads the
+  same version with a checksum. Bump the two together. A false positive goes into
+  `.gitleaks.toml` when it is a class of public data (chain fixtures, `0x`
+  addresses), or into `.gitleaksignore` by fingerprint when it is a single line.
+  Never allowlist a real secret: rotate it first.
 - **uv has a floor: `[tool.uv] required-version = ">=0.13"`** in `pyproject.toml`.
   The uv-lock hook runs whatever uv is installed, so an older one errors out
   instead of quietly rewriting `uv.lock`. Raise the floor together with the
