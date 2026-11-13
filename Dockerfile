@@ -22,7 +22,7 @@
 # Not a shared `AS python-base` stage, because Dependabot would then try to
 # resolve `FROM python-base` as an image. It bumps both lines in one PR.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
 FROM eclipse-temurin:11-jre-jammy@sha256:0c567a8bd671331808b89a96976fabb305d57b123dec4fa62a20bfb89f2b32b9 AS java11
 
 # =============================================================================
@@ -30,7 +30,7 @@ FROM eclipse-temurin:11-jre-jammy@sha256:0c567a8bd671331808b89a96976fabb305d57b1
 # Carries gcc/g++/make/cmake/curl/binutils/rust/libpq-dev; none of it leaks
 # into the runtime image.
 # =============================================================================
-FROM python:3.13-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS builder
+FROM python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72 AS builder
 COPY --from=uv /uv /uvx /bin/
 
 ENV UV_ONLY_BINARY=1
@@ -109,7 +109,7 @@ RUN make build
 # Stage 2: runtime — fresh slim base, only the wheels and runtime OS deps.
 # This is the image that ships.
 # =============================================================================
-FROM python:3.13-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530
+FROM python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72
 COPY --from=uv /uv /uvx /bin/
 
 LABEL org.opencontainers.image.title="graphsense-lib"
