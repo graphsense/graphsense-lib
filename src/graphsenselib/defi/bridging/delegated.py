@@ -27,23 +27,24 @@ depositor, and moves nothing. When several fit, the leg is the tx itself.
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Sequence, Tuple, Union
 
-from graphsenselib.defi.bridging.models import Bridge
-from graphsenselib.utils.transactions import (
-    SubTransactionIdentifier,
-    SubTransactionType,
+from graphsenselib.defi.bridging.half_common import (
+    PENDING,
+    UNKNOWN,
+    Log,
+    _address,
+    _first,
+    _leg,
+    _transfers,
+    _words,
 )
+from graphsenselib.defi.bridging.models import Bridge
 
 logger = logging.getLogger(__name__)
 
 CCTP = "cctp"
-PENDING = "pending"
-UNKNOWN = "unknown"
 
-_TRANSFER = bytes.fromhex(
-    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-)
 _ZERO_ADDRESS = bytes(20)
 
 # Circle's domains of the networks the conversions name, all of them EVM
@@ -127,8 +128,6 @@ _CCTP_V2 = _CctpVersion(
     ),
     burn_token_topic=1,
 )
-
-Log = Dict[str, Any]
 
 
 def half_bridges(
@@ -259,60 +258,6 @@ def _mint(
         toNetwork="eth",
         toPayment=_leg(log, payout),
     )
-
-
-def _words(data: bytes, count: int) -> List[int]:
-    """The first `count` 32-byte words of an event's data."""
-    data = bytes(data)
-    if len(data) < 32 * count:
-        raise ValueError(f"{len(data)} bytes of data, {count} words expected")
-    return [int.from_bytes(data[32 * i : 32 * (i + 1)], "big") for i in range(count)]
-
-
-def _transfers(
-    logs: List[Log], token: bytes, sender: bytes, receiver: bytes, value: int
-) -> List[Log]:
-    """The ERC20 Transfers of `value` of `token` from sender to receiver."""
-    return [
-        log
-        for log in logs
-        if bytes(log["address"]) == token
-        and len(log.get("topics") or ()) == 3
-        and bytes(log["topics"][0]) == _TRANSFER
-        and bytes(log["topics"][1])[-20:] == sender
-        and bytes(log["topics"][2])[-20:] == receiver
-        and int.from_bytes(bytes(log["data"]), "big") == value
-    ]
-
-
-def _first(logs: List[Log], topic0: bytes, emitter: bytes) -> Optional[Log]:
-    return next(
-        (
-            log
-            for log in logs
-            if log.get("topics")
-            and bytes(log["topics"][0]) == topic0
-            and bytes(log["address"]) == emitter
-        ),
-        None,
-    )
-
-
-def _leg(event: Log, transfers: List[Log]) -> str:
-    """The asset transfer of an event's leg: its one Transfer, or, when several
-    fit and cannot be told apart, the tx."""
-    tx_hash = bytes(event["tx_hash"]).hex()
-    if len(transfers) != 1:
-        return tx_hash
-    return SubTransactionIdentifier(
-        tx_hash=tx_hash,
-        tx_type=SubTransactionType.ERC20,
-        sub_index=transfers[0]["log_index"],
-    ).to_string()
-
-
-def _address(raw: bytes) -> str:
-    return "0x" + raw.hex()
 
 
 # (topic0, emitter) -> the reader of that CCTP event, and its version
