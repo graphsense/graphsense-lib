@@ -10,9 +10,10 @@ previous send) is exactly amount * 10**k for the token's k extra decimals. With
 none, the bridge wrapped the native coin itself (WETH Deposit to the bridge).
 
 A redeem is the Token Bridge's TransferRedeemed(emitterChain, emitterAddress,
-sequence); its payout is the first Transfer after it minted (from 0x0) or
-released (from the bridge) before the next redeem, or a WETH Withdrawal by the
-bridge (the coin is sent on, which no log shows).
+sequence); its payout is the last Transfer of the first asset minted (from 0x0)
+or released (from the bridge) after it, before the next redeem (a legacy relayer
+fee is paid to msg.sender first; a Transfer to 0x0 is a burn, never a payout),
+or else a WETH Withdrawal by the bridge (the coin is sent on, which no log shows).
 
 The pair key, (emitterChain, emitterAddress, sequence), is the external
 backend's to use; a half bridge carries what its own event says."""
@@ -225,12 +226,21 @@ def _redeem(
             len(topics) == 3
             and topics[0] == _TRANSFER
             and topics[1][-20:] in (_ZERO_ADDRESS, tb)
+            and topics[2][-20:] != _ZERO_ADDRESS
         ):
-            recipient = _address(topics[2][-20:])
-            asset = _address(bytes(candidate["address"]))
+            token = _address(bytes(candidate["address"]))
+            if payout and token != asset:
+                continue
+            # the last one: a relayer fee (type 1, fee > 0) is paid first
+            recipient, asset = _address(topics[2][-20:]), token
             amount, payout = _value(candidate), [candidate]
-            break
-        if len(topics) == 2 and topics[0] == _WITHDRAWAL and topics[1][-20:] == tb:
+            continue
+        if (
+            not payout
+            and len(topics) == 2
+            and topics[0] == _WITHDRAWAL
+            and topics[1][-20:] == tb
+        ):
             asset, amount = "native", _value(candidate)
             break
     return Bridge(

@@ -114,6 +114,29 @@ def test_wormhole_eth_destination_half():
     ]
 
 
+def test_wormhole_destination_half_pays_the_recipient_not_the_relayer_fee():
+    """A legacy type-1 redeem with fee > 0: the Token Bridge pays the fee to the
+    relayer (msg.sender) first, then the rest to the recipient. The recorded
+    base_eth redeem with a fee Transfer of the same token inserted before its
+    payout; the external backend adapter names the same leg."""
+    redeem, payout, *rest = FIXTURE["base_eth"]["logs"]
+    fee = dict(
+        payout,
+        topics=[payout["topics"][0], payout["topics"][1], "0x" + "0" * 24 + "fe" * 20],
+        data="0x" + f"{12345:064x}",
+    )
+    logs = [redeem] + [
+        dict(log, log_index=1230 + n) for n, log in enumerate([fee, payout, *rest])
+    ]
+    [half] = wormhole.read("eth", db_rows("base_eth", logs))
+    assert (half.toAddress, half.toAsset, half.toAmount, half.toPayment) == (
+        "0xca0a2515effdb383a572eea1edbb52b2d11a862c",
+        "0x582d872a1b094fc48f5de31d3b73f2d9be47def1",
+        158888900610,
+        tx("base_eth") + "_T1231",
+    )
+
+
 def test_wormhole_spoofed_emitter_is_ignored():
     # a real Core message whose sender is not the Token Bridge
     assert wormhole.read("eth", db_rows("eth_core_other_sender")) == []
