@@ -81,7 +81,11 @@ Decision rules:
    half bridges they complete (web/service/txs_service.py). The answer passes
    through untouched. The backend is asked for the same path, sub-tx suffix
    included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
-   name the tx are taken: the local detection answers swaps. The route may
+   name the tx are taken: the local detection answers swaps. A half row
+   (a side's asset transfer "pending" or "unknown", a leg the backend could
+   not pair either) is dropped: only a complete pair replaces a local half,
+   and only the one half it alone names (web/service/txs_service.py). The
+   route may
    name the tx instead (``pair_bridges(tx_identifier=...)``): it passes the
    bare hash when the requested root trace (``_I0``) is the whole tx, since
    the backend scopes its answer to the sub-tx it is asked for and no bridge
@@ -211,6 +215,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from graphsenselib.db.asynchronous.services.models import ExternalConversion
+from graphsenselib.defi.bridging.delegated import PENDING, UNKNOWN
 from graphsenselib.web.config import (
     CurrencyRolesConfig,
     ExternalBackendConfig,
@@ -312,6 +317,8 @@ _EVM_NETWORK = "eth"
 _CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
 _CONVERSIONS = TypeAdapter(List[ExternalConversion])
 _BRIDGE_TX = "bridge_tx"
+# the asset transfer of a half bridge's missing leg
+_PLACEHOLDERS = frozenset({PENDING, UNKNOWN})
 
 
 class RequestIdMiddleware:
@@ -1219,12 +1226,16 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             return []
         # the local lookup ignores whitespace in a hash (bytes.fromhex)
         tx = "".join(_tx_of(identifier).split())
-        bridges = [
+        named = [
             row
             for row in rows
             if row.conversion_type == _BRIDGE_TX
             and tx in {_tx_of(row.from_asset_transfer), _tx_of(row.to_asset_transfer)}
         ]
+        # a half row (a leg the backend could not pair either) is no better
+        # than the local half: only a complete pair may replace one
+        bridges = [row for row in named if not _is_half(row)]
+        log = functools.partial(log, halves=len(named) - len(bridges) or None)
         networks = {n for row in bridges for n in (row.from_network, row.to_network)}
         if self._entitled(request, networks) != networks:
             # each row replaces only the half bridge whose leg it names
@@ -1233,7 +1244,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             # instead, the safe side (module docstring)
             log(rows=len(bridges), reason="entitlement")
             return []
-        log(rows=len(bridges), reason="paired" if bridges else "empty")
+        if bridges:
+            log(rows=len(bridges), reason="paired")
+        else:
+            log(rows=0, reason="half" if named else "empty")
         return bridges
 
     def _log_pairing(
@@ -1248,13 +1262,16 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         *,
         rows: int,
         reason: str,
+        halves: Optional[int] = None,
     ) -> None:
         """The one INFO line of a pairing call, with a logfmt tail (LogQL
         ``| logfmt``): the backend (its origin, _safe_backend), the network
         and the identifier sent, the status (``-`` without an answer), the
-        time, the bridge rows that name the tx, and the reason: the 501
-        body's ``reason`` when the backend sent one, else a gs-rest-side
-        code (``paired``, ``empty``, ``not_found``, ``timeout``,
+        time, the complete bridge rows that name the tx, the half rows
+        among them that were dropped (``halves``, left out when none), and
+        the reason: the 501 body's ``reason`` when the backend sent one,
+        else a gs-rest-side code (``paired``, ``empty``, ``half`` when every
+        row naming the tx was a half, ``not_found``, ``timeout``,
         ``transport_<Type>``, ``rate_limited``, ``http_<status>``,
         ``invalid_json``, ``invalid_rows``, ``entitlement``, ``skipped``).
         Never the api key: the headers are not logged.
@@ -1274,6 +1291,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                     "status": trace.get("status", "-"),
                     "ms": ms,
                     "rows": rows,
+                    "halves": halves,
                     "reason": reason,
                     "backend_request_id": trace.get("backend_request_id"),
                     "request_id": request_id_var.get(),
@@ -1411,6 +1429,16 @@ def _refusal_reason(response: httpx.Response) -> str:
     if isinstance(reason, str) and _REASON_CODE.fullmatch(reason):
         return reason
     return f"http_{response.status_code}"
+
+
+def _is_half(row: ExternalConversion) -> bool:
+    """A half bridge: a side's asset transfer is a placeholder ("pending"
+    or "unknown", defi/bridging/delegated.py), the leg its sender could not
+    find."""
+    return any(
+        transfer.lower() in _PLACEHOLDERS
+        for transfer in (row.from_asset_transfer, row.to_asset_transfer)
+    )
 
 
 def _tx_of(transfer: str) -> str:

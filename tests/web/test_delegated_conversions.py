@@ -400,9 +400,7 @@ def test_a_paired_bridge_replaces_only_the_half_bridge_it_names():
 def test_a_local_row_naming_a_leg_of_a_paired_bridge_is_dropped():
     """It is that bridge too; transfers are compared in lower case and
     without 0x."""
-    swap = dataclasses.replace(
-        LOCAL_SWAP, toPayment=f"0X{CCTP_BURN[2:].upper()}_T694"
-    )
+    swap = dataclasses.replace(LOCAL_SWAP, toPayment=f"0X{CCTP_BURN[2:].upper()}_T694")
     with patch(
         "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[swap]
     ):
@@ -416,17 +414,21 @@ def test_a_local_row_naming_a_leg_of_a_paired_bridge_is_dropped():
 def test_a_placeholder_leg_names_no_bridge(placeholder):
     """The placeholders "pending" and "unknown" name no transfer: a local row
     carrying one, such as a THORChain partial bridge, is not the paired
-    bridge."""
+    bridge. A backend row carrying one is a half row, which pairs nothing
+    (tests/web/test_delegated_merge.py): the local half stays."""
     local = dataclasses.replace(LOCAL_SWAP, toPayment=placeholder)
-    bridge = {**BRIDGE_ROW, "to_asset_transfer": placeholder.lower()}
+    half = {**BRIDGE_ROW, "to_asset_transfer": placeholder.lower()}
     with patch(
         "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[local]
     ):
-        client, _, _ = make_client(backend_answer=httpx.Response(200, json=[bridge]))
-        assert client.get(CONVERSIONS).json() == [
-            {**LOCAL_ROW, "to_asset_transfer": placeholder},
-            bridge,
-        ]
+        for answer, paired in ((BRIDGE_ROW, BRIDGE_ROW), (half, HALF_ROW)):
+            client, _, _ = make_client(
+                backend_answer=httpx.Response(200, json=[answer])
+            )
+            assert client.get(CONVERSIONS).json() == [
+                {**LOCAL_ROW, "to_asset_transfer": placeholder},
+                paired,
+            ]
 
 
 @pytest.mark.parametrize(

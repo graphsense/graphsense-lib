@@ -208,6 +208,12 @@ def _log_merge(
 
 
 def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
+    # a half row (the middleware drops them) completes no half
+    if any(
+        transfer.lower() in _PLACEHOLDERS
+        for transfer in (row.from_asset_transfer, row.to_asset_transfer)
+    ):
+        return False
     for side in ("from", "to"):
         transfer = getattr(half, f"{side}_asset_transfer").lower().removeprefix("0x")
         if transfer in _PLACEHOLDERS or getattr(half, f"{side}_network") != getattr(
