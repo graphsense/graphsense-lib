@@ -23,6 +23,7 @@ from starlette.testclient import TestClient
 
 from graphsenselib.db.asynchronous.services.txs_service import TxsService
 from graphsenselib.defi import ExternalSwap
+from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES
 from graphsenselib.errors import TransactionNotFoundException
 from graphsenselib.web.app import _register_exception_handlers, create_app_from_dict
 from graphsenselib.web.config import CurrencyRolesConfig, GSRestConfig
@@ -703,8 +704,8 @@ def test_any_other_proxied_answer_reads_nothing(path, status, content):
 
 PAIRS_ON_ETH = "External backends pair the bridges in conversions on: eth"
 PAIRS_NOTHING = (
-    "delegated_conversions pairs nothing: included_bridges names none of cctp, "
-    "so no half bridge is found to pair"
+    "delegated_conversions pairs nothing: included_bridges names none of "
+    f"{', '.join(DELEGATED_BRIDGES)}, so no half bridge is found to pair"
 )
 
 
