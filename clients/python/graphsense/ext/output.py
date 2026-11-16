@@ -44,8 +44,8 @@ def colorize_json(text: str) -> str:
 
         # pygments loads lexers/formatters dynamically; static analyzers
         # like ty can't see these members without runtime introspection.
-        from pygments.formatters import TerminalFormatter  # ty: ignore[unresolved-import]
-        from pygments.lexers import JsonLexer  # ty: ignore[unresolved-import]
+        from pygments.formatters import TerminalFormatter  # ty: ignore[import-not-found]
+        from pygments.lexers import JsonLexer  # ty: ignore[import-not-found]
     except ImportError:  # pragma: no cover - only without [cli] extra
         return text
     # highlight() appends a trailing newline; strip so we control spacing.

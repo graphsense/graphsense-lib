@@ -42,7 +42,7 @@ class TransactionHashAccount:
 
     @property
     def hex(self) -> str:  # noqa
-        return self.tx_hash_bytes.hex()  # ty: ignore[unresolved-attribute]
+        return self.tx_hash_bytes.hex()  # ty: ignore[missing-union-attribute]
 
     @property
     def db_encoding(self) -> str:

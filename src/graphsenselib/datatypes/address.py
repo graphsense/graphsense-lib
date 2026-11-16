@@ -76,7 +76,7 @@ class AddressAccount:
 
     @property
     def hex(self) -> str:  # noqa
-        return self.address_bytes.hex()  # ty: ignore[unresolved-attribute]
+        return self.address_bytes.hex()  # ty: ignore[missing-union-attribute]
 
     @property
     def db_encoding(self) -> str:

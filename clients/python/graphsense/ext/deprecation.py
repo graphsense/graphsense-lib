@@ -77,5 +77,5 @@ def install(
     # Replace the bound method. Type checkers (ty, mypy) flag the structural
     # mismatch between our *args/**kwargs wrapper and the generated
     # ApiClient.call_api's fixed signature; the substitution is intentional.
-    api_client.call_api = wrapped  # type: ignore[method-assign,assignment]  # ty: ignore[invalid-assignment]
+    api_client.call_api = wrapped  # type: ignore[method-assign,assignment]
     setattr(api_client, _SENTINEL_ATTR, True)
