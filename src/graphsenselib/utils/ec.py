@@ -2,8 +2,9 @@ from eth_hash.auto import keccak
 from typing import Tuple
 
 from coincurve.keys import PublicKey as _CoincurvePublicKey
-from ecdsa.curves import SECP256k1  # https://pypi.org/project/ecdsa/
-from ecdsa.ellipticcurve import Point
+
+# secp256k1 field prime (SEC2 2.4.1).
+_SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
 
 
 def secp256k1_decompress(pubkey: bytes) -> bytes:
@@ -20,7 +21,7 @@ def secp256k1_decompress(pubkey: bytes) -> bytes:
             "Input pubkey must be 33 bytes long, if it is 65 bytes long it is probably uncompressed"
         )
 
-    p = 0x_FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+    p = _SECP256K1_P
     x = int.from_bytes(pubkey[1:33], byteorder="big")
     y_sq = (pow(x, 3, p) + 7) % p  # y^2 = x^3 + 7 (mod p)
     y = pow(y_sq, (p + 1) // 4, p)  # quadratic residue
@@ -93,12 +94,12 @@ def is_valid_secp256k1_pubkey(pk: bytes, fast: bool = True) -> bool:
     For more information see SEC1v2 https://www.secg.org/sec1-v2.pdf#subsubsection.3.2.2
 
     ``fast=True`` (default) validates via coincurve (C/libsecp256k1) in
-    microseconds — the right choice for bulk extraction. ``fast=False`` uses the
-    pure-Python ``ecdsa`` reference path below; it is ~1000x slower because of
-    the subgroup ``n * Q`` scalar-multiply, which is in fact *redundant* for
-    secp256k1 (cofactor h = 1, so every on-curve in-range point is already in the
-    prime-order group). Kept only as a cross-check oracle. Both paths reject
-    off-curve, out-of-range and zero-coordinate keys identically.
+    microseconds — the right choice for bulk extraction. ``fast=False`` is a
+    pure-Python SEC1 check kept as an independent cross-check oracle. It skips
+    SEC1's subgroup test ``n * Q == O``: secp256k1 has cofactor h = 1, so every
+    on-curve point with in-range coordinates is already in the prime-order
+    group. Both paths reject off-curve, out-of-range and zero-coordinate keys
+    identically.
     """
     if fast:
         try:
@@ -114,21 +115,11 @@ def is_valid_secp256k1_pubkey(pk: bytes, fast: bool = True) -> bool:
     x_bytes, y_bytes = secp256k1_extract_coordinates(pk)
     x = int.from_bytes(x_bytes, byteorder="big")
     y = int.from_bytes(y_bytes, byteorder="big")
-    # print(x)
-    # print(y)
-    # Check if pk is point at infinity (encoded as 0x00 usually)
+    p = _SECP256K1_P
+    # The point at infinity has no affine encoding; zero coordinates mark it.
     if x == 0 or y == 0:
         return False
-    # Check if coordinates are greater or equal p
-    if x >= SECP256k1.curve.p() or y >= SECP256k1.curve.p():
+    if x >= p or y >= p:
         return False
-    # Check if point on curve
-    if (y**2 - (x**3 + 7)) % SECP256k1.curve.p() != 0:
-        return False
-    # Check if n*pk is point at infinity useing ecdsa libarary
-    # (would not be needed if cofactor h = 1, as with secp256k1)
-    point_Q = Point(SECP256k1.curve, x, y)
-    point_O = SECP256k1.generator.order() * point_Q
-    if point_O.x() is None and point_O.y() is None:
-        return True
-    return False
+    # On the curve y^2 = x^3 + 7 (mod p).
+    return (y * y - (pow(x, 3, p) + 7)) % p == 0
