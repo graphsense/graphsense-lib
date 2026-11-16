@@ -140,11 +140,11 @@ def half_bridges(
     if not wanted:
         return ()
     logs = sorted(raw_logs, key=lambda log: log["log_index"])
-    return tuple(bridge for read in wanted for bridge in read(logs))
+    return tuple(bridge for read in wanted for bridge in read(network, logs))
 
 
-def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
-    """A tx's CCTP burns and mints on eth, in log order."""
+def _cctp_half_bridges(network: str, logs: List[Log]) -> List[Bridge]:
+    """A tx's CCTP burns and mints on network, in log order."""
     bridges = []
     since = 0  # the position after the previous burn or mint
     for position, log in enumerate(logs):
@@ -155,7 +155,9 @@ def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
             continue
         read, version = event
         try:
-            bridge = read(log, logs[since:position], logs[position + 1 :], version)
+            bridge = read(
+                network, log, logs[since:position], logs[position + 1 :], version
+            )
             if isinstance(bridge, _Skipped):
                 _log_skipped(log, bridge, version)
             else:
@@ -198,9 +200,13 @@ def _log_skipped(log: Log, skipped: "_Skipped", version: _CctpVersion) -> None:
 
 
 def _burn(
-    log: Log, before: List[Log], after: List[Log], version: _CctpVersion
+    network: str,
+    log: Log,
+    before: List[Log],
+    after: List[Log],
+    version: _CctpVersion,
 ) -> Union[Bridge, _Skipped]:
-    """A DepositForBurn: eth sends, the mint is still to come. Skipped when
+    """A DepositForBurn: network sends, the mint is still to come. Skipped when
     no Transfer funded it, or the TokenMinter burned nothing: a real burn
     always moves the amount from the depositor to the TokenMinter in the same
     call, but V1's replaceDepositForBurn re-emits the event of an earlier
@@ -211,7 +217,7 @@ def _burn(
     token = bytes(topics[version.burn_token_topic])[-20:]
     depositor = bytes(topics[version.burn_token_topic + 1])[-20:]
     amount, recipient, domain = _words(log["data"], 3)
-    network = _CCTP_NETWORKS.get(domain)
+    destination = _CCTP_NETWORKS.get(domain)
     funding = _transfers(before, token, depositor, version.token_minter, amount)
     # USDC sent to the TokenMinter in the same tx is not a burn: the minter
     # must also have burned the amount (Transfer to the zero address)
@@ -224,21 +230,27 @@ def _burn(
         fromAddress=_address(depositor),
         fromAsset=_address(token),
         fromAmount=amount,
-        fromNetwork="eth",
+        fromNetwork=network,
         fromPayment=_leg(log, funding),
         # a named network is EVM: its recipient is the word's low 20 bytes
-        toAddress=_address(recipient.to_bytes(32, "big")[-20:]) if network else UNKNOWN,
+        toAddress=(
+            _address(recipient.to_bytes(32, "big")[-20:]) if destination else UNKNOWN
+        ),
         toAsset=UNKNOWN,
         toAmount=0,  # less Circle's fee, known when minted
-        toNetwork=network or UNKNOWN,
+        toNetwork=destination or UNKNOWN,
         toPayment=PENDING,
     )
 
 
 def _mint(
-    log: Log, before: List[Log], after: List[Log], version: _CctpVersion
+    network: str,
+    log: Log,
+    before: List[Log],
+    after: List[Log],
+    version: _CctpVersion,
 ) -> Bridge:
-    """A MintAndWithdraw: eth receives what an unknown burn sent."""
+    """A MintAndWithdraw: network receives what an unknown burn sent."""
     topics = log["topics"]
     recipient = bytes(topics[1])[-20:]
     token = bytes(topics[2])[-20:]
@@ -255,7 +267,7 @@ def _mint(
         toAddress=_address(recipient),
         toAsset=_address(token),
         toAmount=amount,
-        toNetwork="eth",
+        toNetwork=network,
         toPayment=_leg(log, payout),
     )
 
@@ -272,9 +284,10 @@ _CCTP_EVENTS = {
     },
 }
 
-# network -> bridge -> its half bridges among a tx's logs in log order.
+# network -> bridge -> its half bridges among a tx's logs in log order, read
+# with the network they are on.
 # Another bridge that an external backend pairs is one more entry here.
-_HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[List[Log]], List[Bridge]]]] = {
+_HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[str, List[Log]], List[Bridge]]]] = {
     "eth": {CCTP: _cctp_half_bridges},
 }
 
