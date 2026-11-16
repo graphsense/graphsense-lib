@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Union, Any, Tuple
 
 from graphsenselib.defi.bridging.thorchain import (
     get_full_bridges_from_thorchain_send,
@@ -78,23 +78,9 @@ def get_bridge_strategy_from_decoded_logs(dlogs: list) -> BridgeStrategy:
         return dlog["log_def"]["tags"]
 
     tags = [tag for dlog in dlogs for tag in get_tags(dlog)]
-    # final_log_tags = dlogs[-1]["log_def"]["tags"] if dlogs else []
-    final_log_name = dlogs[-1]["name"] if dlogs else ""
 
     if "bridging" in tags:
-        if "wormhole" in tags:
-            if final_log_name == "LogMessagePublished":
-                return BridgeStrategy.WORMHOLE_AUTOMATIC_RELAY
-            else:
-                # todo we might not get this case if we dont have the final log decoded. Bring all logs here (not just decoded)
-                logger.error(
-                    "Not a LogMessagePublished as a final log, could be a cross chain swap or sth"
-                )
-                return BridgeStrategy.UNKNOWN
-        elif "stargate" in tags:
-            if "Swap" in names:
-                return BridgeStrategy.STARGATE
-        elif "thorchain" in tags:
+        if "thorchain" in tags:
             if "Deposit" in names:
                 return BridgeStrategy.THORCHAIN_SEND
             elif "TransferOut" in names:
@@ -263,50 +249,6 @@ async def _conversions_from_logs(
     return conversions
 
 
-def get_bridges_from_wormhole(
-    dlogs: List[Dict[str, Any]], logs_raw: List[Dict[str, Any]]
-) -> Optional[List[Bridge]]:
-    # TODO: Unfinished
-
-    # log_message_published = [
-    #    dlog for dlog in dlogs if dlog["name"] == "LogMessagePublished"
-    # ]
-    # sender = log_message_published[0]["parameters"]["sender"]
-    # sequence = log_message_published[0]["parameters"]["sequence"]
-    # nonce = log_message_published[0]["parameters"]["nonce"]
-    # payload = log_message_published[0]["parameters"]["payload"]
-    # consistency_level = log_message_published[0]["parameters"]["consistencyLevel"]
-    # first byte of payload is the message type
-    # payload_bytes = bytes.fromhex(payload[2:])
-    # transfer = decode_wormhole_payload(payload_bytes)
-
-    logger.warning(
-        "Wormhole tx found. Support not yet implemented, probably not interesting for now, no tron"
-    )
-    return None
-
-
-def get_bridges_from_stargate(
-    dlogs: List[Dict[str, Any]], logs_raw: List[Dict[str, Any]]
-) -> Optional[List[Bridge]]:
-    # TODO: Unfinished
-
-    # swap = [dlog for dlog in dlogs if dlog["name"] == "Swap"][0]
-    # chainId = swap["parameters"]["chainId"]
-    # dstPoolId = swap["parameters"]["dstPoolId"]
-    # from_ = swap["parameters"]["from"]
-    # amountSD = swap["parameters"]["amountSD"]
-    # eqReward = swap["parameters"]["eqReward"]
-    # eqFee = swap["parameters"]["eqFee"]
-    # protocolFee = swap["parameters"]["protocolFee"]
-    # lpFee = swap["parameters"]["lpFee"]
-
-    logger.warning(
-        "Stargate tx found. Support not yet implemented, probably not interesting for now, no tron"
-    )
-    return None
-
-
 async def get_bridges_from_decoded_logs(
     network: str,
     db: Cassandra,
@@ -338,13 +280,7 @@ async def get_bridges_from_decoded_logs(
 
     bridges = None
 
-    if strategy == BridgeStrategy.WORMHOLE_AUTOMATIC_RELAY:
-        bridges = get_bridges_from_wormhole(dlogs, logs_raw)
-
-    elif strategy == BridgeStrategy.STARGATE:
-        bridges = get_bridges_from_stargate(dlogs, logs_raw)
-
-    elif strategy == BridgeStrategy.THORCHAIN_SEND and "thorchain" in included_bridges:
+    if strategy == BridgeStrategy.THORCHAIN_SEND and "thorchain" in included_bridges:
         bridge_generator = get_full_bridges_from_thorchain_send(
             network, db, tx, dlogs, logs_raw, traces
         )

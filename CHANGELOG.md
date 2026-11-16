@@ -43,6 +43,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **`privacy_preserving_tag_notifications` now takes effect.** The tag service read `privacy_preserving_tag_notification` (singular), which is not a config field, and fell back to `True`, so setting it to `false` never put the reported tag into the Slack notification. With the default (`true`) nothing changes: Slack gets the report id and the address only.
+- **A Wormhole or Stargate log no longer hides a THORChain or Symbiosis bridge in tx conversions.** The bridge strategy checked for a Wormhole `LogMessagePublished` or a Stargate `Swap` first and then only logged that their support was not implemented, so a tx that also had a THORChain `Deposit`/`TransferOut` or a Symbiosis event got no bridge. Those two unfinished handlers are gone (with `BridgeStrategy.WORMHOLE_AUTOMATIC_RELAY`, `BridgeStrategy.STARGATE` and `StargateBridgeStrategy`); the names `layerzero`, `across`, `wormhole` and `debridge` are now known in `included_bridges`, but their readers find nothing yet.
 
 ### Library
 

@@ -39,6 +39,7 @@ from graphsenselib.defi.bridging.half_common import (
     _transfers,
     _words,
 )
+from graphsenselib.defi.bridging.halves import across, debridge, layerzero, wormhole
 from graphsenselib.defi.bridging.models import Bridge
 
 logger = logging.getLogger(__name__)
@@ -288,7 +289,13 @@ _CCTP_EVENTS = {
 # with the network they are on.
 # Another bridge that an external backend pairs is one more entry here.
 _HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[str, List[Log]], List[Bridge]]]] = {
-    "eth": {CCTP: _cctp_half_bridges},
+    "eth": {
+        CCTP: _cctp_half_bridges,
+        "layerzero": layerzero.read,
+        "across": across.read,
+        "wormhole": wormhole.read,
+        "debridge": debridge.read,
+    },
 }
 
 # the included_bridges names of the bridges an external backend pairs

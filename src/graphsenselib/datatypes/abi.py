@@ -566,7 +566,7 @@ log_signatures = {
                 {"name": "payload", "type": "bytes", "indexed": False},
                 {"name": "consistencyLevel", "type": "uint8", "indexed": False},
             ],
-            "tags": ["wormhole", "bridging"],
+            "tags": ["bridging"],
         }
     ],
     "0x34660fc8af304464529f48a778e03d03e4d34bcd5f9b6f0cfbf3cd238c642f7f": [
@@ -582,7 +582,7 @@ log_signatures = {
                 {"name": "protocolFee", "type": "uint256", "indexed": False},
                 {"name": "lpFee", "type": "uint256", "indexed": False},
             ],
-            "tags": ["stargate", "swap", "bridging"],
+            "tags": ["swap", "bridging"],
         }
     ],
     "0xef519b7eb82aaf6ac376a6df2d793843ebfd593de5f1a0601d3cc6ab49ebb395": [
