@@ -76,11 +76,11 @@ class AddressAccount:
 
     @property
     def hex(self) -> str:  # noqa
-        return self.address_bytes.hex()  # ty: ignore[unresolved-attribute]
+        return self.address_bytes.hex()  # ty: ignore[missing-union-attribute]
 
     @property
     def db_encoding(self) -> str:
-        return self.bytearray  # ty: ignore[invalid-return-type]
+        return self.bytearray  # ty: ignore[invalid-explicit-return]
         # return f"0x{self.hex}"
 
     @property
@@ -93,7 +93,7 @@ class AddressAccount:
 
     @property
     def bytearray(self) -> bytearray:  # noqa
-        return self.address_bytes  # ty: ignore[invalid-return-type]
+        return self.address_bytes  # ty: ignore[invalid-explicit-return]
 
 
 class AddressAccountTrx:

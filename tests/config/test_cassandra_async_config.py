@@ -64,10 +64,10 @@ class TestCassandraConfig:
         }
         config = CassandraConfig(**config_dict)  # ty: ignore[invalid-argument-type]
 
-        assert config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
-        assert config.currencies["btc"].transformed == "btc_transformed"  # ty: ignore[unresolved-attribute]
-        assert config.currencies["eth"].raw == "eth_raw"  # ty: ignore[unresolved-attribute]
-        assert config.currencies["eth"].balance_provider == "node"  # ty: ignore[unresolved-attribute]
+        assert config.currencies["btc"].raw == "btc_raw"  # ty: ignore[missing-union-attribute]
+        assert config.currencies["btc"].transformed == "btc_transformed"  # ty: ignore[missing-union-attribute]
+        assert config.currencies["eth"].raw == "eth_raw"  # ty: ignore[missing-union-attribute]
+        assert config.currencies["eth"].balance_provider == "node"  # ty: ignore[missing-union-attribute]
         assert config.nodes == ["127.0.0.1", "127.0.0.2"]
         assert config.port == 9043
         assert config.username == "cassandra"
@@ -198,8 +198,8 @@ class TestCassandraConfig:
         config = CassandraConfig(
             currencies={"btc": None},
             nodes=["127.0.0.1"],
-            custom_field="custom_value",  # ty: ignore[unknown-argument]
-            another_extra_field=123,  # ty: ignore[unknown-argument]
+            custom_field="custom_value",
+            another_extra_field=123,
         )
 
         # Extra fields should be accessible
@@ -225,7 +225,7 @@ class TestCassandraConfig:
 
         # Compare
         assert (
-            new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
+            new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[missing-union-attribute]
         )
         assert isinstance(new_config.currencies["eth"], CurrencyConfig)
         assert new_config.nodes == ["127.0.0.1"]
@@ -245,7 +245,7 @@ class TestCassandraConfig:
         # Deserialize from JSON
         new_config = CassandraConfig.model_validate_json(json_str)
 
-        assert new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
+        assert new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[missing-union-attribute]
         assert new_config.nodes == ["127.0.0.1"]
 
     def test_fanout_bounding_and_links_precheck_enabled_default(self):

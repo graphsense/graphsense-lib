@@ -118,7 +118,7 @@ class DeltaTableConnector:
 
     def get_auth_query(self):
         if self.s3_credentials:
-            endpoint_URL = self.s3_credentials.get("AWS_ENDPOINT_URL").replace(  # ty: ignore[unresolved-attribute]
+            endpoint_URL = self.s3_credentials.get("AWS_ENDPOINT_URL").replace(  # ty: ignore[missing-union-attribute]
                 "http://", ""
             )
             password = self.s3_credentials.get("AWS_SECRET_ACCESS_KEY")

@@ -157,7 +157,7 @@ class CassandraOutputResolver(OutputResolverBase):
         return self._get_from_db(tx_hash)
 
     def _get_from_db(self, tx_hash):
-        outputs = self.db.raw.get_tx_outputs(  # ty: ignore[unresolved-attribute]
+        outputs = self.db.raw.get_tx_outputs(  # ty: ignore[missing-attribute]
             tx_hash,
             tx_bucket_size=self.tx_bucket_size,
             tx_prefix_length=self.tx_prefix_length,
@@ -1045,7 +1045,7 @@ def ingest(
                     txs, resolver, ignore_missing_outputs=False, network=currency
                 )
 
-                latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)  # ty: ignore[unresolved-attribute]
+                latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)  # ty: ignore[missing-attribute]
 
                 prepare_transactions_inplace(
                     txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE

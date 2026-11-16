@@ -9,7 +9,7 @@ try:
     import pyarrow as pa
     import pyarrow.compute  # noqa: F401 — explicit import for type checkers
     from deltalake import DeltaTable
-    from pyarrow.lib import ArrowInvalid  # ty: ignore[unresolved-import]
+    from pyarrow.lib import ArrowInvalid  # ty: ignore[import-not-found]
 except ImportError:
     _has_ingest_dependencies = False
 else:
@@ -70,7 +70,7 @@ def delta_lake_highest_block(directory: str, s3_credentials: Optional[dict] = No
     dataset = DeltaTable(
         f"{directory}/block", storage_options=storage_options
     ).to_pyarrow_dataset()
-    return pa.compute.max(  # ty: ignore[unresolved-attribute]
+    return pa.compute.max(  # ty: ignore[missing-attribute]
         dataset.to_table(columns=["block_id"])["block_id"]
     ).as_py()
 

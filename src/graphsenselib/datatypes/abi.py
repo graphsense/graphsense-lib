@@ -733,11 +733,11 @@ def is_supported_log(log, log_signatures_local=log_signatures) -> bool:
 
 def convert_log_generic(db_log) -> dict:
     db_log = dict_to_dataobject(db_log)
-    data_str = db_log.data.hex()  # ty: ignore[unresolved-attribute]
+    data_str = db_log.data.hex()  # ty: ignore[missing-attribute]
     return {
-        "topics": [f"0x{topic.hex()}" for topic in (db_log.topics or [])],  # ty: ignore[unresolved-attribute]
+        "topics": [f"0x{topic.hex()}" for topic in (db_log.topics or [])],  # ty: ignore[missing-attribute]
         "data": f"0x{data_str}",
-        "address": f"0x{db_log.address.hex()}",  # ty: ignore[unresolved-attribute]
+        "address": f"0x{db_log.address.hex()}",  # ty: ignore[missing-attribute]
     }
 
 
@@ -778,8 +778,8 @@ def decode_log(log, log_signatures_local=log_signatures):
                 versioned_dict = VersionedDict(log_signatures_local, i)
                 decoded_log = eth_event.decode_log(log, versioned_dict)
                 ld = versioned_dict
-                decoded_log["log_def"] = ld[log["topics"][0]]  # ty: ignore[invalid-key]
-                decoded_log["parameters"] = {  # ty: ignore[invalid-key]
+                decoded_log["log_def"] = ld[log["topics"][0]]  # ty: ignore[invalid-typed-dict-key]
+                decoded_log["parameters"] = {  # ty: ignore[invalid-typed-dict-key]
                     d["name"]: d["value"]  # ty: ignore[invalid-argument-type]
                     for d in decoded_log.get("data", [])
                 }
