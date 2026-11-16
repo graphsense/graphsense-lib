@@ -103,3 +103,14 @@ def test_relay_is_delegated_on_eth():
     (bridge,) = half_bridges("eth", rows("eth_erc20_deposit"), ["relay"])
     assert bridge.fromPayment.endswith("_T349")
     assert half_bridges("eth", rows("eth_erc20_deposit"), ["cctp"]) == ()
+
+
+@pytest.mark.parametrize("part", ["eth_erc20_deposit", "eth_native_deposit"])
+def test_relay_malformed_deposit_is_no_half_and_no_error(part):
+    """A Depository event whose data is too short to decode: no half bridge, no
+    exception (an exception would be a 500 on gs-rest's eth conversions)."""
+
+    def truncated(log):
+        return dict(log, data=log["data"][:82]) if log["address"] == DEPOSITORY else log
+
+    assert relay.read("eth", rows(part, truncated)) == []

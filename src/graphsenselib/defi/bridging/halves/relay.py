@@ -15,6 +15,7 @@ Contract and topic0s: Relay's /chains answer (protocol.v2.depository), and
 the adapter's recorded receipts (iknaio-external-backend-adapter,
 tests/data/bridges/relay/), 2026-11-16."""
 
+import logging
 from typing import List
 
 from graphsenselib.defi.bridging.half_common import (
@@ -27,6 +28,8 @@ from graphsenselib.defi.bridging.half_common import (
     _words,
 )
 from graphsenselib.defi.bridging.models import Bridge
+
+logger = logging.getLogger(__name__)
 
 DEPOSITORY = bytes.fromhex("4cd00e387622c35bddb9b4c962c136462338bc31")
 NATIVE_DEPOSIT = bytes.fromhex(
@@ -68,17 +71,26 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
         if not topics or bytes(log["address"]) != depository:
             continue
         topic0 = bytes(topics[0])
-        if topic0 == NATIVE_DEPOSIT:
-            depositor, amount, _ = _words(log["data"], 3)
-            asset, payment = "native", _leg(log, [])
-        elif topic0 == ERC20_DEPOSIT:
-            depositor, token, amount, _ = _words(log["data"], 4)
-            token_bytes = token.to_bytes(32, "big")[-20:]
-            asset = _address(token_bytes)
-            payment = _leg(
-                log, _funding(logs[:position], token_bytes, depository, amount)
+        try:
+            if topic0 == NATIVE_DEPOSIT:
+                depositor, amount, _ = _words(log["data"], 3)
+                asset, payment = "native", _leg(log, [])
+            elif topic0 == ERC20_DEPOSIT:
+                depositor, token, amount, _ = _words(log["data"], 4)
+                token_bytes = token.to_bytes(32, "big")[-20:]
+                asset = _address(token_bytes)
+                payment = _leg(
+                    log, _funding(logs[:position], token_bytes, depository, amount)
+                )
+            else:
+                continue
+        except (IndexError, ValueError) as exc:
+            logger.warning(
+                "Relay event %s of tx %s does not decode: %r",
+                log["log_index"],
+                bytes(log["tx_hash"]).hex(),
+                exc,
             )
-        else:
             continue
         bridges.append(
             Bridge(

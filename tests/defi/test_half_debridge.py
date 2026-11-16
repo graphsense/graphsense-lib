@@ -169,3 +169,29 @@ def test_delegated_half_bridges_include_debridge_on_eth():
         debridge.read("eth", db_rows("bnb_eth_batched_fill"))
     )
     assert half_bridges("eth", rows, ("cctp",)) == ()
+
+
+@pytest.mark.parametrize("part", ["eth_arb_native", "avax_eth_old_fill"])
+def test_debridge_malformed_event_is_no_half_and_no_error(part):
+    """A DLN event whose data is too short to decode: no half bridge, no
+    exception (an exception would be a 500 on gs-rest's eth conversions)."""
+    logs = [
+        dict(log, data=log["data"][:40])
+        if log["address"] in (unhex(DLN_SOURCE), unhex(DLN_DESTINATION))
+        else log
+        for log in db_rows(part)
+    ]
+    assert debridge.read("eth", logs) == []
+
+
+@pytest.mark.parametrize("error", [IndexError, ValueError])
+def test_debridge_decode_errors_are_contained_like_the_other_readers(
+    monkeypatch, error
+):
+    def broken(*args):
+        raise error("malformed")
+
+    monkeypatch.setattr(debridge, "_created", broken)
+    monkeypatch.setattr(debridge, "_fulfilled", broken)
+    for part in ("eth_arb_native", "avax_eth_old_fill"):
+        assert debridge.read("eth", db_rows(part)) == []

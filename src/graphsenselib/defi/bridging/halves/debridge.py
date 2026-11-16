@@ -27,6 +27,7 @@ nativeFixFee, uint256 percentFee, ...: a tx pays DlnSource giveAmount +
 percentFee + the affiliate fee, and nativeFixFee in the native coin on top.
 """
 
+import logging
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from graphsenselib.defi.bridging.half_common import (
@@ -37,6 +38,8 @@ from graphsenselib.defi.bridging.half_common import (
     _leg,
 )
 from graphsenselib.defi.bridging.models import Bridge
+
+logger = logging.getLogger(__name__)
 
 NATIVE = "native"
 
@@ -252,8 +255,15 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
             continue
         try:
             bridge = read_event(network, log, logs[since[kind] : position])
-        except ValueError:
-            bridge = None  # an event that does not decode is no half bridge
+        except (IndexError, ValueError) as exc:
+            # an event that does not decode is no half bridge
+            logger.warning(
+                "deBridge event %s of tx %s does not decode: %r",
+                log["log_index"],
+                bytes(log["tx_hash"]).hex(),
+                exc,
+            )
+            bridge = None
         since[kind] = position + 1
         if bridge is not None:
             bridges.append(bridge)
