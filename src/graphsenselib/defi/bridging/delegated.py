@@ -39,7 +39,13 @@ from graphsenselib.defi.bridging.half_common import (
     _transfers,
     _words,
 )
-from graphsenselib.defi.bridging.halves import across, debridge, layerzero, wormhole
+from graphsenselib.defi.bridging.halves import (
+    across,
+    debridge,
+    layerzero,
+    relay,
+    wormhole,
+)
 from graphsenselib.defi.bridging.models import Bridge
 
 logger = logging.getLogger(__name__)
@@ -295,6 +301,7 @@ _HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[str, List[Log]], List[Bridge
         "across": across.read,
         "wormhole": wormhole.read,
         "debridge": debridge.read,
+        "relay": relay.read,
     },
 }
 

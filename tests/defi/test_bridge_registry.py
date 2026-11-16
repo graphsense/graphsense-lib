@@ -16,8 +16,8 @@ from tests.defi.test_delegated_bridges import db_rows
 FOUR = ("layerzero", "across", "wormhole", "debridge")
 
 
-def test_delegated_bridges_lists_all_five():
-    assert set(DELEGATED_BRIDGES) == {"cctp", *FOUR}
+def test_delegated_bridges_lists_all_six():
+    assert set(DELEGATED_BRIDGES) == {"cctp", *FOUR, "relay"}
     assert list(DELEGATED_BRIDGES) == sorted(DELEGATED_BRIDGES)
 
 
