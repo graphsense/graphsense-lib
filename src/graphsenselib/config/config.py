@@ -1051,7 +1051,7 @@ class AppConfig(GoodConf):
         self, load: bool = False, config_file: str | None = None, **kwargs
     ) -> None:
         super().__init__(load, config_file, **kwargs)
-        self.model_config["explicit_config_file"] = config_file  # ty: ignore[invalid-key]
+        self.model_config["explicit_config_file"] = config_file  # ty: ignore[invalid-typed-dict-key]
 
     def is_loaded(self) -> bool:
         return hasattr(self, "environments")
@@ -1280,7 +1280,7 @@ class AppConfig(GoodConf):
         delta_sink = (
             self.get_environment(env)
             .keyspaces[currency]
-            .ingest_config.raw_keyspace_file_sinks.get("delta")  # ty: ignore[unresolved-attribute]
+            .ingest_config.raw_keyspace_file_sinks.get("delta")  # ty: ignore[missing-union-attribute]
         )
         if delta_sink is None:
             logger.debug(f"Delta sink not configured for {currency} in {env}")

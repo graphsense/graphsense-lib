@@ -125,7 +125,7 @@ class AddressConverter(ABC):
 
 class AddressConverterEth(AddressConverter):
     def to_canonical_address_str(self, address: str) -> str:
-        return strip_0x(address.lower())  # ty: ignore[invalid-return-type]
+        return strip_0x(address.lower())  # ty: ignore[invalid-explicit-return]
 
     def to_bytes(self, address: str) -> bytes:
         try:
@@ -142,7 +142,7 @@ class AddressConverterEth(AddressConverter):
 
 class AddressConverterTrx(AddressConverterEth):
     def to_canonical_address_str(self, address: str) -> str:
-        return strip_0x(tron_address_to_evm_string(address))  # ty: ignore[invalid-return-type]
+        return strip_0x(tron_address_to_evm_string(address))  # ty: ignore[invalid-explicit-return]
 
     def to_user_address_str(self, address: str):
         return evm_to_tron_address_string(address)
