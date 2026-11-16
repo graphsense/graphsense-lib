@@ -19,6 +19,11 @@ updates:
     target-branch: "develop"
     schedule:
       interval: "weekly"
+    # pyspark must match the cluster's Spark (3.5.x, see spark/build.sbt);
+    # a major bump is a cluster upgrade, not a dependency bump.
+    ignore:
+      - dependency-name: "pyspark"
+        update-types: ["version-update:semver-major"]
     groups:
       uv-minor-patch:
         applies-to: version-updates
