@@ -877,6 +877,9 @@ def combine_bridge_transfers(
         toAmount=bridge_receive.toAmount,
         toPayment=bridge_receive.toPayment,
         toNetwork=bridge_receive.toNetwork,
+        # THORChain's explorer finds a swap by its inbound tx, the source leg:
+        # no transfer id of its own
+        protocol="thorchain",
     )
 
 

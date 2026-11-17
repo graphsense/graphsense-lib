@@ -61,6 +61,9 @@ def bare(part):
 
 # Each one's eth leg is the Transfer the external backend names too: the
 # burn's funding Transfer to Circle's TokenMinter, the mint's payout Transfer.
+# The transfer id is the CCTP nonce: V1 DepositForBurn topic 1 (0x…07ba02),
+# V1 MessageReceived topic 2 (0x…0e075b), V2 MessageReceived topic 2; the V2
+# burn's MessageSent carries an empty nonce (Circle assigns it off chain).
 HALF_BRIDGES = {
     "v1_burn": Bridge(
         fromAddress="0x55b887d413a320674f80c84d370742b114d090b5",
@@ -73,6 +76,8 @@ HALF_BRIDGES = {
         toAmount=0,
         toNetwork="arb",
         toPayment="pending",
+        protocol="cctp",
+        transferId="506370",
     ),
     "v2_burn": Bridge(
         fromAddress="0x9e9852ba17ab249fd668cdc8f5f11cbcdff306d4",
@@ -85,6 +90,7 @@ HALF_BRIDGES = {
         toAmount=0,
         toNetwork="arb",
         toPayment="pending",
+        protocol="cctp",
     ),
     "v1_mint": Bridge(
         fromAddress="unknown",
@@ -97,6 +103,8 @@ HALF_BRIDGES = {
         toAmount=540_864_324,
         toNetwork="eth",
         toPayment=f"{bare('v1_mint')}_T519",
+        protocol="cctp",
+        transferId="919387",
     ),
     "v2_mint": Bridge(
         fromAddress="unknown",
@@ -109,6 +117,8 @@ HALF_BRIDGES = {
         toAmount=213_844_154,
         toNetwork="eth",
         toPayment=f"{bare('v2_mint')}_T565",
+        protocol="cctp",
+        transferId="0x3bfde92aaa92d71d8fa947c466bfe7433345e56b302a2b45e53a5f598a7760cb",
     ),
 }
 
@@ -215,8 +225,9 @@ def test_two_mints_in_one_tx_each_come_from_their_own_source():
 def test_a_mint_without_its_message_received_comes_from_an_unknown_network():
     logs = [log for log in FIXTURE["v2_mint"]["logs"] if log["log_index"] != 567]
     (bridge,) = half_bridges("eth", db_rows("v2_mint", logs), CCTP)
+    # MessageReceived also carried the nonce
     assert bridge == HALF_BRIDGES["v2_mint"].model_copy(
-        update={"fromNetwork": "unknown"}
+        update={"fromNetwork": "unknown", "transferId": None}
     )
 
 

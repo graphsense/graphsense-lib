@@ -12,6 +12,9 @@ is that Transfer among the logs up to the SpokePool's next event, or the tx
 about it. The external backend adapter pins its legs the same way
 (services/bridges/across.py), so its pairs name these legs.
 
+Every one of the four events indexes the depositId second (topic 2): the
+half's transfer id, in decimal, unique per ORIGIN chain only.
+
 Both eras share one word layout; the old fill carries ``bytes message``, so its
 relayExecutionInfo sits at the offset in word 11. The same SpokePool emits
 both eras.
@@ -32,6 +35,8 @@ from graphsenselib.defi.bridging.half_common import (
 from graphsenselib.defi.bridging.models import Bridge
 
 logger = logging.getLogger(__name__)
+
+PROTOCOL = "across"
 
 
 def _hex(s: str) -> bytes:
@@ -99,6 +104,10 @@ def _declared(word: int, network: Optional[str]) -> str:
     return _address(address) if address and any(address) else UNKNOWN
 
 
+def _deposit_id(log: Log) -> str:
+    return str(int.from_bytes(bytes(log["topics"][2]), "big"))
+
+
 def _is_event(log: Log, spoke: bytes) -> bool:
     topics = log.get("topics")
     return (
@@ -142,6 +151,8 @@ def _deposit(network: str, log: Log, before: List[Log], spoke: bytes) -> Bridge:
         toAmount=out_amount,
         toNetwork=destination or UNKNOWN,
         toPayment=PENDING,
+        protocol=PROTOCOL,
+        transferId=_deposit_id(log),
     )
 
 
@@ -173,6 +184,8 @@ def _fill(network: str, log: Log, after: List[Log], spoke: bytes) -> Bridge:
         toAmount=amount,
         toNetwork=network,
         toPayment=_leg(log, payout),
+        protocol=PROTOCOL,
+        transferId=_deposit_id(log),
     )
 
 

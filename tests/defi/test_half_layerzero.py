@@ -77,6 +77,9 @@ def test_layerzero_eth_source_half():
         toAmount=0,
         toNetwork="arb",
         toPayment=PENDING,
+        protocol="layerzero",
+        protocolApp="stargate",  # the Stargate USDC pool emitted
+        transferId="0x53232cde0d501c67ba7636b541a1a50730f6532c68f4ce7bbc3cc94b8f239ff8",
     )
     # registered for delegation under its included_bridges name
     assert half_bridges("eth", db_rows("eth_arb_usdc_lifi"), ["layerzero"]) == (bridge,)
@@ -95,6 +98,9 @@ def test_layerzero_eth_destination_half():
         toAmount=44971559,
         toNetwork="eth",
         toPayment="5d07f7cd5e8abaf339802da7b477d7ffc7f3086f5911d0fe9ae147bfe16d9de9_T195",
+        protocol="layerzero",
+        protocolApp="stargate",
+        transferId="0x25232a057570c02289df4b6868dff8716f7a6737a9569a1a78f704071c762ffe",
     )
 
 

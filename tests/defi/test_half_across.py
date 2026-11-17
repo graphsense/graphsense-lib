@@ -63,6 +63,8 @@ def test_across_eth_source_half():
             toAmount=12623766337738166,
             toNetwork="base",
             toPayment="pending",
+            protocol="across",
+            transferId="3487163",  # FundsDeposited topic 2, the depositId
         )
     ]
 
@@ -104,6 +106,8 @@ def test_across_eth_destination_half():
             toAmount=4993359522,
             toNetwork="eth",
             toPayment=f"{bare('pol_eth_usdc_fill')}_T867",
+            protocol="across",
+            transferId="2014742",  # FilledRelay topic 2, pol's depositId
         )
     ]
 

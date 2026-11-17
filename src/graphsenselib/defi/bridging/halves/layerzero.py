@@ -21,9 +21,16 @@ sender), a receive's the Transfer that paid the recipient; a Stargate native
 pool moves the chain's coin, so its leg is the tx. The other side holds the
 network the event names; the rest is pending (send) or unknown (receive).
 
+A half's transfer id is the message guid; a bus ride has none of its own (guid
+0: the bus's message, sent later, carries it). Its app is Stargate when a
+Stargate pool emitted, else USDT0 when the emitter or the packet's OApp on the
+other chain is one of USDT0's OFTs; a generic OFT names none.
+
 Contracts as the external backend adapter's services/bridges/layerzero.py, which
 pairs the halves: the eth endpoint from recorded receipts, the Stargate pools
-and TokenMessaging from Stargate's mainnet contract list."""
+and TokenMessaging from Stargate's mainnet contract list, USDT0's OFTs from
+USDT0's own deployment list (docs.usdt0.to, "Native Deployments"): eth's is the
+lockbox (OFT Adapter) over Tether's USDT."""
 
 import logging
 from typing import Dict, FrozenSet, List, Optional, Tuple
@@ -97,6 +104,16 @@ _STARGATE_POOLS: Dict[str, FrozenSet[bytes]] = {
     ),
 }
 _STARGATE_TOKEN_MESSAGING = {"eth": _hex("0x6d6620efa72948c5f68a3c8646d58c00d3f4a980")}
+# (network, OFT): only to NAME a half's app, never to admit one
+_USDT0_OFTS: FrozenSet[Tuple[str, bytes]] = frozenset(
+    {
+        ("eth", _hex("0x6c96de32cea08842dcc4058c14d3aaad7fa41dee")),
+        ("arb", _hex("0x14e4a1b13bf7f943c8ff7c51fb60fa964a298d92")),
+        ("pol", _hex("0x6ba10300f0dc58b7a1e4c0e41f5dabb7d7829e13")),
+        ("opt", _hex("0xf03b4d9ac1d5d1e7c4cef54c2a313b9fe051a0ad")),
+    }
+)
+PROTOCOL = "layerzero"
 
 # guid -> (sender OApp, receiver OApp)
 _Packets = Dict[bytes, Tuple[bytes, bytes]]
@@ -170,6 +187,19 @@ def _oapp_emits(oapp: bytes, emitter: bytes, network: str) -> bool:
     )
 
 
+def _app(
+    emitter: bytes, network: str, other_oapp: Optional[bytes], other_network: str
+) -> Optional[str]:
+    """The app a half names, as the adapter's row from either end: Stargate
+    when a Stargate pool emitted, USDT0 when the emitter or the packet's OApp
+    on the other chain is a USDT0 OFT."""
+    if _is_stargate(emitter, network):
+        return "stargate"
+    if (network, emitter) in _USDT0_OFTS or (other_network, other_oapp) in _USDT0_OFTS:
+        return "usdt0"
+    return None
+
+
 def _asset(transfers: List[Log]) -> Optional[str]:
     tokens = {bytes(log["address"]) for log in transfers}
     return _address(tokens.pop()) if len(tokens) == 1 else None
@@ -180,6 +210,7 @@ def _sent(
 ) -> Optional[Bridge]:
     topics = log["topics"]
     emitter, guid = bytes(log["address"]), bytes(topics[1])
+    packet = None
     if guid == _ZERO_GUID:
         if not _is_stargate(emitter, network):
             return None  # a bus ride rides a Stargate pool
@@ -200,6 +231,7 @@ def _sent(
         asset = "native"
     else:
         return None  # nothing left the sender: no transfer
+    destination = _LZ_NETWORKS.get(dst_eid, UNKNOWN)
     return Bridge(
         fromAddress=_address(sender),
         fromAsset=asset,
@@ -211,8 +243,12 @@ def _sent(
         toAddress=UNKNOWN,
         toAsset=UNKNOWN,
         toAmount=0,
-        toNetwork=_LZ_NETWORKS.get(dst_eid, UNKNOWN),
+        toNetwork=destination,
         toPayment=PENDING,
+        protocol=PROTOCOL,
+        protocolApp=_app(emitter, network, packet[1] if packet else None, destination),
+        # a bus ride's guid 0 names no transfer
+        transferId=None if guid == _ZERO_GUID else _address(guid),
     )
 
 
@@ -233,17 +269,21 @@ def _received(
         asset = "native"
     else:
         return None
+    source = _LZ_NETWORKS.get(src_eid, UNKNOWN)
     return Bridge(
         fromAddress=UNKNOWN,
         fromAsset=UNKNOWN,
         fromAmount=0,
-        fromNetwork=_LZ_NETWORKS.get(src_eid, UNKNOWN),
+        fromNetwork=source,
         fromPayment=UNKNOWN,
         toAddress=_address(recipient),
         toAsset=asset,
         toAmount=amount,
         toNetwork=network,
         toPayment=_leg(log, payout),
+        protocol=PROTOCOL,
+        protocolApp=_app(emitter, network, packet[0], source),
+        transferId=_address(guid),
     )
 
 

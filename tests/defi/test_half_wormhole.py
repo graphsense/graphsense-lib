@@ -60,6 +60,12 @@ def test_wormhole_eth_source_half():
             toAmount=0,
             toNetwork="arb",
             toPayment="pending",
+            protocol="wormhole",
+            # the VAA id: eth's chain id, its Token Bridge, the sequence
+            transferId="2/"
+            + "0" * 24
+            + "3ee18b2214aff97000d974cf647e7c347e8fa585"
+            + "/704561",
         )
     ]
 
@@ -93,6 +99,11 @@ def test_wormhole_eth_native_source_half_to_solana():
             toAmount=0,
             toNetwork="unknown",
             toPayment="pending",
+            protocol="wormhole",
+            transferId="2/"
+            + "0" * 24
+            + "3ee18b2214aff97000d974cf647e7c347e8fa585"
+            + "/704590",
         )
     ]
 
@@ -110,6 +121,12 @@ def test_wormhole_eth_destination_half():
             toAmount=158888900610,
             toNetwork="eth",
             toPayment=tx("base_eth") + "_T1230",
+            protocol="wormhole",
+            # TransferRedeemed's topics: base's chain id, its Token Bridge, seq
+            transferId="30/"
+            + "0" * 24
+            + "8d2de8d2f73f1f4cab472ac9a881c9b123c79627"
+            + "/285063",
         )
     ]
 

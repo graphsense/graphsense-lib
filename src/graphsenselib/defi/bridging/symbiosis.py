@@ -126,6 +126,8 @@ async def get_bridges_from_symbiosis_decoded_logs(
             toAmount=int(to_info.get("amount", 0)),
             toPayment=to_payment,
             toNetwork=to_network,
+            # the explorer record carries no id the dashboard could link
+            protocol="symbiosis",
         )
     ]
 

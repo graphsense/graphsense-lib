@@ -25,6 +25,8 @@ takeAmount, receiverDst (bytes), ...; bytes members are offsets from the
 struct's start. CreatedOrder continues with bytes affiliateFee, uint256
 nativeFixFee, uint256 percentFee, ...: a tx pays DlnSource giveAmount +
 percentFee + the affiliate fee, and nativeFixFee in the native coin on top.
+
+A half's transfer id is the orderId (0x hex), the same in both events.
 """
 
 import logging
@@ -43,6 +45,7 @@ from graphsenselib.defi.bridging.models import Bridge
 logger = logging.getLogger(__name__)
 
 NATIVE = "native"
+PROTOCOL = "debridge"
 
 _CREATED_ORDER = bytes.fromhex(
     "fc8703fd57380f9dd234a89dce51333782d49c5902f307b02f03e014d18fe471"
@@ -141,6 +144,11 @@ def _order(data: bytes) -> _Order:
     )
 
 
+def _order_id(data: bytes) -> str:
+    """Data word 1 of both events."""
+    return "0x" + _word(data, 1).to_bytes(32, "big").hex()
+
+
 def _raw(address: str) -> bytes:
     return bytes.fromhex(address.removeprefix("0x"))
 
@@ -183,6 +191,8 @@ def _created(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
         toAmount=order.take_amount,
         toNetwork=destination or UNKNOWN,
         toPayment=PENDING,
+        protocol=PROTOCOL,
+        transferId=_order_id(data),
     )
 
 
@@ -219,6 +229,8 @@ def _fulfilled(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
         toAmount=amount,
         toNetwork=network,
         toPayment=payment,
+        protocol=PROTOCOL,
+        transferId=_order_id(data),
     )
 
 

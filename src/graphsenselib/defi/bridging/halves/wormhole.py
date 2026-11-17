@@ -16,7 +16,11 @@ fee is paid to msg.sender first; a Transfer to 0x0 is a burn, never a payout),
 or else a WETH Withdrawal by the bridge (the coin is sent on, which no log shows).
 
 The pair key, (emitterChain, emitterAddress, sequence), is the external
-backend's to use; a half bridge carries what its own event says."""
+backend's to use; a half bridge carries what its own event says, and names
+that key as its transfer id, the VAA id Wormholescan finds a message by:
+`<emitterChain>/<emitterAddress, 64 hex, no 0x>/<sequence>`. A send's emitter
+is its own network's Token Bridge and its sequence the LogMessagePublished's
+first data word; a redeem's are TransferRedeemed's indexed three."""
 
 import logging
 from typing import Dict, List, NamedTuple, Optional
@@ -50,6 +54,7 @@ _WITHDRAWAL = bytes.fromhex(
 _ZERO_ADDRESS = bytes(20)
 _TRANSFER_TYPES = (1, 3)
 _MAX_EXTRA_DECIMALS = 10
+PROTOCOL = "wormhole"
 
 
 class _Deployment(NamedTuple):
@@ -163,6 +168,10 @@ def _value(log: Log) -> int:
     return int.from_bytes(bytes(log["data"]), "big")
 
 
+def _vaa_id(emitter_chain: int, emitter: bytes, sequence: int) -> str:
+    return f"{emitter_chain}/{emitter.rjust(32, bytes(1)).hex()}/{sequence}"
+
+
 def _send(
     network: str, log: Log, before: List[Log], deployment: _Deployment
 ) -> Optional[Bridge]:
@@ -211,6 +220,13 @@ def _send(
         toAmount=0,
         toNetwork=destination or UNKNOWN,
         toPayment=PENDING,
+        protocol=PROTOCOL,
+        # LogMessagePublished(sender, uint64 sequence, ...): data word 0
+        transferId=_vaa_id(
+            deployment.chain_id,
+            tb,
+            int.from_bytes(bytes(log["data"])[:32], "big"),
+        ),
     )
 
 
@@ -219,6 +235,7 @@ def _redeem(
 ) -> Bridge:
     tb = deployment.token_bridge
     emitter_chain = int.from_bytes(_topics(log)[1], "big")
+    emitter, sequence = _topics(log)[2], int.from_bytes(_topics(log)[3], "big")
     recipient, asset, amount, payout = UNKNOWN, UNKNOWN, 0, []
     for candidate in after:
         topics = _topics(candidate)
@@ -254,6 +271,8 @@ def _redeem(
         toAmount=amount,
         toNetwork=network,
         toPayment=_leg(log, payout),
+        protocol=PROTOCOL,
+        transferId=_vaa_id(emitter_chain, emitter, sequence),
     )
 
 

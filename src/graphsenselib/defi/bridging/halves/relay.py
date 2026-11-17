@@ -13,7 +13,9 @@ only), so eth fills are not delegated. Not read either: a raw
 
 Contract and topic0s: Relay's /chains answer (protocol.v2.depository), and
 the adapter's recorded receipts (iknaio-external-backend-adapter,
-tests/data/bridges/relay/), 2026-11-16."""
+tests/data/bridges/relay/), 2026-11-16.
+
+A deposit's transfer id is its `id`, Relay's orderId (0x hex)."""
 
 import logging
 from typing import List
@@ -30,6 +32,8 @@ from graphsenselib.defi.bridging.half_common import (
 from graphsenselib.defi.bridging.models import Bridge
 
 logger = logging.getLogger(__name__)
+
+PROTOCOL = "relay"
 
 DEPOSITORY = bytes.fromhex("4cd00e387622c35bddb9b4c962c136462338bc31")
 NATIVE_DEPOSIT = bytes.fromhex(
@@ -56,10 +60,10 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
         topic0 = bytes(topics[0])
         try:
             if topic0 == NATIVE_DEPOSIT:
-                depositor, amount, _ = _words(log["data"], 3)
+                depositor, amount, order = _words(log["data"], 3)
                 asset, payment = "native", _leg(log, [])
             elif topic0 == ERC20_DEPOSIT:
-                depositor, token, amount, _ = _words(log["data"], 4)
+                depositor, token, amount, order = _words(log["data"], 4)
                 token_bytes = token.to_bytes(32, "big")[-20:]
                 asset = _address(token_bytes)
                 # from anyone: a router funds a deposit, not the depositor
@@ -92,6 +96,8 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
                 toAmount=0,
                 toNetwork=UNKNOWN,  # a deposit does not say where it is filled
                 toPayment=PENDING,
+                protocol=PROTOCOL,
+                transferId="0x" + order.to_bytes(32, "big").hex(),
             )
         )
     return bridges

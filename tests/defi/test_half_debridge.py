@@ -78,6 +78,8 @@ def test_debridge_eth_source_half():
             toAmount=23920851830400002,
             toNetwork="arb",
             toPayment="pending",
+            protocol="debridge",
+            transferId="0xa73bbde6860120ce7dfa6a8767b8314f0dda1e4a903c48ee437d057c22546f5a",
         )
     ]
 
@@ -98,6 +100,8 @@ def test_debridge_eth_destination_half():
             toAmount=8153473306,
             toNetwork="eth",
             toPayment=f"{bare('avax_eth_old_fill')}_T680",
+            protocol="debridge",
+            transferId="0x45e24834b5f73a7e50cca0c37358c68948251994522756bc9abd9c108f13b9a8",
         )
     ]
 
@@ -118,6 +122,8 @@ def test_a_batched_fill_is_one_half_per_order():
             toAmount=299399173274,
             toNetwork="eth",
             toPayment=f"{bare('bnb_eth_batched_fill')}_T221",
+            protocol="debridge",
+            transferId="0xe568758c8490ec89da01036343920ee243b56e227c13adb9887d02cdb5df6128",
         ),
         Bridge(
             fromAddress="unknown",
@@ -130,6 +136,8 @@ def test_a_batched_fill_is_one_half_per_order():
             toAmount=418082679,
             toNetwork="eth",
             toPayment=f"{bare('bnb_eth_batched_fill')}_T233",
+            protocol="debridge",
+            transferId="0x7016cb63f3153c745e5937885104c7f9dc3f1b9d0c91642bb0fc53360c959410",
         ),
     ]
 

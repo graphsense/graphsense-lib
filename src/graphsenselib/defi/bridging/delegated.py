@@ -22,12 +22,17 @@ paid the recipient, each found among the logs since the previous burn or
 mint. When none fits a DepositForBurn, the event is not a burn: V1's
 replaceDepositForBurn re-emits it for an earlier burn, with its amount and
 depositor, and moves nothing. When several fit, the leg is the tx itself.
+
+A half bridge's transfer id is the CCTP nonce where its event names it: V1's
+uint64 in decimal (DepositForBurn's indexed nonce, MessageReceived's), V2's
+bytes32 in 0x hex (MessageReceived's). A V2 burn has none: its MessageSent
+carries an empty nonce, which Circle's attestation service assigns later.
 """
 
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from graphsenselib.defi.bridging.half_common import (
     PENDING,
@@ -224,6 +229,8 @@ def _burn(
     token = bytes(topics[version.burn_token_topic])[-20:]
     depositor = bytes(topics[version.burn_token_topic + 1])[-20:]
     amount, recipient, domain = _words(log["data"], 3)
+    # only V1's DepositForBurn has the nonce, indexed before burnToken
+    nonce = bytes(topics[1]) if version.number == 1 else None
     destination = _CCTP_NETWORKS.get(domain)
     funding = _transfers(before, token, depositor, version.token_minter, amount)
     # USDC sent to the TokenMinter in the same tx is not a burn: the minter
@@ -247,7 +254,19 @@ def _burn(
         toAmount=0,  # less Circle's fee, known when minted
         toNetwork=destination or UNKNOWN,
         toPayment=PENDING,
+        protocol=CCTP,
+        transferId=_nonce(nonce, version),
     )
+
+
+def _nonce(raw: Optional[bytes], version: _CctpVersion) -> Optional[str]:
+    """The nonce as Circle shows it: V2's is a bytes32 (0x hex, unique on its
+    own), V1's a uint64 (decimal, unique per source domain)."""
+    if raw is None:
+        return None
+    if version.number == 2:
+        return "0x" + raw.hex()
+    return str(int.from_bytes(raw, "big"))
 
 
 def _mint(
@@ -264,6 +283,10 @@ def _mint(
     (amount,) = _words(log["data"], 1)
     received = _first(after, version.message_received, version.message_transmitter)
     domain = _words(received["data"], 1)[0] if received is not None else None
+    # MessageReceived's indexed nonce, after the indexed caller; only names
+    # the transfer, so a log without it costs the id, never the mint
+    topics_received = received["topics"] if received is not None else ()
+    nonce = bytes(topics_received[2]) if len(topics_received) > 2 else None
     payout = _transfers(before, token, _ZERO_ADDRESS, recipient, amount)
     return Bridge(
         fromAddress=UNKNOWN,
@@ -276,6 +299,8 @@ def _mint(
         toAmount=amount,
         toNetwork=network,
         toPayment=_leg(log, payout),
+        protocol=CCTP,
+        transferId=_nonce(nonce, version),
     )
 
 
