@@ -32,6 +32,7 @@ carries an empty nonce, which Circle's attestation service assigns later.
 import logging
 import sys
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from graphsenselib.defi.bridging.half_common import (
@@ -316,6 +317,35 @@ _CCTP_EVENTS = {
     },
 }
 
+
+def _is_cctp_event(network: str, log: Log) -> bool:
+    """Whether log is a CCTP burn, mint or received message (either version)."""
+    topics = log.get("topics")
+    if not topics:
+        return False
+    key = (bytes(topics[0]), bytes(log["address"]))
+    return key in _CCTP_EVENTS or any(
+        key == (v.message_received, v.message_transmitter) for v in (_CCTP_V1, _CCTP_V2)
+    )
+
+
+_BRIDGE_EVENTS: Tuple[Callable[[str, Log], bool], ...] = (
+    _is_cctp_event,
+    across.is_event,
+    debridge.is_event,
+    layerzero.is_event,
+    relay.is_event,
+    wormhole.is_event,
+)
+
+
+def is_bridge_event(network: str, log: Log) -> bool:
+    """Whether log is an event of a bridge operation any half reader reads on
+    network: what bounds one operation's logs against the next (the Wormhole
+    redeem's payout, halves/wormhole.py)."""
+    return any(is_event(network, log) for is_event in _BRIDGE_EVENTS)
+
+
 # network -> bridge -> its half bridges among a tx's logs in log order, read
 # with the network they are on.
 # Another bridge that an external backend pairs is one more entry here.
@@ -324,7 +354,7 @@ _HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[str, List[Log]], List[Bridge
         CCTP: _cctp_half_bridges,
         "layerzero": layerzero.read,
         "across": across.read,
-        "wormhole": wormhole.read,
+        "wormhole": partial(wormhole.read, is_bridge_event=is_bridge_event),
         "debridge": debridge.read,
         "relay": relay.read,
     },

@@ -10,10 +10,18 @@ previous send) is exactly amount * 10**k for the token's k extra decimals. With
 none, the bridge wrapped the native coin itself (WETH Deposit to the bridge).
 
 A redeem is the Token Bridge's TransferRedeemed(emitterChain, emitterAddress,
-sequence); its payout is the last Transfer of the first asset minted (from 0x0)
-or released (from the bridge) after it, before the next redeem (a legacy relayer
-fee is paid to msg.sender first; a Transfer to 0x0 is a burn, never a payout),
-or else a WETH Withdrawal by the bridge (the coin is sent on, which no log shows).
+sequence), emitted before the bridge pays out: it mints the wrapped token
+(Transfer from 0x0), releases the locked one (Transfer from itself), or unwraps
+WETH (a Withdrawal by the bridge; the coin is sent on, which no log shows). A
+Transfer to 0x0 is a burn, never a payout. The payout is read among the logs
+after the redeem and before the next bridge event of any family the half
+readers know (another Wormhole message or redeem, a CCTP, LayerZero, Across,
+deBridge or Relay event: delegated.py's is_bridge_event): the first payout
+there names its kind (the token and who sent it, or a Withdrawal by the
+bridge), and the payout is the LAST one of that kind, since a legacy relayer
+fee (type 1, fee > 0) is paid to msg.sender first in the same way. A payout of
+another kind, such as a CCTP mint of the token the bridge released, is not the
+redeem's.
 
 The pair key, (emitterChain, emitterAddress, sequence), is the external
 backend's to use; a half bridge carries what its own event says, and names
@@ -23,7 +31,7 @@ is its own network's Token Bridge and its sequence the LogMessagePublished's
 first data word; a redeem's are TransferRedeemed's indexed three."""
 
 import logging
-from typing import Dict, List, NamedTuple, Optional
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from graphsenselib.defi.bridging.half_common import (
     PENDING,
@@ -134,6 +142,19 @@ def _is_redeem(log: Log, deployment: _Deployment) -> bool:
     )
 
 
+def is_event(network: str, log: Log) -> bool:
+    """Whether log is a Wormhole event on network that bounds a payout: any
+    Core message (generic messaging included) or a Token Bridge redeem."""
+    deployment = _DEPLOYMENTS.get(network)
+    if deployment is None:
+        return False
+    topics = _topics(log)
+    return (
+        bytes(log["address"]) == deployment.core
+        and topics[:1] == [_LOG_MESSAGE_PUBLISHED]
+    ) or _is_redeem(log, deployment)
+
+
 class _Message(NamedTuple):
     amount: int
     token: bytes
@@ -230,36 +251,44 @@ def _send(
     )
 
 
+def _payout_kind(log: Log, tb: bytes) -> Optional[Tuple[bytes, bytes]]:
+    """(asset, how) if a redeem by the Token Bridge tb could have paid log out:
+    a Transfer minted (from 0x0) or released (from tb) to anyone but 0x0, how
+    being its sender, or a WETH Withdrawal by tb, how being the Withdrawal
+    topic; else None."""
+    topics = _topics(log)
+    if (
+        len(topics) == 3
+        and topics[0] == _TRANSFER
+        and topics[1][-20:] in (_ZERO_ADDRESS, tb)
+        and topics[2][-20:] != _ZERO_ADDRESS
+    ):
+        return bytes(log["address"]), topics[1][-20:]
+    if len(topics) == 2 and topics[0] == _WITHDRAWAL and topics[1][-20:] == tb:
+        return bytes(log["address"]), _WITHDRAWAL
+    return None
+
+
 def _redeem(
     network: str, log: Log, after: List[Log], deployment: _Deployment
 ) -> Bridge:
+    """after: the logs up to the next bridge event of any family."""
     tb = deployment.token_bridge
     emitter_chain = int.from_bytes(_topics(log)[1], "big")
     emitter, sequence = _topics(log)[2], int.from_bytes(_topics(log)[3], "big")
-    recipient, asset, amount, payout = UNKNOWN, UNKNOWN, 0, []
+    kind, paid = None, None
     for candidate in after:
-        topics = _topics(candidate)
-        if (
-            len(topics) == 3
-            and topics[0] == _TRANSFER
-            and topics[1][-20:] in (_ZERO_ADDRESS, tb)
-            and topics[2][-20:] != _ZERO_ADDRESS
-        ):
-            token = _address(bytes(candidate["address"]))
-            if payout and token != asset:
-                continue
-            # the last one: a relayer fee (type 1, fee > 0) is paid first
-            recipient, asset = _address(topics[2][-20:]), token
-            amount, payout = _value(candidate), [candidate]
-            continue
-        if (
-            not payout
-            and len(topics) == 2
-            and topics[0] == _WITHDRAWAL
-            and topics[1][-20:] == tb
-        ):
-            asset, amount = "native", _value(candidate)
-            break
+        candidate_kind = _payout_kind(candidate, tb)
+        if candidate_kind is not None and kind in (None, candidate_kind):
+            # the last one: a relayer fee is paid first, the same way
+            kind, paid = candidate_kind, candidate
+    recipient, asset, amount, payout = UNKNOWN, UNKNOWN, 0, []
+    if paid is not None and _topics(paid)[0] == _TRANSFER:
+        recipient = _address(_topics(paid)[2][-20:])
+        asset, amount, payout = _address(bytes(paid["address"])), _value(paid), [paid]
+    elif paid is not None:
+        # the coin's recipient is in no log, and no Transfer moved it
+        asset, amount = "native", _value(paid)
     return Bridge(
         fromAddress=UNKNOWN,
         fromAsset=UNKNOWN,
@@ -276,21 +305,32 @@ def _redeem(
     )
 
 
-def read(network: str, logs: List[Log]) -> List[Bridge]:
-    """A tx's Wormhole half bridges on network, in log order."""
+def read(
+    network: str,
+    logs: List[Log],
+    is_bridge_event: Callable[[str, Log], bool] = is_event,
+) -> List[Bridge]:
+    """A tx's Wormhole half bridges on network, in log order. A redeem's payout
+    is read up to the next log that is_bridge_event names, or Wormhole's own
+    next event (delegated.py passes the events of every bridge it reads)."""
     deployment = _DEPLOYMENTS.get(network)
     if deployment is None:
         return []
     bridges: List[Bridge] = []
     sends = [i for i, log in enumerate(logs) if _is_send(log, deployment)]
     redeems = [i for i, log in enumerate(logs) if _is_redeem(log, deployment)]
+    fences = [
+        i
+        for i, log in enumerate(logs)
+        if is_event(network, log) or is_bridge_event(network, log)
+    ]
     for position, log in enumerate(logs):
         try:
             if position in sends:
                 since = max((i for i in sends if i < position), default=-1) + 1
                 bridge = _send(network, log, logs[since:position], deployment)
             elif position in redeems:
-                until = min((i for i in redeems if i > position), default=len(logs))
+                until = min((i for i in fences if i > position), default=len(logs))
                 bridge = _redeem(network, log, logs[position + 1 : until], deployment)
             else:
                 continue

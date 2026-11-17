@@ -9,6 +9,7 @@ redeem of a base send, and a Core message from a sender that is not the bridge.
 import json
 from pathlib import Path
 
+from graphsenselib.defi.bridging.delegated import half_bridges
 from graphsenselib.defi.bridging.halves import wormhole
 from graphsenselib.defi.bridging.models import Bridge
 
@@ -152,6 +153,108 @@ def test_wormhole_destination_half_pays_the_recipient_not_the_relayer_fee():
         158888900610,
         tx("base_eth") + "_T1231",
     )
+
+
+TOKEN_BRIDGE = "0x3ee18b2214aff97000d974cf647e7c347e8fa585"
+WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+WITHDRAWAL = "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
+TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+
+def word(value):
+    return "0x" + (f"{value:064x}" if isinstance(value, int) else value.rjust(64, "0"))
+
+
+def indexed(address):
+    return word(address.removeprefix("0x"))
+
+
+def test_wormhole_native_redeem_pays_the_recipient_not_the_relayer_fee():
+    """completeTransferAndUnwrapETH with fee > 0: the Token Bridge withdraws the
+    fee from WETH and sends it to the relayer, then withdraws the rest for the
+    recipient. Two Withdrawals by the bridge: the payout is the second."""
+    redeem = FIXTURE["base_eth"]["logs"][0]
+    withdrawals = [
+        {
+            "log_index": 1230 + n,
+            "address": WETH,
+            "topics": [WITHDRAWAL, indexed(TOKEN_BRIDGE)],
+            "data": word(value),
+        }
+        for n, value in enumerate([12345, 10**18])
+    ]
+    [half] = wormhole.read("eth", db_rows("base_eth", [redeem, *withdrawals]))
+    assert (half.toAddress, half.toAsset, half.toAmount, half.toPayment) == (
+        "unknown",  # the coin's recipient is in no log
+        "native",
+        10**18,
+        tx("base_eth"),
+    )
+
+
+def test_wormhole_redeem_payout_is_not_a_later_cctp_mint_of_the_same_token():
+    """A redeem releasing USDC from the Token Bridge, then a CCTP V1 mint of USDC
+    in the same tx: the mint's Transfer (from 0x0) comes before its own
+    MintAndWithdraw, so it lies inside the redeem's segment; it is CCTP's, not a
+    second Wormhole payout."""
+    redeem, payout = FIXTURE["base_eth"]["logs"][:2]
+    payout = dict(payout, address=USDC)
+    minted, recipient = 777 * 10**6, "0x" + "ab" * 20
+    cctp_mint = [
+        {
+            "log_index": 1231,
+            "address": USDC,
+            "topics": [TRANSFER, word(0), indexed(recipient)],
+            "data": word(minted),
+        },
+        {  # MintAndWithdraw(mintRecipient, amount, mintToken), V1 TokenMessenger
+            "log_index": 1232,
+            "address": "0xbd3fa81b58ba92a82136038b25adec7066af3155",
+            "topics": [
+                "0x1b2a7ff080b8cb6ff436ce0372e399692bbfb6d4ae5766fd8d58a7b8cc6142e6",
+                indexed(recipient),
+                indexed(USDC),
+            ],
+            "data": word(minted),
+        },
+    ]
+    rows = db_rows("base_eth", [redeem, payout, *cctp_mint])
+    expected = (
+        "0xca0a2515effdb383a572eea1edbb52b2d11a862c",
+        USDC,
+        158888900610,
+        tx("base_eth") + "_T1230",
+    )
+    [half] = wormhole.read("eth", rows)
+    assert (half.toAddress, half.toAsset, half.toAmount, half.toPayment) == expected
+    halves = half_bridges("eth", rows, ("wormhole", "cctp"))
+    assert [(h.protocol, h.toAddress, h.toPayment) for h in halves] == [
+        ("cctp", recipient, tx("base_eth") + "_T1231"),
+        ("wormhole", expected[0], expected[3]),
+    ]
+
+
+def test_wormhole_redeem_payout_ends_at_the_next_bridge_event_of_any_family():
+    """A Transfer after another bridge's event belongs to that bridge's
+    operation, even one the Token Bridge sends of the redeemed token: an Across
+    FilledRelay from eth's SpokePool fences the redeem's payout segment."""
+    redeem, payout = FIXTURE["base_eth"]["logs"][:2]
+    filled = {
+        "log_index": 1231,
+        "address": "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5",
+        "topics": [
+            "0x44b559f101f8fbcc8a0ea43fa91a05a729a5ea6e14a7c75aa750374690137208",
+            word(1),
+            word(2),
+            word(3),
+        ],
+        "data": "0x",
+    }
+    later = dict(payout, log_index=1232, data=word(5))
+    rows = db_rows("base_eth", [redeem, payout, filled, later])
+    [half] = half_bridges("eth", rows, ("wormhole",))
+    assert (half.toAmount, half.toPayment) == (158888900610, tx("base_eth") + "_T1230")
 
 
 def test_wormhole_spoofed_emitter_is_ignored():

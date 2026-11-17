@@ -115,6 +115,12 @@ def _is_event(log: Log, spoke: bytes) -> bool:
     )
 
 
+def is_event(network: str, log: Log) -> bool:
+    """Whether log is an Across deposit or fill this reader reads on network."""
+    spoke = _SPOKE_POOLS.get(network)
+    return spoke is not None and _is_event(log, spoke)
+
+
 def _wrapped(
     logs: List[Log], topic0: bytes, token: bytes, party: bytes, value: int
 ) -> bool:

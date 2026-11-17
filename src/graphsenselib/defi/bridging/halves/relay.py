@@ -47,6 +47,17 @@ ERC20_DEPOSIT = bytes.fromhex(
 _DEPOSITORIES = {"eth": DEPOSITORY}
 
 
+def is_event(network: str, log: Log) -> bool:
+    """Whether log is a Relay deposit this reader reads on network."""
+    depository, topics = _DEPOSITORIES.get(network), log.get("topics")
+    return (
+        depository is not None
+        and bool(topics)
+        and bytes(log["address"]) == depository
+        and bytes(topics[0]) in (NATIVE_DEPOSIT, ERC20_DEPOSIT)
+    )
+
+
 def read(network: str, logs: List[Log]) -> List[Bridge]:
     """A tx's Relay deposits on network, in log order."""
     depository = _DEPOSITORIES.get(network)

@@ -234,6 +234,18 @@ def _fulfilled(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
     )
 
 
+def is_event(network: str, log: Log) -> bool:
+    """Whether log is a DLN order or fill this reader reads on network."""
+    contracts, topics = _CONTRACTS.get(network), log.get("topics")
+    if contracts is None or not topics:
+        return False
+    source, destination = contracts
+    topic0, emitter = bytes(topics[0]), bytes(log["address"])
+    return (topic0 == _CREATED_ORDER and emitter == source) or (
+        topic0 in (_FULFILLED_ORDER, _FULFILLED_ORDER_V2) and emitter == destination
+    )
+
+
 def read(network: str, logs: List[Log]) -> List[Bridge]:
     """A tx's deBridge half bridges on network, in log order."""
     contracts = _CONTRACTS.get(network)

@@ -287,6 +287,24 @@ def _received(
     )
 
 
+def is_event(network: str, log: Log) -> bool:
+    """Whether log is a LayerZero event of a transfer on network: an OFT event
+    from any emitter (the reader admits one by its packet, which an event that
+    only bounds another bridge's logs need not prove), or the endpoint's packet."""
+    topics = log.get("topics") or ()
+    if not topics:
+        return False
+    topic0 = bytes(topics[0])
+    if topic0 in (_OFT_SENT, _OFT_RECEIVED):
+        return len(topics) == 3
+    endpoint = _ENDPOINT_V2.get(network)
+    return (
+        endpoint is not None
+        and bytes(log["address"]) == endpoint
+        and topic0 in (_PACKET_SENT, _PACKET_DELIVERED)
+    )
+
+
 def read(network: str, logs: List[Log]) -> List[Bridge]:
     """A tx's LayerZero half bridges on network, in log order."""
     sent, delivered = _packets(network, logs)
