@@ -257,6 +257,22 @@ class RelatedAddresses(APIModel):
     next_page: Optional[str] = None
 
 
+# The protocol a bridge_tx row went through, and the app on top of it: the
+# values the external backend adapter's ExternalConversion sends, plus the
+# bridges graphsense-lib reads itself (thorchain, symbiosis)
+BridgeProtocol = Literal[
+    "cctp",
+    "across",
+    "debridge",
+    "layerzero",
+    "relay",
+    "wormhole",
+    "thorchain",
+    "symbiosis",
+]
+BridgeApp = Literal["stargate", "usdt0"]
+
+
 class ExternalConversion(APIModel):
     """External conversion (DEX swap or bridge) model."""
 
@@ -273,3 +289,27 @@ class ExternalConversion(APIModel):
     to_network: str
     from_is_supported_asset: bool
     to_is_supported_asset: bool
+    # bridge_tx rows only, half bridges included, the same from either end:
+    # the protocol whose contracts prove the bridge, the app on top of it
+    # where a verified table names one (Stargate pools, USDT0's OFTs), and
+    # the protocol's own id of the transfer where it is known: CCTP nonce
+    # (V2: bytes32, 0x hex; V1: uint64 in decimal, unique per source domain),
+    # LayerZero guid, deBridge orderId, Relay orderId (0x hex), Across
+    # depositId (decimal, unique per origin chain only), Wormhole VAA id
+    # `<emitterChain>/<emitter, 64 hex, no 0x>/<sequence>`
+    protocol: Optional[BridgeProtocol] = Field(
+        default=None,
+        description="Bridge rows: the protocol the bridge went through.",
+    )
+    protocol_app: Optional[BridgeApp] = Field(
+        default=None,
+        description="Bridge rows: the app on top of the protocol, where known.",
+    )
+    transfer_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Bridge rows: the protocol's own id of the transfer, where known"
+            " (CCTP nonce, LayerZero guid, deBridge or Relay order id, Across"
+            " deposit id, Wormhole VAA id)."
+        ),
+    )

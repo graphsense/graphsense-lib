@@ -18,6 +18,7 @@ from graphsenselib.web.middleware.external_backends import (
 from graphsenselib.web.models import ExternalConversion
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
+    bridge_names,
     pydantic_to_openapi,
     to_api_external_conversion,
     to_api_tx,
@@ -128,7 +129,16 @@ async def get_tx_conversions(
             bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
         else:
             bridges = await pair_bridges()
-        candidates = [ExternalConversion(**r.model_dump()) for r in bridges]
+        # the backend's names as the API can state them (bridge_names)
+        candidates = [
+            ExternalConversion(
+                **{
+                    **r.model_dump(),
+                    **bridge_names(r.protocol, r.protocol_app, r.transfer_id),
+                }
+            )
+            for r in bridges
+        ]
 
     matches = [
         [i for i, half in enumerate(halves) if _matches_half(row, half)]

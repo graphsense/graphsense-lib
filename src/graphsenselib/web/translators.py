@@ -21,7 +21,7 @@ the service model (use simple) or requires nested conversions/transformations
 
 from __future__ import annotations
 
-from typing import Any, Union
+from typing import Any, Optional, Union, get_args
 
 from graphsenselib.db.asynchronous.services.models import Actor as PydanticActor
 from graphsenselib.db.asynchronous.services.models import (
@@ -107,6 +107,7 @@ from graphsenselib.db.asynchronous.services.models import (
     GraphSummaryInternal as PydanticGraphSummary,
 )
 
+from graphsenselib.web.models.general import BridgeApp, BridgeProtocol
 from graphsenselib.web.models import (
     Actor,
     ActorContext,
@@ -612,6 +613,26 @@ def to_api_token_configs(pydantic_configs: PydanticTokenConfigs) -> TokenConfigs
     )
 
 
+_PROTOCOLS = frozenset(get_args(BridgeProtocol))
+_APPS = frozenset(get_args(BridgeApp))
+
+
+def bridge_names(
+    protocol: Optional[str], protocol_app: Optional[str], transfer_id: Optional[str]
+) -> dict:
+    """A bridge row's protocol, protocol_app and transfer_id as the API can
+    state them: a protocol or app this version does not list (a newer
+    backend's) is dropped, and with an unknown protocol its app and transfer
+    id, which describe it. A name costs never the row."""
+    if protocol not in _PROTOCOLS:
+        return {"protocol": None, "protocol_app": None, "transfer_id": None}
+    return {
+        "protocol": protocol,
+        "protocol_app": protocol_app if protocol_app in _APPS else None,
+        "transfer_id": transfer_id,
+    }
+
+
 def to_api_external_conversion(
     pydantic_conversion: PydanticExternalConversion,
 ) -> ExternalConversion:
@@ -636,6 +657,11 @@ def to_api_external_conversion(
         to_network=pydantic_conversion.to_network,
         from_is_supported_asset=pydantic_conversion.from_is_supported_asset,
         to_is_supported_asset=pydantic_conversion.to_is_supported_asset,
+        **bridge_names(
+            pydantic_conversion.protocol,
+            pydantic_conversion.protocol_app,
+            pydantic_conversion.transfer_id,
+        ),
     )
 
 

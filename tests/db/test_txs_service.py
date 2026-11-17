@@ -1121,6 +1121,8 @@ class TestConversionsWithHalfBridges:
                 to_network="arb",
                 from_is_supported_asset=False,
                 to_is_supported_asset=False,
+                # a V2 burn: its nonce is assigned off chain, so no transfer id
+                protocol="cctp",
             ),
         )
 

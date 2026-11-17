@@ -115,8 +115,14 @@ LOCAL_ROW = {
 
 def half_row(part):
     """A fixture tx's half bridge as the route answers it: no token is
-    configured, so no asset is supported."""
+    configured, so no asset is supported. It names its protocol, and its
+    transfer id when the event carries one (None is left out)."""
     bridge = HALF_BRIDGES[part]
+    names = {
+        "protocol": bridge.protocol,
+        "protocol_app": bridge.protocolApp,
+        "transfer_id": bridge.transferId,
+    }
     return {
         "conversion_type": "bridge_tx",
         "from_address": bridge.fromAddress,
@@ -131,6 +137,7 @@ def half_row(part):
         "to_network": bridge.toNetwork,
         "from_is_supported_asset": False,
         "to_is_supported_asset": False,
+        **{key: value for key, value in names.items() if value is not None},
     }
 
 
@@ -336,6 +343,64 @@ def test_the_bridge_the_backend_pairs_takes_the_half_bridges_place(part, side):
     assert str(call.url) == f"{BACKEND_URL}/eth/txs/{tx}/conversions?only_bridges=true"
     assert call.headers["authorization"] == "backend-key"
     assert call.headers["x-consumer-username"] == "alice"
+
+
+V2_NONCE = "0x33e1d88121c7ec3f5e4f2edb6447096941842ca41ca5ebc040929492e2034da6"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        {},
+        {"protocol": "cctp", "transfer_id": V2_NONCE},
+        {
+            "protocol": "layerzero",
+            "protocol_app": "usdt0",
+            "transfer_id": "0x" + "b0" * 32,
+        },
+    ],
+    ids=["an older backend: none", "cctp", "layerzero app"],
+)
+def test_a_paired_row_keeps_the_protocol_app_and_transfer_id_it_names(names):
+    """The backend's protocol, protocol_app and transfer_id reach the caller
+    as it sent them; a row without them (an older backend) still pairs."""
+    bridge = {**BRIDGE_ROW, **names}
+    answer = httpx.Response(200, json=[{**bridge, **FIAT}, SWAP_ROW])
+    client, seen, _ = make_client(backend_answer=answer)
+    response = client.get(CONVERSIONS)
+    assert response.status_code == 200
+    assert response.json() == [LOCAL_ROW, bridge]
+    assert DECLINED_HEADER not in response.headers
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    "names, kept",
+    [
+        (
+            {"protocol": "newbridge", "protocol_app": "stargate", "transfer_id": "42"},
+            {},
+        ),
+        (
+            {
+                "protocol": "layerzero",
+                "protocol_app": "newapp",
+                "transfer_id": "0x" + "b0" * 32,
+            },
+            {"protocol": "layerzero", "transfer_id": "0x" + "b0" * 32},
+        ),
+    ],
+    ids=["protocol", "app"],
+)
+def test_a_name_this_version_does_not_know_costs_the_name_not_the_pair(names, kept):
+    """A protocol or app newer than this version's list is dropped, the pair
+    is served; protocol_app and transfer_id describe their protocol, so they
+    go with an unknown one."""
+    answer = httpx.Response(200, json=[{**BRIDGE_ROW, **names}])
+    client, _, _ = make_client(backend_answer=answer)
+    response = client.get(CONVERSIONS)
+    assert response.status_code == 200
+    assert response.json() == [LOCAL_ROW, {**BRIDGE_ROW, **kept}]
 
 
 @pytest.mark.parametrize(
