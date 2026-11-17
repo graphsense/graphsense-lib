@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 import pytest
 
+from graphsenselib.defi.bridging.half_common import _transfers
 from graphsenselib.defi.bridging.halves import across, debridge, layerzero, relay
 
 DATA = Path(__file__).parent / "data" / "bridges"
@@ -327,3 +328,70 @@ def test_layerzero_send_prefers_the_lock_over_a_burn():
         return [dict(log, log_index=9000, topics=[TRANSFER, sender, topic(bytes(20))])]
 
     assert case.legs(insert(rows, case.log_index, burn, after=True)) == case.matched()
+
+
+# the shared matcher (half_common._transfers) itself
+
+TOKEN, FROM, TO = (bytes.fromhex(c * 40) for c in "abc")
+
+
+def transfer(log_index, token=TOKEN, sender=FROM, receiver=TO, amount=5):
+    return {
+        "log_index": log_index,
+        "address": token,
+        "topics": [TRANSFER, topic(sender), topic(receiver)],
+        "data": amount.to_bytes(32, "big"),
+    }
+
+
+def matched(logs, **given):
+    return [log["log_index"] for log in _transfers(logs, **given)]
+
+
+def test_matcher_without_criteria_is_every_erc20_transfer_in_log_order():
+    logs = [transfer(3), transfer(1, token=OTHER), transfer(2, amount=7)]
+    assert matched(logs) == [3, 1, 2]
+
+
+@pytest.mark.parametrize(
+    "field, wrong",
+    [("token", OTHER), ("sender", OTHER), ("receiver", OTHER), ("value", 6)],
+)
+def test_matcher_each_given_field_must_match(field, wrong):
+    right = {"token": TOKEN, "sender": FROM, "receiver": TO, "value": 5}
+    logs = [transfer(0)]
+    assert matched(logs, **right) == [0]
+    assert matched(logs, **dict(right, **{field: wrong})) == []
+
+
+def test_matcher_value_is_exact_and_the_whole_data_word():
+    logs = [transfer(0, amount=5), transfer(1, amount=50), transfer(2, amount=4)]
+    assert matched(logs, value=5) == [0]
+    padded = dict(transfer(3), data=(5).to_bytes(64, "big"))
+    assert matched([padded], value=5) == [3]  # the data read as one integer
+
+
+def test_matcher_compares_the_low_20_bytes_of_an_address_topic():
+    log = transfer(0)
+    log["topics"][2] = b"\xff" * 12 + TO
+    assert matched([log], receiver=TO) == [0]
+
+
+def test_matcher_passes_over_logs_of_another_shape():
+    base = transfer(0)
+    logs = [
+        dict(base, log_index=1, topics=[*base["topics"], bytes(32)]),  # ERC-721
+        dict(base, log_index=2, topics=base["topics"][:2]),
+        dict(base, log_index=3, topics=[bytes(32), *base["topics"][1:]]),
+        dict(base, log_index=4, topics=[]),
+        dict(base, log_index=5, topics=None),
+        {k: v for k, v in base.items() if k != "topics"} | {"log_index": 6},
+        base,
+    ]
+    assert matched(logs, token=TOKEN, sender=FROM, receiver=TO, value=5) == [0]
+    assert matched(logs) == [0]
+
+
+def test_matcher_keeps_every_match():
+    logs = [transfer(0), transfer(1, sender=OTHER), transfer(2)]
+    assert matched(logs, token=TOKEN, receiver=TO, value=5) == [0, 1, 2]

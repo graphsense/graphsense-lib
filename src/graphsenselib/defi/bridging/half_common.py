@@ -28,18 +28,24 @@ def _words(data: bytes, count: int) -> List[int]:
 
 
 def _transfers(
-    logs: List[Log], token: bytes, sender: bytes, receiver: bytes, value: int
+    logs: List[Log],
+    token: Optional[bytes] = None,
+    sender: Optional[bytes] = None,
+    receiver: Optional[bytes] = None,
+    value: Optional[int] = None,
 ) -> List[Log]:
-    """The ERC20 Transfers of `value` of `token` from sender to receiver."""
+    """The ERC20 Transfers among logs, in log order, that match each of token,
+    sender, receiver and value that is given (value exactly); any other log,
+    an ERC-721 Transfer (4 topics) included, is none."""
     return [
         log
         for log in logs
-        if bytes(log["address"]) == token
+        if (token is None or bytes(log["address"]) == token)
         and len(log.get("topics") or ()) == 3
         and bytes(log["topics"][0]) == _TRANSFER
-        and bytes(log["topics"][1])[-20:] == sender
-        and bytes(log["topics"][2])[-20:] == receiver
-        and int.from_bytes(bytes(log["data"]), "big") == value
+        and (sender is None or bytes(log["topics"][1])[-20:] == sender)
+        and (receiver is None or bytes(log["topics"][2])[-20:] == receiver)
+        and (value is None or int.from_bytes(bytes(log["data"]), "big") == value)
     ]
 
 

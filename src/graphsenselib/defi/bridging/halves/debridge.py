@@ -36,6 +36,7 @@ from graphsenselib.defi.bridging.half_common import (
     Log,
     _address,
     _leg,
+    _transfers,
 )
 from graphsenselib.defi.bridging.models import Bridge
 
@@ -43,9 +44,6 @@ logger = logging.getLogger(__name__)
 
 NATIVE = "native"
 
-_TRANSFER = bytes.fromhex(
-    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-)
 _CREATED_ORDER = bytes.fromhex(
     "fc8703fd57380f9dd234a89dce51333782d49c5902f307b02f03e014d18fe471"
 )
@@ -143,19 +141,8 @@ def _order(data: bytes) -> _Order:
     )
 
 
-def _transfers_of(
-    logs: List[Log], token: str, receiver: bytes, value: Optional[int] = None
-) -> List[Log]:
-    """ERC20 Transfers of token to receiver (of value, if given)."""
-    return [
-        log
-        for log in logs
-        if _address(bytes(log["address"])) == token
-        and len(log.get("topics") or ()) == 3
-        and bytes(log["topics"][0]) == _TRANSFER
-        and bytes(log["topics"][2])[-20:] == receiver
-        and (value is None or int.from_bytes(bytes(log["data"]), "big") == value)
-    ]
+def _raw(address: str) -> bytes:
+    return bytes.fromhex(address.removeprefix("0x"))
 
 
 def _created(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
@@ -175,7 +162,7 @@ def _created(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
         amount = order.give_amount + _word(data, 4) + affiliate_fee + _word(data, 3)
         payment = _leg(log, [])
     else:
-        funding = _transfers_of(before, order.give_token, _DLN_SOURCE)
+        funding = _transfers(before, token=_raw(order.give_token), receiver=_DLN_SOURCE)
         if not funding:
             return None  # nothing paid into DlnSource: not this tx's order
         payment = _leg(log, funding)
@@ -211,8 +198,12 @@ def _fulfilled(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
     if order.take_token == NATIVE:
         payment = _leg(log, [])
     else:
-        receiver = bytes.fromhex(order.receiver.removeprefix("0x"))
-        payout = _transfers_of(before, order.take_token, receiver, amount)
+        payout = _transfers(
+            before,
+            token=_raw(order.take_token),
+            receiver=_raw(order.receiver),
+            value=amount,
+        )
         if not payout:
             return None
         payment = _leg(log, payout)

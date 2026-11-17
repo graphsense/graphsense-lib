@@ -19,12 +19,12 @@ import logging
 from typing import List
 
 from graphsenselib.defi.bridging.half_common import (
-    _TRANSFER,
     PENDING,
     UNKNOWN,
     Log,
     _address,
     _leg,
+    _transfers,
     _words,
 )
 from graphsenselib.defi.bridging.models import Bridge
@@ -41,23 +41,6 @@ ERC20_DEPOSIT = bytes.fromhex(
 
 # network -> its Depository; a network not listed has no Relay half bridge
 _DEPOSITORIES = {"eth": DEPOSITORY}
-
-
-def _funding(
-    logs: List[Log], token: bytes, depository: bytes, amount: int
-) -> List[Log]:
-    """The Transfers of `amount` of `token` into the Depository, from anyone: a
-    deposit made through a router or a third-party contract is funded by that
-    contract, not by the depositor the event names."""
-    return [
-        log
-        for log in logs
-        if bytes(log["address"]) == token
-        and len(log.get("topics") or ()) == 3
-        and bytes(log["topics"][0]) == _TRANSFER
-        and bytes(log["topics"][2])[-20:] == depository
-        and int.from_bytes(bytes(log["data"]), "big") == amount
-    ]
 
 
 def read(network: str, logs: List[Log]) -> List[Bridge]:
@@ -79,9 +62,14 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
                 depositor, token, amount, _ = _words(log["data"], 4)
                 token_bytes = token.to_bytes(32, "big")[-20:]
                 asset = _address(token_bytes)
-                payment = _leg(
-                    log, _funding(logs[:position], token_bytes, depository, amount)
+                # from anyone: a router funds a deposit, not the depositor
+                funding = _transfers(
+                    logs[:position],
+                    token=token_bytes,
+                    receiver=depository,
+                    value=amount,
                 )
+                payment = _leg(log, funding)
             else:
                 continue
         except (IndexError, ValueError) as exc:

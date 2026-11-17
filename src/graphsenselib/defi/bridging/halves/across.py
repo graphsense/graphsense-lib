@@ -26,6 +26,7 @@ from graphsenselib.defi.bridging.half_common import (
     Log,
     _address,
     _leg,
+    _transfers,
     _words,
 )
 from graphsenselib.defi.bridging.models import Bridge
@@ -60,7 +61,6 @@ _FILLED_V3_RELAY = _hex(
 _DEPOSITS = (_FUNDS_DEPOSITED, _V3_FUNDS_DEPOSITED)
 _EVENTS = (*_DEPOSITS, _FILLED_RELAY, _FILLED_V3_RELAY)
 
-_TRANSFER = _hex("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
 # WETH9 Deposit(address indexed dst, uint256) / Withdrawal(address indexed src, uint256)
 _WRAP = _hex("0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c")
 _UNWRAP = _hex("0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65")
@@ -106,19 +106,6 @@ def _is_event(log: Log, spoke: bytes) -> bool:
     )
 
 
-def _transfers(logs: List[Log], token: bytes, receiver: bytes, value: int) -> List[Log]:
-    """The ERC20 Transfers of `value` of `token` to receiver, from anyone."""
-    return [
-        log
-        for log in logs
-        if bytes(log["address"]) == token
-        and len(log.get("topics") or ()) == 3
-        and bytes(log["topics"][0]) == _TRANSFER
-        and bytes(log["topics"][2])[-20:] == receiver
-        and int.from_bytes(bytes(log["data"]), "big") == value
-    ]
-
-
 def _wrapped(
     logs: List[Log], topic0: bytes, token: bytes, party: bytes, value: int
 ) -> bool:
@@ -139,7 +126,7 @@ def _deposit(network: str, log: Log, before: List[Log], spoke: bytes) -> Bridge:
         log["data"], 8
     )
     token = in_token.to_bytes(32, "big")[12:]
-    funding = _transfers(before, token, spoke, in_amount)
+    funding = _transfers(before, token=token, receiver=spoke, value=in_amount)
     native = not funding and _wrapped(before, _WRAP, token, spoke, in_amount)
     # whoever paid into the SpokePool; the depositor for a bare-tx leg
     payer = bytes(funding[0]["topics"][1])[-20:] if len(funding) == 1 else None
@@ -171,7 +158,9 @@ def _fill(network: str, log: Log, after: List[Log], spoke: bytes) -> Bridge:
     recipient, amount = words[info], words[info + 2]
     token = out_token.to_bytes(32, "big")[12:]
     payee = _evm(recipient)
-    payout = _transfers(after, token, payee, amount) if payee else []
+    payout = (
+        _transfers(after, token=token, receiver=payee, value=amount) if payee else []
+    )
     native = not payout and _wrapped(after, _UNWRAP, token, spoke, amount)
     return Bridge(
         fromAddress=_declared(depositor, origin),

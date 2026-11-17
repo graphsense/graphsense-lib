@@ -31,12 +31,12 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 from eth_hash.auto import keccak
 
 from graphsenselib.defi.bridging.half_common import (
-    _TRANSFER,
     PENDING,
     UNKNOWN,
     Log,
     _address,
     _leg,
+    _transfers,
     _words,
 )
 from graphsenselib.defi.bridging.models import Bridge
@@ -170,22 +170,6 @@ def _oapp_emits(oapp: bytes, emitter: bytes, network: str) -> bool:
     )
 
 
-def _matching_transfers(
-    logs: List[Log], *, sender: Optional[bytes], receiver: bytes, value: int
-) -> List[Log]:
-    """The ERC20 Transfers of `value` to receiver (from sender, if given), of
-    any token."""
-    return [
-        log
-        for log in logs
-        if len(log.get("topics") or ()) == 3
-        and bytes(log["topics"][0]) == _TRANSFER
-        and (sender is None or bytes(log["topics"][1])[-20:] == sender)
-        and bytes(log["topics"][2])[-20:] == receiver
-        and int.from_bytes(bytes(log["data"]), "big") == value
-    ]
-
-
 def _asset(transfers: List[Log]) -> Optional[str]:
     tokens = {bytes(log["address"]) for log in transfers}
     return _address(tokens.pop()) if len(tokens) == 1 else None
@@ -205,10 +189,9 @@ def _sent(
             return None
     sender = bytes(topics[2])[-20:]
     dst_eid, amount, _ = _words(log["data"], 3)
-    # locked in the emitter (a pool, an OFT adapter), else burnt from the sender
-    funding = _matching_transfers(
-        before, sender=None, receiver=emitter, value=amount
-    ) or _matching_transfers(
+    # any token: locked in the emitter (a pool, an OFT adapter), else burnt
+    # from the sender
+    funding = _transfers(before, receiver=emitter, value=amount) or _transfers(
         before, sender=sender, receiver=_ZERO_ADDRESS, value=amount
     )
     if funding:
@@ -243,7 +226,7 @@ def _received(
         return None
     recipient = bytes(topics[2])[-20:]
     src_eid, amount = _words(log["data"], 2)
-    payout = _matching_transfers(before, sender=None, receiver=recipient, value=amount)
+    payout = _transfers(before, receiver=recipient, value=amount)
     if payout:
         asset = _asset(payout) or UNKNOWN
     elif emitter in _STARGATE_NATIVE_POOLS.get(network, frozenset()):
