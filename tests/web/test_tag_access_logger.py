@@ -275,3 +275,42 @@ class TestProxyMethodCalls:
         result = proxy.some_attribute
 
         assert result == "test_value"
+
+
+class TestRedisOutage:
+    """A Redis outage must not fail the request (2026-11-18: prod 500s)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_tags_when_redis_fails(self, caplog):
+        from redis.exceptions import ConnectionError
+
+        tag = create_mock_tag(identifier="addr1")
+        mock_tagstore_db = MagicMock()
+        mock_tagstore_db.get_tags = AsyncMock(return_value=[tag, tag])
+        broken_redis = MagicMock()
+        broken_redis.incr = AsyncMock(
+            side_effect=ConnectionError("Connection closed by server.")
+        )
+        proxy = TagAccessLoggerTagstoreProxy(
+            mock_tagstore_db, broken_redis, "test_prefix"
+        )
+
+        with caplog.at_level("WARNING", logger="graphsenselib.web.dependencies"):
+            result = await proxy.get_tags("btc", "addr1")
+
+        assert result == [tag, tag]
+        assert broken_redis.incr.await_count == 1  # gives up after the first
+        assert "Tag access logging failed for get_tags (2 tags" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_non_redis_errors_still_raise(self):
+        mock_tagstore_db = MagicMock()
+        mock_tagstore_db.get_tag = AsyncMock(return_value=create_mock_tag())
+        broken_redis = MagicMock()
+        broken_redis.incr = AsyncMock(side_effect=ValueError("bug"))
+        proxy = TagAccessLoggerTagstoreProxy(
+            mock_tagstore_db, broken_redis, "test_prefix"
+        )
+
+        with pytest.raises(ValueError):
+            await proxy.get_tag("btc", "addr1")
