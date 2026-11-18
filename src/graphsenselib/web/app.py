@@ -767,11 +767,14 @@ async def setup_services(app: FastAPI):
 
     if config.tag_access_logger and config.tag_access_logger.enabled:
         logger.info("Tag access logging is enabled.")
-        from redis import asyncio as aioredis
+        from graphsenselib.web.redis_client import make_async_redis, redact_redis_url
 
         redis_url = config.tag_access_logger.redis_url or "redis://localhost"
-        logger.info(f"Connecting to Redis at {redis_url} for tag access logging.")
-        redis_client = await aioredis.from_url(redis_url)
+        logger.info(
+            "Connecting to Redis at %s for tag access logging.",
+            redact_redis_url(redis_url),
+        )
+        redis_client = await make_async_redis(redis_url)
         log_tag_access_prefix = config.tag_access_logger.prefix
     else:
         redis_client = None
@@ -784,14 +787,16 @@ async def setup_services(app: FastAPI):
     # separate from the tag-access Redis client so the two features can be
     # enabled independently.
     if config.file_store and config.file_store.enabled:
-        from redis import asyncio as aioredis
-
         from graphsenselib.web.file_store import RedisFileStore
+        from graphsenselib.web.redis_client import make_async_redis, redact_redis_url
 
         fs_cfg = config.file_store
         fs_redis_url = fs_cfg.redis_url or "redis://localhost"
-        logger.info("Connecting to Redis at %s for the file store.", fs_redis_url)
-        fs_redis = await aioredis.from_url(fs_redis_url)
+        logger.info(
+            "Connecting to Redis at %s for the file store.",
+            redact_redis_url(fs_redis_url),
+        )
+        fs_redis = await make_async_redis(fs_redis_url)
         app.state.file_store = RedisFileStore(
             fs_redis,
             key_prefix=fs_cfg.key_prefix,

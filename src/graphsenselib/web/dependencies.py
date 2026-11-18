@@ -1,5 +1,8 @@
+import logging
 import time
 from typing import Any, Optional, Tuple
+
+from redis.exceptions import RedisError
 
 from graphsenselib.db.asynchronous.services.addresses_service import AddressesService
 from graphsenselib.db.asynchronous.services.blocks_service import BlocksService
@@ -23,6 +26,8 @@ from graphsenselib.tagstore.db.queries import (
 from graphsenselib.tagstore.db.queries import TagPublic
 
 from graphsenselib.web.config import GSRestConfig
+
+logger = logging.getLogger(__name__)
 
 
 class MockTagstoreDb:
@@ -162,11 +167,21 @@ class TagAccessLoggerTagstoreProxy:
                 # Log tag access if this method returns TagPublic objects
                 should_log, is_list = self._should_log_result(result)
                 if self.redis_client and should_log:
-                    if is_list:
-                        for tag in result:
+                    tags = result if is_list else [result]
+                    try:
+                        for tag in tags:
                             await self._log_tag_access(name, tag, *args, **kwargs)
-                    else:
-                        await self._log_tag_access(name, result, *args, **kwargs)
+                    except RedisError as e:
+                        # Best effort: a Redis outage must not fail the request
+                        # that already has its tags.
+                        logger.warning(
+                            "Tag access logging failed for %s (%d tags not "
+                            "counted): %s: %s",
+                            name,
+                            len(tags),
+                            type(e).__name__,
+                            e,
+                        )
 
                 return result
 

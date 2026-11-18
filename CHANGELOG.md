@@ -49,6 +49,7 @@ Use one changelog file, but separate entries by track in each release window.
   - **Upgrade note:** deployments that relied on the old "off unless set" default and serve downloads from `https://api.iknaio.com` now get the link. Set `GS_MCP_PATHFINDER_OPEN_URL_ENABLED=false` to keep it off.
 
 #### Fixed
+- **A Redis restart no longer makes requests fail with 500 until gs-rest is restarted.** The tag access logger's and the file store's Redis clients were built with `redis.asyncio.from_url()`, whose connection pool, unlike `Redis(host=...)`, retries zero times: after a restart every pooled connection was dead and failed one request each (`ConnectionError: Connection closed by server`, e.g. on `tag_summary`). Both clients now come from `graphsenselib.web.redis_client.make_async_redis`: 3 retries with jittered exponential backoff (0.1 s to 2 s) on connection errors and timeouts, and a health check (`PING`) on a connection idle for more than 30 s. Tag access logging is now best effort: if Redis still fails, the request returns its tags and one WARNING says how many accesses were not counted. The startup log no longer prints a Redis URL's user and password (`redis://***@host`).
 - **`privacy_preserving_tag_notifications` now takes effect.** The tag service read `privacy_preserving_tag_notification` (singular), which is not a config field, and fell back to `True`, so setting it to `false` never put the reported tag into the Slack notification. With the default (`true`) nothing changes: Slack gets the report id and the address only.
 
 ### Library
