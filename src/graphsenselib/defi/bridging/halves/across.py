@@ -1,5 +1,5 @@
-"""Across half bridges (defi/bridging/delegated.py): V3 SpokePool deposits
-and fills.
+"""Across half bridges (defi/bridging/delegated.py): V2.5 and V3 SpokePool
+deposits and fills.
 
 A deposit (FundsDeposited, or V3FundsDeposited before the bytes32 upgrade)
 sends: its leg is the Transfer of inputAmount of inputToken into the SpokePool
@@ -15,9 +15,12 @@ about it. The external backend adapter pins its legs the same way
 Every one of the four events indexes the depositId second (topic 2): the
 half's transfer id, in decimal, unique per ORIGIN chain only.
 
-Both eras share one word layout; the old fill carries ``bytes message``, so its
-relayExecutionInfo sits at the offset in word 11. The same SpokePool emits
-both eras.
+Both V3 eras share one word layout; the old fill carries ``bytes message``, so
+its relayExecutionInfo sits at the offset in word 11. Before them, Across V2.5
+(May 2023 to the V3 upgrade) used other events: the deposit names no output
+token or amount, the fill no origin token and only the pre-fee amount, and it
+pays BEFORE its event. The same SpokePool emits all three eras; Across V2.0
+(2022 to May 2023) ran on other SpokePool addresses and is not read.
 """
 
 from typing import List, Optional
@@ -61,8 +64,20 @@ _FILLED_RELAY = _hex(
 _FILLED_V3_RELAY = _hex(
     "0x571749edf1d5c9599318cdbc4e28a6475d65e87fd3b2ddbe1e9a8d5e7a0f0ff7"
 )
-_DEPOSITS = (_FUNDS_DEPOSITED, _V3_FUNDS_DEPOSITED)
-_EVENTS = (*_DEPOSITS, _FILLED_RELAY, _FILLED_V3_RELAY)
+# Across V2.5 (May 2023 to the V3 upgrade), the same SpokePools:
+# FundsDeposited(uint256,uint256,uint256,int64,uint32,uint32,address,address,
+# address,bytes)
+_V2_FUNDS_DEPOSITED = _hex(
+    "0xafc4df6845a4ab948b492800d3d8a25d538a102a2bc07cd01f1cfa097fddcff6"
+)
+# FilledRelay(uint256,uint256,uint256,uint256,uint256,uint256,int64,int64,uint32,
+# address,address,address,address,bytes,(address,bytes,int64,bool,int256))
+_V2_FILLED_RELAY = _hex(
+    "0x8ab9dc6c19fe88e69bc70221b339c84332752fdd49591b7c51e66bae3947b73c"
+)
+_DEPOSITS = (_FUNDS_DEPOSITED, _V3_FUNDS_DEPOSITED, _V2_FUNDS_DEPOSITED)
+_EVENTS = (*_DEPOSITS, _FILLED_RELAY, _FILLED_V3_RELAY, _V2_FILLED_RELAY)
+_FEE_SCALE = 10**18  # V2 fee percentages are 1e18 fixed point
 
 # WETH9 Deposit(address indexed dst, uint256) / Withdrawal(address indexed src, uint256)
 _WRAP = _hex("0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c")
@@ -135,9 +150,15 @@ def _wrapped(
 def _deposit(network: str, log: Log, before: List[Log], spoke: bytes) -> Bridge:
     destination = _ACROSS_NETWORKS.get(int.from_bytes(bytes(log["topics"][1]), "big"))
     depositor = int.from_bytes(bytes(log["topics"][3]), "big")
-    (in_token, out_token, in_amount, out_amount, _, _, _, recipient) = _words(
-        log["data"], 8
-    )
+    if bytes(log["topics"][0]) == _V2_FUNDS_DEPOSITED:
+        # amount, originChainId, relayerFeePct, quoteTimestamp, originToken,
+        # recipient: no output token or amount (the route picked them)
+        in_amount, _, _, _, in_token, recipient = _words(log["data"], 6)
+        out_token, out_amount = 0, 0
+    else:
+        (in_token, out_token, in_amount, out_amount, _, _, _, recipient) = _words(
+            log["data"], 8
+        )
     token = in_token.to_bytes(32, "big")[12:]
     funding = _transfers(before, token=token, receiver=spoke, value=in_amount)
     native = not funding and _wrapped(before, _WRAP, token, spoke, in_amount)
@@ -163,23 +184,43 @@ def _deposit(network: str, log: Log, before: List[Log], spoke: bytes) -> Bridge:
     )
 
 
-def _fill(network: str, log: Log, after: List[Log], spoke: bytes) -> Bridge:
+def _v2_fill(log: Log) -> tuple:
+    """(in token, out token, in amount, depositor, recipient, paid amount) of a
+    V2.5 FilledRelay: no origin token; it gives the pre-fee fillAmount, so
+    paid = fillAmount x (1 - relayer fee - LP fee), the fee of a speed-up
+    (updatableRelayData, at the offset in word 11) included."""
+    words = _words(log["data"], 12)
+    info = words[11] // 32
+    words = _words(log["data"], info + 3)
+    fees = words[info + 2] + words[6]
+    paid = words[2] * (_FEE_SCALE - fees) // _FEE_SCALE
+    depositor = int.from_bytes(bytes(log["topics"][3]), "big")
+    return 0, words[7], words[0], depositor, words[info], paid
+
+
+def _fill(network: str, log: Log, around: List[Log], spoke: bytes) -> Bridge:
+    """`around`: the logs the payout is among (after a V3 fill's event, before
+    a V2 fill's)."""
     origin = _ACROSS_NETWORKS.get(int.from_bytes(bytes(log["topics"][1]), "big"))
-    words = _words(log["data"], 15)
-    in_token, out_token, in_amount, depositor = words[0], words[1], words[2], words[8]
-    if bytes(log["topics"][0]) == _FILLED_V3_RELAY:
-        # relayExecutionInfo is dynamic: word 11 is its offset
-        info = words[11] // 32
-        words = _words(log["data"], info + 3)
+    if bytes(log["topics"][0]) == _V2_FILLED_RELAY:
+        in_token, out_token, in_amount, depositor, recipient, amount = _v2_fill(log)
     else:
-        info = 11
-    recipient, amount = words[info], words[info + 2]
+        words = _words(log["data"], 15)
+        in_token, out_token, in_amount = words[0], words[1], words[2]
+        depositor = words[8]
+        if bytes(log["topics"][0]) == _FILLED_V3_RELAY:
+            # relayExecutionInfo is dynamic: word 11 is its offset
+            info = words[11] // 32
+            words = _words(log["data"], info + 3)
+        else:
+            info = 11
+        recipient, amount = words[info], words[info + 2]
     token = out_token.to_bytes(32, "big")[12:]
     payee = _evm(recipient)
     payout = (
-        _transfers(after, token=token, receiver=payee, value=amount) if payee else []
+        _transfers(around, token=token, receiver=payee, value=amount) if payee else []
     )
-    native = not payout and _wrapped(after, _UNWRAP, token, spoke, amount)
+    native = not payout and _wrapped(around, _UNWRAP, token, spoke, amount)
     asset = "native" if native else _address(token)
     if len(payout) > 1:  # several fit: never a guess
         asset, amount = UNKNOWN, 0
@@ -211,8 +252,11 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
         log = logs[position]
         since = positions[n - 1] + 1 if n else 0
         until = positions[n + 1] if n + 1 < len(positions) else len(logs)
+        before, after = logs[since:position], logs[position + 1 : until]
         if bytes(log["topics"][0]) in _DEPOSITS:
-            bridges.append(_deposit(network, log, logs[since:position], spoke))
+            bridges.append(_deposit(network, log, before, spoke))
+        elif bytes(log["topics"][0]) == _V2_FILLED_RELAY:  # pays before its event
+            bridges.append(_fill(network, log, before, spoke))
         else:
-            bridges.append(_fill(network, log, logs[position + 1 : until], spoke))
+            bridges.append(_fill(network, log, after, spoke))
     return bridges
