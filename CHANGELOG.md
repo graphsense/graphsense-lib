@@ -12,6 +12,17 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-11-19
+
+`GET /eth/txs/{tx}/conversions` reports Circle CCTP bridges, which an external backend can pair with the other chain's leg. Tag summaries gain per-label `actors` and `tag_types`, and `report-tag` takes optional `concepts`. A Redis restart no longer fails requests until gs-rest is restarted, and `tagpack-tool sync` refreshes the views once instead of twice. API version 2.20.0 (new Python client; additive fields only).
+
+### Upgrade notes
+- **Create the tagstore index before deploying**, or `GET /tags/actors/{actor}/tags` gets slower than before for callers with private tag access: `CREATE INDEX CONCURRENTLY tag_actor_confidence_id_idx ON tag (actor, confidence, id) WHERE actor IS NOT NULL;`
+- **`is_possible_service` flags more addresses on account networks** (busy senders and payout wallets); UTXO networks are unchanged.
+- **MCP `open_url` is on by default** when downloads are served from `GS_MCP_PATHFINDER_REST_URL` (default `https://api.iknaio.com`). Set `GS_MCP_PATHFINDER_OPEN_URL_ENABLED=false` to keep it off.
+- **`external_backends.delegated_conversions`** is refused by images before this one; set it only together with 2.21.0.
+- **`tagpack-tool sync` with a cluster mapping no longer refreshes the views when the mapping fails**; they are refreshed by the next successful sync.
+
 ### Web API + Python client
 
 #### Added
