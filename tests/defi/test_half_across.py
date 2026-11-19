@@ -12,6 +12,7 @@ import pytest
 from pathlib import Path
 
 from graphsenselib.defi.bridging.delegated import half_bridges
+from graphsenselib.defi.bridging.half_common import PENDING, UNKNOWN
 from graphsenselib.defi.bridging.halves import across
 from graphsenselib.defi.bridging.models import Bridge
 
@@ -164,6 +165,8 @@ def test_registered_for_eth():
 # asset, amount and transfer id. A pair the adapter answers for a delegated
 # half names exactly these legs, so the two readers must agree.
 # (case, side, leg, address, asset, amount, transfer id; tx sender for bare legs)
+ROUTER = "0x3a23f943181408eac424116af7b7790c94cb97a5"  # paid into the SpokePool
+
 ADAPTER_LEGS = [
     ("eth_base_native", "from", None, "0x42fda7e1f87cc910fcdaaa18ee0f7a8ecb0c8f64",
      "native", 12628350647202970, "3487163"),
@@ -175,6 +178,14 @@ ADAPTER_LEGS = [
     ("base_eth_weth_fill", "to", None, "0xa9c9259ca0efe93e2af7bda7d8f438683d4b1fd6",
      "native", 17736178764405541, "5154354"),
     ("pol_eth_usdc_fill", "to", "_T867", HANDLER, USDC, 4993359522, "2014742"),
+    # Across V2.5 (May 2023 to V3): other events, a fill pays before its event
+    ("eth_opt_v2_usdc", "from", "_T210", ROUTER, USDC, 48657000, "1020463"),
+    ("eth_arb_v2_native", "from", None, "0xae5ec9e91c11ed7e96fda9c2b9febd0458cd6154",
+     "native", 60000000000000000, "1020459"),
+    ("arb_eth_v2_usdc_fill", "to", "_T258", "0x2f60ac622f4091316fa15d612fed88bc337351ed",
+     USDC, 493780871, "1082928"),
+    ("pol_eth_v2_native_fill", "to", None, "0xe4afb444784f16f653c0b71c53634371a2534ae4",
+     "native", 56482383258513981, "1037835"),
 ]  # fmt: skip
 
 
@@ -204,3 +215,25 @@ def test_a_bare_source_legs_payer_is_the_tx_sender_not_the_depositor():
         "eth", db_rows("eth_base_native"), ("across",), tx_sender=sender
     )
     assert half.fromAddress == sender
+
+
+def test_a_v2_deposit_names_no_destination_asset():
+    # a V2 deposit names no output token or amount: the route picked them
+    [half] = across.read("eth", db_rows("eth_opt_v2_usdc"))
+    assert (half.toNetwork, half.toAsset, half.toAmount, half.toPayment) == (
+        "opt",
+        UNKNOWN,
+        0,
+        PENDING,
+    )
+    assert half.toAddress == "0xa8db9142ed818df037867bdbf0810f03057d9851"
+
+
+def test_a_v2_fill_names_no_origin_asset():
+    # the fill gives the pre-fee amount but not the origin token
+    [half] = across.read("eth", db_rows("arb_eth_v2_usdc_fill"))
+    assert (half.fromNetwork, half.fromAsset, half.fromAmount) == (
+        "arb",
+        UNKNOWN,
+        499972774,
+    )
