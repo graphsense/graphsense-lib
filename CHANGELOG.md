@@ -12,6 +12,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Upgrade notes
+- **CoinGecko rates now treat a missing USD price as a gap.** With `--abort-on-gaps` (and in the pre-ingest rates step of `ingest from-node`), a day CoinGecko has no price for exits 15 when it is at the end of the window (retried next run) and 2 when it is inside it. Re-run `exchange-rates coingecko ingest` without `--abort-on-gaps` to write around a permanent hole.
+
 ### Web API + Python client
 
 #### Added
@@ -22,6 +25,11 @@ Use one changelog file, but separate entries by track in each release window.
   - **`to=gs`** returns a `.gs` file; **`layout=auto`** places every node afresh first (as `gs-files layout`), for any `to`.
   - The format is described in `docs/graph_convert_format.md`. The same conversion is available as `graphsense-cli convert gs-files convert`.
   - Each tx is looked up once, in-process, with the caller's headers. A failed lookup only leaves that tx without flow edges; the warnings are counted in `X-Convert-Warnings`. At most 500 nodes and 4 MiB.
+
+### Library
+
+#### Fixed
+- **CoinGecko exchange rates no longer drop days without a word.** A missing day used to pass the checks and be removed by `ingest()`; it is now logged, and `--abort-on-gaps` stops on it (see the upgrade note). The first day of each window is requested again (the window started at 23:59:59 of that day), dates are computed in UTC rather than the host time zone, each request asks for at most 180 days instead of 181, HTTP errors (bad key, rate limit) are raised with their status instead of an unpacking error, and the `Accept` header is `application/json`.
 
 ## [2.21.0] - 2026-11-19
 
