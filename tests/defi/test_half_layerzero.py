@@ -208,3 +208,33 @@ def test_the_eth_halves_name_the_adapters_legs(
         app,
         transfer_id,
     )
+
+
+FEE_BURNS = json.loads(
+    (
+        Path(__file__).parent / "data" / "bridges" / "layerzero" / "fee_oft_burns.json"
+    ).read_text()
+)
+
+
+@pytest.mark.parametrize("c", FEE_BURNS["cases"], ids=lambda c: c["network"])
+def test_a_fee_charging_oft_send_is_funded_by_its_burn(c):
+    # base 0x0fd194ce and bnb 0x9e73e79b (no eth case is recorded; the reader
+    # reads their logs as it reads eth's): the OFT pays a fee apart and burns
+    # amountReceivedLD, so the leg is the burn, as the adapter names it
+    rows = [
+        {
+            "tx_hash": unhex(c["tx_hash"]),
+            "block_id": int(c["receipt"]["blockNumber"], 16),
+            "log_index": int(log["logIndex"], 16),
+            "address": unhex(log["address"]),
+            "topics": [unhex(t) for t in log["topics"]],
+            "topic0": unhex(log["topics"][0]),
+            "data": unhex(log["data"]),
+        }
+        for log in c["receipt"]["logs"]
+    ]
+    [half] = layerzero.read("eth", rows)
+    burn = next(e for e in c["receipt"]["logs"] if int(e["logIndex"], 16) == c["burn"])
+    assert half.fromPayment == f"{c['tx_hash'].removeprefix('0x')}_T{c['burn']}"
+    assert (half.fromAsset, half.fromAmount) == (burn["address"], int(burn["data"], 16))

@@ -20,7 +20,8 @@ OFTReceived per passenger, each carrying the bus's packet guid.
 Legs, pinned as the external backend adapter pins them (services/bridges/
 layerzero.py), so its pairs name these legs: a send's leg is the one Transfer of
 amountSentLD in the OFT's token locked in the emitter, else burnt (a mint/burn
-OFT); a receive's is the one Transfer of amountReceivedLD to the recipient; a
+OFT), else the burn of amountReceivedLD (a fee-charging OFT pays its fee
+apart); a receive's is the one Transfer of amountReceivedLD to the recipient; a
 Stargate native pool moves the chain's coin, so its leg is the tx. Several
 fitting Transfers: the leg is unknown, never a guess. A send's fromAddress is
 set by half_bridges (delegated._paid_by): whoever paid its leg; a receive names
@@ -247,10 +248,13 @@ def _sent(
         packet = sent.get(guid)
         if packet is None or not _emits(packet[0], emitter, network):
             return None
-    dst_eid, amount, _ = _words(log["data"], 3)
-    # locked in the emitter (a pool, an OFT adapter), else burnt
-    leg = _leg(network, emitter, before, emitter, amount) or _leg(
-        network, emitter, before, _ZERO_ADDRESS, amount
+    dst_eid, amount, received = _words(log["data"], 3)
+    # locked in the emitter (a pool, an OFT adapter), else burnt; a fee-charging
+    # OFT pays its fee apart and burns amountReceivedLD (as the adapter)
+    leg = (
+        _leg(network, emitter, before, emitter, amount)
+        or _leg(network, emitter, before, _ZERO_ADDRESS, amount)
+        or _leg(network, emitter, before, _ZERO_ADDRESS, received)
     )
     if leg is None:
         return None
