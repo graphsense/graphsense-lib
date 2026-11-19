@@ -99,7 +99,8 @@ def test_across_eth_destination_half():
     # the fill's event; pol is the origin the fill names
     assert across.read("eth", db_rows("pol_eth_usdc_fill")) == [
         Bridge(
-            fromAddress="0x871291282f281563e5179d5d89388fce837dd462",
+            # the depositor is not the deposit's payer (a router may pay)
+            fromAddress="unknown",
             fromAsset="0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
             fromAmount=4995039812,
             fromNetwork="pol",

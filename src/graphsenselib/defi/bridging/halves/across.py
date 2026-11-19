@@ -185,7 +185,7 @@ def _deposit(network: str, log: Log, before: List[Log], spoke: bytes) -> Bridge:
 
 
 def _v2_fill(log: Log) -> tuple:
-    """(in token, out token, in amount, depositor, recipient, paid amount) of a
+    """(in token, out token, in amount, recipient, paid amount) of a
     V2.5 FilledRelay: no origin token; it gives the pre-fee fillAmount, so
     paid = fillAmount x (1 - relayer fee - LP fee), the fee of a speed-up
     (updatableRelayData, at the offset in word 11) included."""
@@ -194,8 +194,7 @@ def _v2_fill(log: Log) -> tuple:
     words = _words(log["data"], info + 3)
     fees = words[info + 2] + words[6]
     paid = words[2] * (_FEE_SCALE - fees) // _FEE_SCALE
-    depositor = int.from_bytes(bytes(log["topics"][3]), "big")
-    return 0, words[7], words[0], depositor, words[info], paid
+    return 0, words[7], words[0], words[info], paid
 
 
 def _fill(network: str, log: Log, around: List[Log], spoke: bytes) -> Bridge:
@@ -203,11 +202,10 @@ def _fill(network: str, log: Log, around: List[Log], spoke: bytes) -> Bridge:
     a V2 fill's)."""
     origin = _ACROSS_NETWORKS.get(int.from_bytes(bytes(log["topics"][1]), "big"))
     if bytes(log["topics"][0]) == _V2_FILLED_RELAY:
-        in_token, out_token, in_amount, depositor, recipient, amount = _v2_fill(log)
+        in_token, out_token, in_amount, recipient, amount = _v2_fill(log)
     else:
         words = _words(log["data"], 15)
         in_token, out_token, in_amount = words[0], words[1], words[2]
-        depositor = words[8]
         if bytes(log["topics"][0]) == _FILLED_V3_RELAY:
             # relayExecutionInfo is dynamic: word 11 is its offset
             info = words[11] // 32
@@ -225,7 +223,8 @@ def _fill(network: str, log: Log, around: List[Log], spoke: bytes) -> Bridge:
     if len(payout) > 1:  # several fit: never a guess
         asset, amount = UNKNOWN, 0
     return Bridge(
-        fromAddress=_declared(depositor, origin),
+        # the depositor is not the deposit's payer (a router may pay): unknown
+        fromAddress=UNKNOWN,
         fromAsset=_declared(in_token, origin),
         fromAmount=in_amount,
         fromNetwork=origin or UNKNOWN,
