@@ -12,6 +12,14 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Upgrade notes
+- **CoinGecko rates now treat a missing USD price as a gap.** With `--abort-on-gaps` (and in the pre-ingest rates step of `ingest from-node`), a day CoinGecko has no price for exits 15 when it is at the end of the window (retried next run) and 2 when it is inside it. Re-run `exchange-rates coingecko ingest` without `--abort-on-gaps` to write around a permanent hole.
+
+### Library
+
+#### Fixed
+- **CoinGecko exchange rates no longer drop days without a word.** A missing day used to pass the checks and be removed by `ingest()`; it is now logged, and `--abort-on-gaps` stops on it (see the upgrade note). The first day of each window is requested again (the window started at 23:59:59 of that day), dates are computed in UTC rather than the host time zone, each request asks for at most 180 days instead of 181, HTTP errors (bad key, rate limit) are raised with their status instead of an unpacking error, and the `Accept` header is `application/json`.
+
 ## [2.21.0] - 2026-11-19
 
 `GET /eth/txs/{tx}/conversions` reports Circle CCTP bridges, which an external backend can pair with the other chain's leg. Tag summaries gain per-label `actors` and `tag_types`, and `report-tag` takes optional `concepts`. A Redis restart no longer fails requests until gs-rest is restarted, and `tagpack-tool sync` refreshes the views once instead of twice. API version 2.20.0 (new Python client; additive fields only).
