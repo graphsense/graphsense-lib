@@ -259,7 +259,7 @@ class RelatedAddresses(APIModel):
 
 # The protocol a bridge_tx row went through: the values the external backend
 # adapter's ExternalConversion sends (more with each delegated bridge)
-BridgeProtocol = Literal["across", "debridge"]
+BridgeProtocol = Literal["across", "debridge", "layerzero"]
 
 
 class ExternalConversion(APIModel):
@@ -280,9 +280,9 @@ class ExternalConversion(APIModel):
     to_is_supported_asset: bool
     # bridge_tx rows only, half bridges included, the same from either end:
     # the protocol whose contracts prove the bridge, the app on top of it
-    # where one is named (none yet), and the protocol's own id of the
-    # transfer where it is known: Across depositId (decimal, unique per
-    # origin chain only), deBridge orderId (0x hex)
+    # where one is named (LayerZero: stargate, usdt0), and the protocol's own
+    # id of the transfer where it is known: Across depositId (decimal, unique
+    # per origin chain only), deBridge orderId (0x hex), LayerZero guid (0x hex)
     protocol: Optional[BridgeProtocol] = Field(
         default=None,
         description="Bridge rows: the protocol the bridge went through.",
@@ -295,6 +295,7 @@ class ExternalConversion(APIModel):
         default=None,
         description=(
             "Bridge rows: the protocol's own id of the transfer, where known"
-            " (Across: the deposit id; deBridge: the order id)."
+            " (Across: the deposit id; deBridge: the order id; LayerZero: the"
+            " message guid)."
         ),
     )
