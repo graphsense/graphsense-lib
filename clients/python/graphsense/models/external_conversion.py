@@ -15,8 +15,8 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -37,13 +37,26 @@ class ExternalConversion(BaseModel):
     to_network: StrictStr
     from_is_supported_asset: StrictBool
     to_is_supported_asset: StrictBool
-    __properties: ClassVar[List[str]] = ["conversion_type", "from_address", "to_address", "from_asset", "to_asset", "from_amount", "to_amount", "from_asset_transfer", "to_asset_transfer", "from_network", "to_network", "from_is_supported_asset", "to_is_supported_asset"]
+    protocol: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol the bridge went through.")
+    protocol_app: Optional[StrictStr] = Field(default=None, description="Bridge rows: the app on top of the protocol, where known.")
+    transfer_id: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol's own id of the transfer, where known (Across: the deposit id).")
+    __properties: ClassVar[List[str]] = ["conversion_type", "from_address", "to_address", "from_asset", "to_asset", "from_amount", "to_amount", "from_asset_transfer", "to_asset_transfer", "from_network", "to_network", "from_is_supported_asset", "to_is_supported_asset", "protocol", "protocol_app", "transfer_id"]
 
     @field_validator('conversion_type')
     def conversion_type_validate_enum(cls, value):
         """Validates the enum"""
         if value not in set(['dex_swap', 'bridge_tx']):
             raise ValueError("must be one of enum values ('dex_swap', 'bridge_tx')")
+        return value
+
+    @field_validator('protocol')
+    def protocol_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['across']):
+            raise ValueError("must be one of enum values ('across')")
         return value
 
     model_config = ConfigDict(
@@ -85,6 +98,7 @@ class ExternalConversion(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+
         return _dict
 
     @classmethod
@@ -109,7 +123,10 @@ class ExternalConversion(BaseModel):
             "from_network": obj.get("from_network"),
             "to_network": obj.get("to_network"),
             "from_is_supported_asset": obj.get("from_is_supported_asset"),
-            "to_is_supported_asset": obj.get("to_is_supported_asset")
+            "to_is_supported_asset": obj.get("to_is_supported_asset"),
+            "protocol": obj.get("protocol"),
+            "protocol_app": obj.get("protocol_app"),
+            "transfer_id": obj.get("transfer_id")
         })
         return _obj
 

@@ -602,6 +602,9 @@ class TxsService:
             to_network=bridge.toNetwork,
             from_is_supported_asset=from_is_supported_asset,
             to_is_supported_asset=to_is_supported_asset,
+            protocol=bridge.protocol,
+            protocol_app=bridge.protocolApp,
+            transfer_id=bridge.transferId,
         )
 
     async def get_conversions(

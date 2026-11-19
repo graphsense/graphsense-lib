@@ -193,12 +193,16 @@ def test_a_real_burn_followed_by_a_replacement_is_one_half_bridge():
 
 def test_a_leg_with_two_fitting_transfers_is_the_tx():
     """Two Transfers of the same amount to the TokenMinter cannot be told
-    apart; the burn is funded, so it is a bridge, with the tx as its leg."""
+    apart; the burn is funded, so it is a bridge, with the tx as its leg,
+    paid (as every bare-tx leg) by the tx's sender."""
     logs = FIXTURE["v2_burn"]["logs"]
     funding = next(log for log in logs if log["log_index"] == 694)
     twice = [{**funding, "log_index": 690}, *logs]
-    assert half_bridges("eth", db_rows("v2_burn", twice), CCTP) == (
-        HALF_BRIDGES["v2_burn"].model_copy(update={"fromPayment": bare("v2_burn")}),
+    sender = "0x" + "11" * 20
+    assert half_bridges("eth", db_rows("v2_burn", twice), CCTP, tx_sender=sender) == (
+        HALF_BRIDGES["v2_burn"].model_copy(
+            update={"fromPayment": bare("v2_burn"), "fromAddress": sender}
+        ),
     )
 
 

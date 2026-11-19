@@ -56,6 +56,7 @@ def tx_of(part):
     return {
         "tx_hash": unhex(FIXTURE[part]["tx_hash"]),
         "block_id": FIXTURE[part]["block_id"],
+        "from_address": bytes(20),  # every tx row names its sender
     }
 
 

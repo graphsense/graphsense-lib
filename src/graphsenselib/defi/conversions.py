@@ -173,7 +173,12 @@ async def get_conversions_from_db(
     )
     return DetectedConversions(
         tuple(conversions),
-        half_bridges(network, tx_logs_raw or (), included_bridges),
+        half_bridges(
+            network,
+            tx_logs_raw or (),
+            included_bridges,
+            tx_sender="0x" + bytes(tx["from_address"]).hex(),
+        ),
     )
 
 

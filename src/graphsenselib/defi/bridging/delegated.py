@@ -27,23 +27,27 @@ depositor, and moves nothing. When several fit, the leg is the tx itself.
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from functools import partial
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from graphsenselib.defi.bridging.models import Bridge
-from graphsenselib.utils.transactions import (
-    SubTransactionIdentifier,
-    SubTransactionType,
+from graphsenselib.defi.bridging.half_common import (
+    PENDING,
+    UNKNOWN,
+    Log,
+    _address,
+    _first,
+    _leg,
+    _transfers,
+    _words,
 )
+from graphsenselib.defi.bridging.halves import across
+from graphsenselib.defi.bridging.models import Bridge
+from graphsenselib.utils.transactions import SubTransactionIdentifier
 
 logger = logging.getLogger(__name__)
 
 CCTP = "cctp"
-PENDING = "pending"
-UNKNOWN = "unknown"
-
-_TRANSFER = bytes.fromhex(
-    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-)
+ACROSS = "across"
 _ZERO_ADDRESS = bytes(20)
 
 # Circle's domains of the networks the conversions name, all of them EVM
@@ -128,20 +132,47 @@ _CCTP_V2 = _CctpVersion(
     burn_token_topic=1,
 )
 
-Log = Dict[str, Any]
-
 
 def half_bridges(
-    network: str, raw_logs: Sequence[Log], included_bridges: Sequence[str]
+    network: str,
+    raw_logs: Sequence[Log],
+    included_bridges: Sequence[str],
+    tx_sender: Optional[str] = None,
 ) -> Tuple[Bridge, ...]:
     """The half bridges among a tx's raw logs (rows of the log table), of the
-    bridges in included_bridges."""
+    bridges in included_bridges. A half this tx sends names whoever paid its
+    leg (_paid_by); tx_sender is the tx's from_address (0x hex)."""
     readers = _HALF_BRIDGE_READERS.get(network, {})
     wanted = [read for bridge, read in readers.items() if bridge in included_bridges]
     if not wanted:
         return ()
     logs = sorted(raw_logs, key=lambda log: log["log_index"])
-    return tuple(bridge for read in wanted for bridge in read(logs))
+    return tuple(
+        _paid_by(bridge, network, logs, tx_sender)
+        for read in wanted
+        for bridge in read(logs)
+    )
+
+
+def _paid_by(
+    bridge: Bridge, network: str, logs: List[Log], tx_sender: Optional[str]
+) -> Bridge:
+    """A half this tx sends with fromAddress whoever paid its leg (user decision
+    2026-11-18, as the adapter): the sender of its fromPayment Transfer, the
+    tx's sender for a bare-tx leg, unknown for an unknown leg. Pathfinder reads
+    Input Value off that leg for fromAddress."""
+    if bridge.fromNetwork != network:
+        return bridge  # the other chain sent it: its own event names the sender
+    if bridge.fromPayment == UNKNOWN:
+        payer = UNKNOWN
+    else:
+        leg = SubTransactionIdentifier.from_string(bridge.fromPayment)
+        if leg.sub_index is None:
+            payer = tx_sender or UNKNOWN
+        else:
+            paid = next(log for log in logs if log["log_index"] == leg.sub_index)
+            payer = "0x" + bytes(paid["topics"][1])[-20:].hex()
+    return bridge.model_copy(update={"fromAddress": payer})
 
 
 def _cctp_half_bridges(logs: List[Log]) -> List[Bridge]:
@@ -261,60 +292,6 @@ def _mint(
     )
 
 
-def _words(data: bytes, count: int) -> List[int]:
-    """The first `count` 32-byte words of an event's data."""
-    data = bytes(data)
-    if len(data) < 32 * count:
-        raise ValueError(f"{len(data)} bytes of data, {count} words expected")
-    return [int.from_bytes(data[32 * i : 32 * (i + 1)], "big") for i in range(count)]
-
-
-def _transfers(
-    logs: List[Log], token: bytes, sender: bytes, receiver: bytes, value: int
-) -> List[Log]:
-    """The ERC20 Transfers of `value` of `token` from sender to receiver."""
-    return [
-        log
-        for log in logs
-        if bytes(log["address"]) == token
-        and len(log.get("topics") or ()) == 3
-        and bytes(log["topics"][0]) == _TRANSFER
-        and bytes(log["topics"][1])[-20:] == sender
-        and bytes(log["topics"][2])[-20:] == receiver
-        and int.from_bytes(bytes(log["data"]), "big") == value
-    ]
-
-
-def _first(logs: List[Log], topic0: bytes, emitter: bytes) -> Optional[Log]:
-    return next(
-        (
-            log
-            for log in logs
-            if log.get("topics")
-            and bytes(log["topics"][0]) == topic0
-            and bytes(log["address"]) == emitter
-        ),
-        None,
-    )
-
-
-def _leg(event: Log, transfers: List[Log]) -> str:
-    """The asset transfer of an event's leg: its one Transfer, or, when several
-    fit and cannot be told apart, the tx."""
-    tx_hash = bytes(event["tx_hash"]).hex()
-    if len(transfers) != 1:
-        return tx_hash
-    return SubTransactionIdentifier(
-        tx_hash=tx_hash,
-        tx_type=SubTransactionType.ERC20,
-        sub_index=transfers[0]["log_index"],
-    ).to_string()
-
-
-def _address(raw: bytes) -> str:
-    return "0x" + raw.hex()
-
-
 # (topic0, emitter) -> the reader of that CCTP event, and its version
 _CCTP_EVENTS = {
     **{
@@ -330,7 +307,7 @@ _CCTP_EVENTS = {
 # network -> bridge -> its half bridges among a tx's logs in log order.
 # Another bridge that an external backend pairs is one more entry here.
 _HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[List[Log]], List[Bridge]]]] = {
-    "eth": {CCTP: _cctp_half_bridges},
+    "eth": {CCTP: _cctp_half_bridges, ACROSS: partial(across.read, "eth")},
 }
 
 # the included_bridges names of the bridges an external backend pairs

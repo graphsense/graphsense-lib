@@ -22,7 +22,7 @@ class TestGetConversionsFromDbGather:
     """
 
     async def test_logs_and_traces_are_fetched_and_routed_without_swapping(self):
-        tx = {"tx_hash": b"\x01\x02", "block_id": 5}
+        tx = {"tx_hash": b"\x01\x02", "block_id": 5, "from_address": bytes(20)}
         logs_sentinel = [{"marker": "logs"}]
         traces_raw_sentinel = [{"marker": "traces-raw"}]
         normalized_traces_sentinel = ["NORMALIZED_TRACES"]
@@ -92,7 +92,7 @@ class TestGetConversionsFromDbGather:
         assert result == conversions_mod.DetectedConversions()
 
     async def test_no_logs_short_circuits_without_decoding(self):
-        tx = {"tx_hash": b"\x01\x02", "block_id": 5}
+        tx = {"tx_hash": b"\x01\x02", "block_id": 5, "from_address": bytes(20)}
         db = MagicMock()
         db.fetch_transaction_logs = AsyncMock(return_value=[])
         db.fetch_transaction_traces = AsyncMock(return_value=[])
@@ -123,6 +123,7 @@ class TestHalfBridges:
         return {
             "tx_hash": bytes.fromhex(FIXTURE[part]["tx_hash"][2:]),
             "block_id": FIXTURE[part]["block_id"],
+            "from_address": bytes.fromhex("11" * 20),  # every tx row names its sender
             "input": None,
         }
 
