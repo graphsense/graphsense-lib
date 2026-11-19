@@ -39,7 +39,7 @@ class ExternalConversion(BaseModel):
     to_is_supported_asset: StrictBool
     protocol: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol the bridge went through.")
     protocol_app: Optional[StrictStr] = Field(default=None, description="Bridge rows: the app on top of the protocol, where known.")
-    transfer_id: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol's own id of the transfer, where known (Across: the deposit id).")
+    transfer_id: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol's own id of the transfer, where known (Across: the deposit id; deBridge: the order id).")
     __properties: ClassVar[List[str]] = ["conversion_type", "from_address", "to_address", "from_asset", "to_asset", "from_amount", "to_amount", "from_asset_transfer", "to_asset_transfer", "from_network", "to_network", "from_is_supported_asset", "to_is_supported_asset", "protocol", "protocol_app", "transfer_id"]
 
     @field_validator('conversion_type')
@@ -55,8 +55,8 @@ class ExternalConversion(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['across']):
-            raise ValueError("must be one of enum values ('across')")
+        if value not in set(['across', 'debridge']):
+            raise ValueError("must be one of enum values ('across', 'debridge')")
         return value
 
     model_config = ConfigDict(
