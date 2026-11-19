@@ -26,6 +26,7 @@ from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware import external_backends
 from graphsenselib.web.middleware.external_backends import (
     DECLINED_HEADER,
+    PARTIAL_HEADER,
     SERVED_BY_HEADER,
     SERVED_BY_VALUE,
     ExternalBackendMiddleware,
@@ -131,6 +132,7 @@ def make_client(
     with_role_gate=False,
     refuse_status=None,
     refuse_headers=None,
+    backend_headers=None,
     fail_with=None,
     fail_times=None,
     with_cors=False,
@@ -146,7 +148,8 @@ def make_client(
 
     ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
     adapter without /capabilities). ``local_related_addresses`` is the local
-    pubkey answer, or a function of (currency, address) returning it."""
+    pubkey answer, or a function of (currency, address) returning it.
+    ``backend_headers`` go on the backend's ordinary 200s."""
     app = FastAPI()
 
     @app.get("/stats")
@@ -224,7 +227,9 @@ def make_client(
             if backend_related_addresses == "declines":
                 return httpx.Response(501)
             return httpx.Response(200, json=backend_related_addresses)
-        return httpx.Response(200, json={"backend_path": request.url.path})
+        return httpx.Response(
+            200, json={"backend_path": request.url.path}, headers=backend_headers
+        )
 
     config = ExternalBackendsConfig(
         enabled=enabled,
@@ -1257,6 +1262,31 @@ def test_a_normal_proxy_response_is_unchanged():
     assert response.status_code == 200
     assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
     assert "retry-after" not in {k.lower() for k in response.headers}
+
+
+def test_a_proxied_partial_answer_stays_partial():
+    """A lite network's answer whose counter-chain lookup failed: the rows
+    are a half, the next request may pair them. The client has to be told,
+    and no cache may keep it."""
+    client, _ = make_client(backend_headers={PARTIAL_HEADER: "counter_lookup_failed"})
+    response = client.get("/bnb/txs/0xab/conversions")
+    assert response.status_code == 200
+    assert response.headers[PARTIAL_HEADER] == "counter_lookup_failed"
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_a_malformed_partial_header_is_passed_on_as_unspecified():
+    client, _ = make_client(backend_headers={PARTIAL_HEADER: "a b\tc"})
+    response = client.get("/bnb/txs/0xab/conversions")
+    assert response.headers[PARTIAL_HEADER] == "unspecified"
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_a_complete_proxied_answer_says_nothing_about_caching():
+    client, _ = make_client()
+    response = client.get("/bnb/txs/0xab/conversions")
+    assert PARTIAL_HEADER.lower() not in {k.lower() for k in response.headers}
+    assert "cache-control" not in {k.lower() for k in response.headers}
 
 
 # --- partial entitlement: narrowed rows, NOT a narrowed request ----------

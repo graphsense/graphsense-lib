@@ -1103,11 +1103,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # any answer, a 503 of an overloaded backend too: it is up
         self._backend_answered(backend.url)
         headers = {SERVED_BY_HEADER: SERVED_BY_VALUE}
-        # a 429 that does not say when to come back is barely better than a
-        # 500; this is the only backend header the proxy carries through
+        # the backend headers the proxy carries through: a 429 that does not
+        # say when to come back is barely better than a 500, and a partial
+        # answer that reaches the client as a plain 200 is kept as final
         retry_after = backend_response.headers.get(RETRY_AFTER_HEADER)
         if retry_after:
             headers[RETRY_AFTER_HEADER] = retry_after
+        partial = backend_response.headers.get(PARTIAL_HEADER)
+        if partial is not None:
+            headers[PARTIAL_HEADER] = (
+                partial if _PARTIAL_REASONS.fullmatch(partial) else "unspecified"
+            )
+            headers["Cache-Control"] = "no-store"
         return Response(
             content=backend_response.content,
             status_code=backend_response.status_code,
