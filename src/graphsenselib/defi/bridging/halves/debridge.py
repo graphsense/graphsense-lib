@@ -3,8 +3,9 @@ and their fills on DlnDestination.
 
 A CreatedOrder sends: the order names the chain, token, amount and receiver of
 the other leg, which a taker fills later (destination "pending"). A
-FulfilledOrder receives: the order names the chain, token, amount and maker of
-the source, but not which tx paid it (source "unknown"). FulfilledOrder has two
+FulfilledOrder receives: the order names the chain, token and amount of the
+source, but not which tx paid it (source "unknown"), nor who: its maker is
+not its payer (a forwarder may pay), so fromAddress is "unknown". FulfilledOrder has two
 signatures: an upgrade added ``uint256 actualFulfillAmount`` after the orderId,
 what the taker states it paid; the old one pays the order's takeAmount.
 
@@ -83,7 +84,6 @@ _DLN_NETWORKS = {
 
 
 class _Order(NamedTuple):
-    maker: Optional[str]
     give_chain: int
     give_token: Optional[str]  # NATIVE, a contract, or None
     give_amount: int
@@ -118,7 +118,6 @@ def _order(data: bytes) -> _Order:
         return _bytes(data, start + _word(data, head + position))
 
     return _Order(
-        maker=_evm(member(1)),
         give_chain=_word(data, head + 2),
         give_token=_token(member(3)),
         give_amount=_word(data, head + 4),
@@ -186,7 +185,7 @@ def _fulfilled(network: str, log: Log, before: List[Log]) -> Optional[Bridge]:
             asset, amount = UNKNOWN, 0
     source = _DLN_NETWORKS.get(order.give_chain)
     return Bridge(
-        fromAddress=_declared(order.maker, source),
+        fromAddress=UNKNOWN,
         fromAsset=_declared(order.give_token, source),
         fromAmount=order.give_amount,
         fromNetwork=source or UNKNOWN,

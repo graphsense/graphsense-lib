@@ -85,7 +85,7 @@ def test_debridge_eth_destination_half():
     # source side what the order declares
     assert debridge.read("eth", db_rows("avax_eth_old_fill")) == [
         Bridge(
-            fromAddress=AVAX_MAKER,
+            fromAddress="unknown",  # the maker is not the payer
             fromAsset=AVAX_USDC,
             fromAmount=8157964454,
             fromNetwork="avax",
@@ -105,10 +105,11 @@ def test_a_batched_fill_is_one_half_per_order():
     # log 222 fills a bnb order (payout log 221), log 234 a Solana one (payout
     # log 233), whose maker and token are not EVM addresses
     first, second = debridge.read("eth", db_rows("bnb_eth_batched_fill"))
+    # the bnb order was paid by a forwarder, not by its maker
     assert (first.fromNetwork, first.fromAsset, first.fromAddress) == (
         "bnb",
         BNB_USDC,
-        BNB_MAKER,
+        "unknown",
     )
     assert (first.toPayment, first.toAsset, first.toAmount) == (
         f"{bare('bnb_eth_batched_fill')}_T221",
