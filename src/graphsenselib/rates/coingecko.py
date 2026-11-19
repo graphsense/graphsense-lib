@@ -47,7 +47,7 @@ def fetch_ecb_rates(symbol_list: List) -> pd.DataFrame:
 
 
 def coingecko_historical_url(symbol: str, start: date, end: date) -> str:
-    """Returns URL for CoinMarketCap API request."""
+    """Returns URL for CoinGecko API request."""
 
     fromd = int(datetime.combine(start, datetime.max.time()).timestamp())
     tod = int(datetime.combine(end, datetime.max.time()).timestamp())
@@ -75,7 +75,7 @@ def parse_coingecko_historical_response(
 def fetch_coingecko_rates(
     start: str, end: str, crypto_currency: str, api_key: str
 ) -> pd.DataFrame:
-    """Fetch cryptocurrency exchange rates from CoinMarketCap."""
+    """Fetch cryptocurrency exchange rates from CoinGecko."""
 
     user_agent = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1) "
@@ -92,19 +92,19 @@ def fetch_coingecko_rates(
     end_date = date.fromisoformat(end)
 
     # coingecko restricts queries to 180 days
-    cmc_rates = pd.DataFrame()
+    coingecko_rates = pd.DataFrame()
     for s, e in batch_date(start_date, end_date, days=180):
         url = coingecko_historical_url(crypto_currency, s, e)
 
         logger.info(f"Fetching {crypto_currency} exchange rates from {url}")
         response = rates_session().get(url, headers=headers, timeout=HTTP_TIMEOUT)
-        cmc_rates_part = parse_coingecko_historical_response(response)
-        cmc_rates = pd.concat([cmc_rates, cmc_rates_part])
+        coingecko_rates_part = parse_coingecko_historical_response(response)
+        coingecko_rates = pd.concat([coingecko_rates, coingecko_rates_part])
 
     # assert that all dates are consecutive
-    assert len(cmc_rates.date) == len(set(cmc_rates.date))
+    assert len(coingecko_rates.date) == len(set(coingecko_rates.date))
     assert (
-        set(cmc_rates.date).difference(
+        set(coingecko_rates.date).difference(
             {
                 x.strftime(DATE_FORMAT)
                 for x in generate_date_range_days(start_date, end_date)
@@ -113,12 +113,12 @@ def fetch_coingecko_rates(
         == set()
     )
 
-    if len(cmc_rates) > 0:
-        last_record = cmc_rates.date.tolist()[-1]
+    if len(coingecko_rates) > 0:
+        last_record = coingecko_rates.date.tolist()[-1]
     else:
         last_record = None
     logger.info(f"Last record: {last_record}")
-    return cmc_rates
+    return coingecko_rates
 
 
 def fetch(env, currency, fiat_currencies, start_date, end_date, api_key: str):
@@ -186,12 +186,12 @@ def fetch_impl(
         raise SystemExit(1)
 
     # fetch cryptocurrency exchange rates in USD
-    cmc_rates = fetch_coingecko_rates(start_date, end_date, currency, api_key)
+    coingecko_rates = fetch_coingecko_rates(start_date, end_date, currency, api_key)
 
     ecb_rates = fetch_ecb_rates(fiat_currencies)
 
     # query conversion rates and merge converted values in exchange rates
-    exchange_rates = cmc_rates
+    exchange_rates = coingecko_rates
     date_range = pd.date_range(start_dt.date(), end_dt.date())
     date_range = pd.DataFrame(date_range, columns=["date"])
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
@@ -203,7 +203,7 @@ def fetch_impl(
         ecb_rate = forward_filled_fx_rate(ecb_rates, fiat_currency, end_date)
         merged_df = (
             pd.DataFrame({"date": date_range})
-            .merge(cmc_rates, on="date", how="left")
+            .merge(coingecko_rates, on="date", how="left")
             .merge(ecb_rate, on="date", how="left")
         )
 
