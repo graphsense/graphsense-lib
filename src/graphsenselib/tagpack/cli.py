@@ -620,9 +620,6 @@ def _sync_impl(
         with _timed_phase("Removing duplicates"):
             click_ctx_tagstore.invoke(remove_duplicates, url=url)
 
-        with _timed_phase("Refreshing db views"):
-            click_ctx_tagstore.invoke(refresh_views, url=url)
-
         if not dont_update_quality_metrics:
             with _timed_phase("Calc Quality metrics"):
                 calc_quality_measures(url, DEFAULT_SCHEMA)
@@ -681,6 +678,11 @@ def _sync_impl(
                 )
                 effective_run_env = auto_rerun_cluster_mapping_with_env
 
+        # The views are refreshed once, after the last step that changes what
+        # they read. Neither the quality metrics, the staleness check nor the
+        # cluster mapping reads them (the mapping reads the `address` table),
+        # so a refresh before the mapping would only be redone after it; on a
+        # large tagstore each refresh takes about half an hour.
         if effective_run_env or effective_rerun_env:
             with _timed_phase("Import cluster mappings"):
                 click_ctx_tagpacktool_tagstore.invoke(
@@ -691,6 +693,9 @@ def _sync_impl(
                 )
 
             with _timed_phase("Refreshing db views (post-cluster-mapping)"):
+                click_ctx_tagstore.invoke(refresh_views, url=url)
+        else:
+            with _timed_phase("Refreshing db views"):
                 click_ctx_tagstore.invoke(refresh_views, url=url)
 
         logger.info(
