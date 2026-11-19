@@ -40,7 +40,7 @@ from graphsenselib.defi.bridging.half_common import (
     _transfers,
     _words,
 )
-from graphsenselib.defi.bridging.halves import across
+from graphsenselib.defi.bridging.halves import across, debridge
 from graphsenselib.defi.bridging.models import Bridge
 from graphsenselib.utils.transactions import SubTransactionIdentifier
 
@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 CCTP = "cctp"
 ACROSS = "across"
+DEBRIDGE = "debridge"
 _ZERO_ADDRESS = bytes(20)
 
 # Circle's domains of the networks the conversions name, all of them EVM
@@ -307,7 +308,11 @@ _CCTP_EVENTS = {
 # network -> bridge -> its half bridges among a tx's logs in log order.
 # Another bridge that an external backend pairs is one more entry here.
 _HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[List[Log]], List[Bridge]]]] = {
-    "eth": {CCTP: _cctp_half_bridges, ACROSS: partial(across.read, "eth")},
+    "eth": {
+        CCTP: _cctp_half_bridges,
+        ACROSS: partial(across.read, "eth"),
+        DEBRIDGE: partial(debridge.read, "eth"),
+    },
 }
 
 # the included_bridges names of the bridges an external backend pairs

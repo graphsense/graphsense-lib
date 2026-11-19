@@ -21,7 +21,7 @@ Name | Type | Description | Notes
 **to_is_supported_asset** | **bool** |  | 
 **protocol** | **str** | Bridge rows: the protocol the bridge went through. | [optional] 
 **protocol_app** | **str** | Bridge rows: the app on top of the protocol, where known. | [optional] 
-**transfer_id** | **str** | Bridge rows: the protocol&#39;s own id of the transfer, where known (Across: the deposit id). | [optional] 
+**transfer_id** | **str** | Bridge rows: the protocol&#39;s own id of the transfer, where known (Across: the deposit id; deBridge: the order id). | [optional] 
 
 ## Example
 
