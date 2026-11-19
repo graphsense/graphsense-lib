@@ -22,6 +22,7 @@ FIXTURE = json.loads(
     ).read_text()
 )
 SPOKE_POOL = "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5"
+V20_SPOKE_POOL = "0x4d9079bb4165aeb4084c526a32695dcfd2f77381"  # Across V2.0
 USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 HANDLER = "0x0f7ae28de1c8532170ad4ee566b5801485c13a0e"  # Across multicall handler
 
@@ -130,7 +131,9 @@ def test_across_eth_native_destination_half():
 def test_across_spoofed_emitter_is_ignored():
     for case in FIXTURE:
         logs = [
-            dict(log, address="0x" + "66" * 20) if log["address"] == SPOKE_POOL else log
+            dict(log, address="0x" + "66" * 20)
+            if log["address"] in (SPOKE_POOL, V20_SPOKE_POOL)
+            else log
             for log in FIXTURE[case]["logs"]
         ]
         assert across.read("eth", db_rows(case, logs)) == []
@@ -186,6 +189,17 @@ ADAPTER_LEGS = [
      USDC, 493780871, "1082928"),
     ("pol_eth_v2_native_fill", "to", None, "0xe4afb444784f16f653c0b71c53634371a2534ae4",
      "native", 56482383258513981, "1037835"),
+    # Across V2.0 (May 2022 to April 2023): its own SpokePool, both legs pay
+    # before their event
+    ("eth_arb_v20_usdc", "from", "_T184", "0x090bad9d15ce32927a5ba51f6bd7aed2a77513b3",
+     USDC, 1921689348, "29687"),
+    ("pol_eth_v20_usdc_fill", "to", "_T266", "0xc8312f842c20bfc59301cb6fe0e7683a9107fded",
+     USDC, 21393502011, "64519"),
+    ("eth_arb_v20_native", "from", None, "0xfaa706a17863a3b4e7d90c6c21177684ad8c4eb9",
+     "native", 1100000000000000000, "29711"),
+    # the first of four fills in one relayer tx
+    ("opt_eth_v20_native_fill", "to", None, "0x517c07288216fd840a49e49d49e2644c5ee5a29d",
+     "native", 1026669660966081456, "58732"),
 ]  # fmt: skip
 
 
@@ -198,7 +212,9 @@ def test_the_eth_halves_name_the_adapters_legs(
     # a bare (native) source leg is paid by the tx's sender: the adapter's
     # address for it is that sender
     sender = address if side == "from" else "0x" + "11" * 20
-    [half] = half_bridges("eth", db_rows(case), ("across",), tx_sender=sender)
+    halves = half_bridges("eth", db_rows(case), ("across",), tx_sender=sender)
+    # a relayer tx can fill several deposits: the one with this transfer id
+    [half] = [h for h in halves if h.transferId == transfer_id]
     payment = "fromPayment" if side == "from" else "toPayment"
     assert getattr(half, payment) == bare(case) + (suffix or "")
     assert getattr(half, f"{side}Address") == address
@@ -237,3 +253,66 @@ def test_a_v2_fill_names_no_origin_asset():
         UNKNOWN,
         499972774,
     )
+
+
+def test_a_v20_deposit_reads_its_token_from_a_topic():
+    # V2.0 FundsDeposited indexes depositId, originToken and depositor; its data
+    # names the destination chain and the recipient, no output token or amount
+    [half] = across.read("eth", db_rows("eth_arb_v20_usdc"))
+    assert half == Bridge(
+        fromAddress="0x090bad9d15ce32927a5ba51f6bd7aed2a77513b3",
+        fromAsset=USDC,
+        fromAmount=1921689348,
+        fromNetwork="eth",
+        fromPayment=f"{bare('eth_arb_v20_usdc')}_T184",
+        toAddress="0x090bad9d15ce32927a5ba51f6bd7aed2a77513b3",
+        toAsset=UNKNOWN,
+        toAmount=0,
+        toNetwork="arb",
+        toPayment=PENDING,
+        protocol="across",
+        transferId="29687",  # topic 1 in V2.0
+    )
+
+
+def test_a_v20_fill_reads_its_deposit_id_from_the_data():
+    # V2.0 FilledRelay indexes only relayer and depositor; it pays before its
+    # event, fill x (1 - appliedRelayerFeePct - realizedLpFeePct)
+    [half] = across.read("eth", db_rows("pol_eth_v20_usdc_fill"))
+    assert half == Bridge(
+        fromAddress="0xeb03440702bb6de23c63ad1c5a24598433f59f86",
+        fromAsset=UNKNOWN,
+        fromAmount=21419524300,
+        fromNetwork="pol",
+        fromPayment=UNKNOWN,
+        toAddress="0xc8312f842c20bfc59301cb6fe0e7683a9107fded",
+        toAsset=USDC,
+        toAmount=21393502011,
+        toNetwork="eth",
+        toPayment=f"{bare('pol_eth_v20_usdc_fill')}_T266",
+        protocol="across",
+        transferId="64519",
+    )
+
+
+def test_each_v20_fill_of_a_batch_is_pinned_to_its_own_payout():
+    halves = across.read("eth", db_rows("opt_eth_v20_native_fill"))
+    assert [(h.transferId, h.fromNetwork, h.toAsset, h.toAmount) for h in halves] == [
+        ("58732", "opt", "native", 1026669660966081456),
+        ("81435", "arb", "native", 258168538057596003),
+        ("58731", "opt", "native", 115526936643269897),
+        ("81434", "arb", "native", 94299647335123377),
+    ]
+
+
+def test_v20_events_count_only_from_the_v20_spoke_pool():
+    logs = [
+        dict(log, address=SPOKE_POOL) if log["address"] == V20_SPOKE_POOL else log
+        for log in FIXTURE["eth_arb_v20_usdc"]["logs"]
+    ]
+    assert across.read("eth", db_rows("eth_arb_v20_usdc", logs)) == []
+    logs = [
+        dict(log, address=V20_SPOKE_POOL) if log["address"] == SPOKE_POOL else log
+        for log in FIXTURE["eth_opt_v2_usdc"]["logs"]
+    ]
+    assert across.read("eth", db_rows("eth_opt_v2_usdc", logs)) == []
