@@ -110,7 +110,7 @@ def _send(
     """The half of a Token Bridge message; before: the logs since the last one."""
     data = bytes(log["data"])
     at = int.from_bytes(data[64:96], "big")
-    payload = data[at + 32 : at + 32 + int.from_bytes(data[at : at + 32], "big")]
+    payload = data[at + 32 :]  # the fields read here end at byte 101
     if payload[0] not in _TRANSFER_TYPES:
         return None  # a token attestation
     amount = int.from_bytes(payload[1:33], "big")
