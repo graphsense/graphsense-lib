@@ -22,7 +22,7 @@
 # Not a shared `AS python-base` stage, because Dependabot would then try to
 # resolve `FROM python-base` as an image. It bumps both lines in one PR.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
 FROM eclipse-temurin:11-jre-jammy@sha256:0c567a8bd671331808b89a96976fabb305d57b123dec4fa62a20bfb89f2b32b9 AS java11
 
 # =============================================================================
