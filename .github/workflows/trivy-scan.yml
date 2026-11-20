@@ -4,6 +4,14 @@
 # is not enough. A finding (CRITICAL/HIGH with a fix available, not in
 # .trivyignore) fails the run, and GitHub notifies about a failed scheduled
 # run: that failure is the alarm, it blocks nothing.
+#
+# The alarm skips the jars bundled by Spark and Hadoop (pyspark/jars in
+# graphsense-lib; the Spark and Hadoop distributions in graphsense-spark).
+# Their findings (netty, jackson, hadoop-client-runtime, ...) can only be
+# fixed by a newer Spark, i.e. a cluster upgrade (pyspark is pinned to 3.5.x
+# to match the cluster), so they would keep this run red permanently. They
+# stay visible: the report-only scan after each image build covers everything.
+# Re-check on every Spark upgrade.
 name: Trivy scan of the published images
 
 on:
@@ -26,7 +34,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [graphsense-lib, graphsense-spark]
+        include:
+          - image: graphsense-lib
+            skip-dirs: usr/local/lib/python3.13/site-packages/pyspark/jars
+          - image: graphsense-spark
+            skip-dirs: opt/spark-*/jars,opt/hadoop-*
     env:
       TAG: ${{ github.event.inputs.tag || 'latest' }}
     steps:
@@ -41,6 +53,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           trivyignores: .trivyignore
+          skip-dirs: ${{ matrix.skip-dirs }}
           exit-code: '1'
           format: table
           output: trivy-report.txt
@@ -48,7 +61,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### Trivy: ${{ matrix.image }}:${TAG}"
+            echo "### Trivy: ${{ matrix.image }}:${TAG} (without ${{ matrix.skip-dirs }})"
             echo '```'
             cat trivy-report.txt 2>/dev/null || echo "(no report: the scan step failed, see its log)"
             echo '```'
