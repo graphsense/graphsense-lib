@@ -136,14 +136,26 @@ ENV GIT_PYTHON_REFRESH=quiet
 #     don't need here).
 #   * git/git-lfs/openssh-client: GitPython + tagpack repo operations
 #     still run inside this container at runtime.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# `apt-get upgrade` adds the Debian security fixes released after the pinned
+# python digest was built. The layer stays cached (registry buildcache) until
+# its inputs change, i.e. until Dependabot bumps the python digest, so it does
+# not re-ship on every build: fixes arrive with the weekly digest bump, and
+# the Trivy scans (github-packages-publish.yaml, trivy-scan.yml) show what is
+# still open in between.
+# No pip in the runtime image: every install here uses uv, and pip's vendored
+# copies of msgpack/urllib3 are outdated (Trivy findings) and never updated by
+# uv.lock.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     openjdk-17-jre-headless \
     libpq5 \
     git \
     git-lfs \
     openssh-client \
     && rm -rf /var/lib/apt/lists/* \
-    && git lfs install
+    && git lfs install \
+    && python -m pip uninstall -y pip \
+    && rm -rf /root/.cache
 
 # Secondary Java 11 runtime (~136 MB) for Spark jobs submitted against the
 # prod standalone cluster: its executors run Java 11 (the hosts are shared
