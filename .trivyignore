@@ -1,0 +1,4 @@
+# Trivy findings we accept, one CVE id per line, each with a comment saying
+# why and until when (re-check date). Used by the scans in
+# github-packages-publish.yaml, spark_docker_publish.yml and trivy-scan.yml.
+# Keep it short: the fix is usually a base image or dependency bump.

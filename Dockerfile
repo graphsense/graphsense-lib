@@ -136,7 +136,14 @@ ENV GIT_PYTHON_REFRESH=quiet
 #     don't need here).
 #   * git/git-lfs/openssh-client: GitPython + tagpack repo operations
 #     still run inside this container at runtime.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# `apt-get upgrade` adds the Debian security fixes released after the pinned
+# python digest was built. The layer stays cached (registry buildcache) until
+# its inputs change, i.e. until Dependabot bumps the python digest, so it does
+# not re-ship on every build: fixes arrive with the weekly digest bump, and
+# the Trivy scans (github-packages-publish.yaml, trivy-scan.yml) show what is
+# still open in between.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     openjdk-17-jre-headless \
     libpq5 \
     git \

@@ -10,7 +10,9 @@ ARG UID=10000
 
 ARG SPARK_UI_PORT=4040
 
+# apt-get upgrade: OS security fixes released after the base image was built.
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends curl ca-certificates gnupg && \
     install -d -m 0755 /etc/apt/keyrings && \
     curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" \
