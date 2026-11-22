@@ -11,6 +11,8 @@ tests/defi/data/bridges/relay/eth_fills.json: the adapter's own answers for
 these eth txs, equal to its live answers from each deposit's chain.
 """
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
@@ -150,6 +152,48 @@ def test_a_fill_is_shown_only_to_a_caller_who_may_see_its_deposits_chain(
 
 
 LIVE = ETH_TXS["live"]
+
+
+@pytest.mark.parametrize("name", sorted(LIVE))
+def test_an_eth_fill_asked_live_answers_the_backends_row(name):
+    """The rows the backend answered live for four eth fills: a pair for the
+    fill paid by the Depository and for the one through the v3
+    ApprovalProxy, the backend's half for a deposit on Solana and for a
+    deposit that logged no event."""
+    recorded = LIVE[name]
+    (row,) = recorded["adapter_rows"]
+    response, _ = ask(recorded, [row])
+    assert response.json() == [row]
+
+
+def test_a_fill_asked_by_its_root_trace_asks_the_backend_for_the_tx():
+    """<hash>_I0 that is the whole tx: no bridge leg is the root trace, so the
+    backend is asked for the bare hash and its row is the answer."""
+    recorded = FILLS["native_fill"]
+    (row,) = recorded["adapter_rows"]
+    tx = recorded["tx_hash"]
+    client, seen, db = make_client(
+        log_rows=[],
+        indexed=(tx,),
+        included_bridges=("relay",),
+        tx_row=tx_row(recorded),
+        backend_answer=httpx.Response(200, json=[row]),
+    )
+    root = {
+        "trace_index": 0,
+        "trace_address": "",
+        "call_type": "call",
+        "from_address": bytes.fromhex(recorded["from"][2:]),
+        "to_address": bytes.fromhex(recorded["to"][2:]),
+        "value": int(recorded["value"], 16),
+    }
+    db.fetch_transaction_traces = AsyncMock(return_value=[root])
+
+    response = client.get(f"/eth/txs/{tx}_I0/conversions")
+
+    assert response.json() == [row]
+    (call,) = seen
+    assert str(call.url) == f"{BACKEND_URL}/eth/txs/{tx}/conversions?only_bridges=true"
 
 
 @pytest.mark.parametrize(

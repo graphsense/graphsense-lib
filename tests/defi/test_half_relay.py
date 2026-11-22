@@ -18,6 +18,7 @@ from graphsenselib.defi.bridging.delegated import (
     half_bridges,
     possible_fills,
 )
+from graphsenselib.defi.bridging.halves import relay
 from graphsenselib.defi.bridging.models import Bridge
 
 FIXTURE = json.loads(
@@ -212,6 +213,68 @@ def test_a_tx_with_a_fills_shape_may_be_a_relay_fill(name):
     assert possible_fills("eth", tx, ("relay",)) == ("relay",)
     assert possible_fills("eth", tx, ("across", "cctp")) == ()
     assert possible_fills("trx", tx, ("relay",)) == ()
+
+
+@pytest.mark.parametrize("name", sorted(ETH_TXS["live"]))
+def test_a_live_eth_fill_has_a_fills_shape(name):
+    """Fills asked live 2026-11-23, among them the two shapes the recorded
+    receipts lack: the Depository's `execute` and the v3 ApprovalProxy."""
+    assert possible_fills("eth", tx_row(ETH_TXS["live"][name]), ("relay",)) == (
+        "relay",
+    )
+
+
+def test_a_raw_transfer_deposit_has_a_fills_shape():
+    """`transfer` plus one word: a user's raw transfer to the Depository with
+    the orderId appended looks like a solver's token fill. The backend
+    answers no row for it (the sender is no solver)."""
+    recorded = ETH_TXS["other"]["raw_transfer_deposit"]
+    assert recorded["input"].startswith("0xa9059cbb")
+    assert possible_fills("eth", tx_row(recorded), ("relay",)) == ("relay",)
+
+
+def test_every_shape_of_the_gate_has_a_recorded_eth_tx():
+    """Each contract the gate names, with its call, and each direct shape is
+    in a real eth tx of the fixture: none of the gate is tested on invented
+    calldata."""
+    recorded = [
+        tx_row(tx)
+        for group in ("fills", "live", "other")
+        for tx in ETH_TXS[group].values()
+    ]
+    seen = {
+        (tx["to_address"], tx["input"][:4])
+        for tx in recorded
+        if possible_fills("eth", tx, ("relay",))
+    }
+    wanted = set(relay._FILL_CALLS.items()) | {
+        (relay._DEPOSITORIES["eth"], relay._EXECUTE)
+    }
+    assert wanted <= seen
+    direct = [
+        tx["input"]
+        for tx in recorded
+        if possible_fills("eth", tx, ("relay",))
+        and (tx["to_address"], tx["input"][:4]) not in wanted
+    ]
+    assert {len(data) for data in direct} == {32, 100, 132}
+    assert {data[:4] for data in direct if len(data) > 32} == {
+        relay._TRANSFER,
+        relay._TRANSFER_FROM,
+    }
+
+
+def test_a_plain_token_transfer_is_no_possible_fill():
+    """transfer(address,uint256) without a word after it: the row of the REST
+    test table (tests/web/cassandra/data/resttest_eth_raw.transaction), no
+    mainnet tx. No recorded plain transferFrom is on file."""
+    plain = unhex(
+        "0xa9059cbb000000000000000000000000d6d45a205286dd7019de84443f4e7fd693918f0d"
+        "0000000000000000000000000000000000000000000000000000018c2357b600"
+    )
+    tx = {**tx_row(ETH_TXS["fills"]["usdc_fill"]), "input": plain}
+    assert len(plain) == 68
+    assert possible_fills("eth", tx, ("relay",)) == ()
 
 
 def test_a_tx_of_another_shape_is_no_possible_fill():
