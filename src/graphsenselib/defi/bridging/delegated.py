@@ -165,6 +165,16 @@ def half_bridges(
     )
 
 
+class PairingUnanswered(Exception):
+    """The backend asked to pair a tx's half bridges gave no usable answer
+    (no connection, no answer in time, an error): the halves are not final.
+    `reason` is the partial_reason they take."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _paid_by(
     bridge: Bridge, network: str, logs: List[Log], tx_sender: Optional[str]
 ) -> Bridge:

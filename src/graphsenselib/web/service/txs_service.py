@@ -5,7 +5,11 @@ from typing import Awaitable, Callable, Optional, Sequence, Set
 from graphsenselib.db.asynchronous.services.models import (
     ExternalConversion as ServiceExternalConversion,
 )
-from graphsenselib.defi.bridging.delegated import PENDING, UNKNOWN
+from graphsenselib.defi.bridging.delegated import (
+    PENDING,
+    UNKNOWN,
+    PairingUnanswered,
+)
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -114,6 +118,8 @@ async def get_tx_conversions(
     A half of the backend leaves our half in place; ours takes its
     partial_reason (it could not pair the leg for now), where ours has
     none its transfer id, and the other chain's name where ours is unknown.
+    A backend that did not answer at all (PairingUnanswered) leaves every
+    half in place with the reason it failed for.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
     asks the backend for the bare hash."""
@@ -126,12 +132,16 @@ async def get_tx_conversions(
     rows = [to_api_external_conversion(conv) for conv in result.conversions]
     halves = [to_api_external_conversion(conv) for conv in result.half_bridges]
     candidates = []
+    unanswered = None  # why the backend's pairing gave no answer, if it gave none
     if halves and pair_bridges is not None:
         identifier = SubTransactionIdentifier.from_string(tx_hash)
-        if result.whole_tx and identifier.tx_type is SubTransactionType.InternalTx:
-            bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
-        else:
-            bridges = await pair_bridges()
+        try:
+            if result.whole_tx and identifier.tx_type is SubTransactionType.InternalTx:
+                bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
+            else:
+                bridges = await pair_bridges()
+        except PairingUnanswered as exc:
+            bridges, unanswered = [], exc.reason
         # the backend's names as the API can state them (bridge_names)
         candidates = [
             ExternalConversion(
@@ -167,6 +177,8 @@ async def get_tx_conversions(
         for i, half in enumerate(halves)
         if i not in replaced
     ]
+    if unanswered:
+        kept = [half.model_copy(update={"partial_reason": unanswered}) for half in kept]
     if halves:
         _log_merge(
             tx_hash,

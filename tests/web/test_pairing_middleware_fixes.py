@@ -38,10 +38,12 @@ from tests.web.test_delegated_conversions import (
     HALF_ROW,
     LOCAL_ROW,
     SWAP_ROW,
-    fake_db,
-    local_swap,  # noqa: F401 -- the autouse fixture of that module
+    # noqa: F401 -- the autouse fixture of that module
     make_client,
+    fake_db,
+    local_swap,
     records_of_the_middleware,
+    unanswered,
 )
 
 STATS = {"currencies": [{"name": "arb", "no_blocks": 1}]}
@@ -223,8 +225,9 @@ def test_a_failed_pairing_does_not_skip_the_backend_on_the_merges(
         response = client.get(CONVERSIONS)
     stats = client.get("/stats")
     again = client.get(CONVERSIONS)
-    # the half bridge, named and alerted as before
-    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    # the half bridge, not final, named and alerted as before
+    error = TimeoutError() if conversions_answer is slow else conversions_answer
+    assert response.json() == [LOCAL_ROW, unanswered(error)]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
     (alert,) = [r.getMessage() for r in records if r.levelno == logging.ERROR]
     assert "eth conversions lack the bridges it pairs" in alert
@@ -252,7 +255,7 @@ def test_a_merge_that_could_not_reach_the_backend_still_skips_the_pairing():
     stats = client.get("/stats")
     response = client.get(CONVERSIONS)
     assert stats.headers[DECLINED_HEADER] == BACKEND_URL
-    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert response.json() == [LOCAL_ROW, unanswered()]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
     assert [r.url.path for r in seen] == ["/stats"]
 

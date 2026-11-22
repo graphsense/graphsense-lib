@@ -143,6 +143,14 @@ HALF_ROW = half_row("v2_burn")
 assert HALF_ROW["from_asset_transfer"] == BRIDGE_ROW["from_asset_transfer"]
 
 
+def unanswered(error=None):
+    """The burn's half when the backend did not answer: not final, and its
+    row says why (out of time for a timeout, failed for anything else)."""
+    timed_out = isinstance(error, (httpx.TimeoutException, TimeoutError))
+    reason = "counter_lookup_timeout" if timed_out else "counter_lookup_failed"
+    return {**HALF_ROW, "partial_reason": reason}
+
+
 @pytest.fixture(autouse=True)
 def local_swap():
     with patch(
@@ -754,10 +762,40 @@ def test_a_failed_backend_leaves_the_half_bridge_and_is_named(answer, level):
     with records_of_the_middleware() as records:
         response = client.get(CONVERSIONS)
     assert response.status_code == 200
-    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert response.json() == [LOCAL_ROW, unanswered()]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
     # the alert, then the pairing's INFO line and the merge's
     assert [r.levelno for r in records] == [level, logging.INFO, logging.INFO]
+
+
+async def _slow(request):
+    await asyncio.sleep(3)
+    return httpx.Response(200, json=[BRIDGE_ROW])
+
+
+@pytest.mark.parametrize(
+    "backend, reason",
+    [
+        ({"timeout_s": 0.2, "backend_answer": _slow}, "counter_lookup_timeout"),
+        ({"fail_with": httpx.ReadTimeout("hung")}, "counter_lookup_timeout"),
+        ({"fail_with": httpx.ConnectError("refused")}, "counter_lookup_failed"),
+        ({"backend_answer": httpx.Response(503)}, "counter_lookup_failed"),
+        ({"backend_answer": httpx.Response(200, json=[])}, None),
+        ({"backend_answer": httpx.Response(404)}, None),
+    ],
+    ids=["timeout", "hung", "refused", "503", "empty answer", "404"],
+)
+def test_the_local_half_says_why_when_the_backend_did_not_answer(backend, reason):
+    """A backend that did not answer leaves the local half in place, and the
+    half is not final: its row says why, and the answer must not be stored.
+    A backend that answered "nothing to pair" leaves a final half."""
+    client, _, _ = make_client(**backend)
+    response = client.get(CONVERSIONS)
+    assert response.status_code == 200
+    half = {**HALF_ROW, "partial_reason": reason} if reason else HALF_ROW
+    assert response.json() == [LOCAL_ROW, half]
+    assert response.headers.get("Cache-Control") == ("no-store" if reason else None)
+    assert (DECLINED_HEADER in response.headers) == bool(reason)
 
 
 @pytest.mark.parametrize(
@@ -774,7 +812,7 @@ def test_an_unreachable_or_hung_backend_is_asked_again_by_the_next_pairing(
     with records_of_the_middleware() as records:
         answers = [client.get(CONVERSIONS), client.get(CONVERSIONS)]
     for response in answers:
-        assert response.json() == [LOCAL_ROW, HALF_ROW]
+        assert response.json() == [LOCAL_ROW, unanswered(error)]
         assert response.headers[DECLINED_HEADER] == BACKEND_URL
     assert len(seen) == 2
     (alert,) = [r.getMessage() for r in records if r.levelno == logging.ERROR]
@@ -798,7 +836,7 @@ def test_merge_timeout_s_bounds_the_whole_call():
         again = client.get(CONVERSIONS)
     assert elapsed < 2
     for answer in (response, again):
-        assert answer.json() == [LOCAL_ROW, HALF_ROW]
+        assert answer.json() == [LOCAL_ROW, unanswered(TimeoutError())]
         assert answer.headers[DECLINED_HEADER] == BACKEND_URL
     assert len(seen) == 2
     assert any(r.levelno == logging.ERROR for r in records)
