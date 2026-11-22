@@ -370,6 +370,21 @@ def test_the_local_half_takes_the_transfer_id_only_the_backend_knows(reason):
     assert ("Cache-Control" in response.headers) == bool(reason)
 
 
+def test_a_half_of_the_backend_is_never_a_row_of_the_answer():
+    """Every half the backend answers reaches the merge (it may carry a reason,
+    a transfer id or a chain name for ours). It never becomes a row: the half
+    of our own leg leaves ours as it is, and a half of a leg we do not have is
+    dropped, so no local half is replaced or doubled."""
+    ours = {**BRIDGE_ROW, "to_asset_transfer": "pending"}
+    another = {**ours, "from_asset_transfer": f"{CCTP_BURN[2:]}_T1"}
+    client, _, _ = make_client(
+        backend_answer=httpx.Response(200, json=[ours, another, ours])
+    )
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert "Cache-Control" not in response.headers
+
+
 def _burn_to(domain):
     """The V2 burn's logs with another destination domain."""
     logs = [dict(log) for log in FIXTURE["v2_burn"]["logs"]]
