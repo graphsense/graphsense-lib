@@ -259,7 +259,7 @@ class RelatedAddresses(APIModel):
 
 # The protocol a bridge_tx row went through: the values the external backend
 # adapter's ExternalConversion sends (more with each delegated bridge)
-BridgeProtocol = Literal["across", "debridge", "layerzero", "wormhole", "relay"]
+BridgeProtocol = Literal["across", "cctp", "debridge", "layerzero", "wormhole", "relay"]
 
 
 class ExternalConversion(APIModel):
@@ -284,6 +284,7 @@ class ExternalConversion(APIModel):
     # id of the transfer where it is known: Across depositId (decimal, unique
     # per origin chain only), deBridge orderId (0x hex), LayerZero guid (0x hex),
     # Wormhole VAA id (<emitterChain>/<emitterAddress, 64 hex>/<sequence>),
+    # CCTP nonce (V2: 0x hex; V1: decimal, unique per source domain only),
     # Relay orderId (0x hex)
     protocol: Optional[BridgeProtocol] = Field(
         default=None,
@@ -298,7 +299,8 @@ class ExternalConversion(APIModel):
         description=(
             "Bridge rows: the protocol's own id of the transfer, where known"
             " (Across: the deposit id; deBridge: the order id; LayerZero: the"
-            " message guid; Wormhole: the VAA id; Relay: the order id)."
+            " message guid; Wormhole: the VAA id; CCTP: Circle's nonce; Relay: the"
+            " order id)."
         ),
     )
     # set by an external backend when the row is not final: a lookup it needs

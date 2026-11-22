@@ -111,8 +111,9 @@ async def get_tx_conversions(
     network on that side, or a bare tx with matching asset and amount);
     a half no row names stays, a row naming no half
     was not asked for and is dropped, and an ambiguous match keeps the half.
-    A half the backend could not pair for now (its own half row with a
-    partial_reason) leaves our half in place, with that reason.
+    A half of the backend leaves our half in place; ours takes its
+    partial_reason (it could not pair the leg for now) and, where ours has
+    none, its transfer id.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
     asks the backend for the bare hash."""
@@ -141,7 +142,8 @@ async def get_tx_conversions(
             )
             for r in bridges
         ]
-    # the backend's own halves complete nothing: they say why ours is not final
+    # the backend's own halves complete nothing: they say why ours is not final,
+    # or name a transfer id ours cannot know
     unpaired = [row for row in candidates if _is_half(row)]
     candidates = [row for row in candidates if not _is_half(row)]
 
@@ -236,11 +238,17 @@ def _is_half(row: ExternalConversion) -> bool:
 def _with_reason(
     half: ExternalConversion, unpaired: Sequence[ExternalConversion]
 ) -> ExternalConversion:
-    """`half`, with the partial_reason of the backend's half of the same leg,
-    if it sent one."""
+    """`half`, with what the backend's half of the same leg adds to it: its
+    partial_reason, and its transfer id where ours has none (Circle assigns
+    a CCTP V2 burn's nonce off chain, so only the backend can name it)."""
     for row in unpaired:
         if _names_leg(row, half):
-            return half.model_copy(update={"partial_reason": row.partial_reason})
+            return half.model_copy(
+                update={
+                    "partial_reason": row.partial_reason,
+                    "transfer_id": half.transfer_id or row.transfer_id,
+                }
+            )
     return half
 
 
