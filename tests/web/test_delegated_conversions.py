@@ -41,6 +41,8 @@ from tests.defi.test_delegated_bridges import (
     db_rows,
     without_cctp_events,
 )
+from tests.defi.test_half_across import FIXTURE as ACROSS
+from tests.defi.test_half_across import db_rows as across_rows
 
 BACKEND_URL = "https://backend.test"
 USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
@@ -530,6 +532,49 @@ def test_a_paired_bridge_takes_the_place_of_the_half_bridge_it_names(
     )
     expected = [LOCAL_ROW, bridge] if paired else [LOCAL_ROW, HALF_ROW]
     assert client.get(CONVERSIONS).json() == expected
+
+
+def test_a_pair_takes_only_its_own_half_among_the_native_fills_of_one_tx():
+    """eth 0x7d7e5024…6353: a relayer tx filling four Across deposits in
+    native ETH, so each local half names the same bare tx hash as its leg.
+    The pair the backend answers for opt deposit 58732 replaces that half
+    alone, and the reason it gives for the sibling it could not look up
+    (arb deposit 81435) lands on that sibling alone."""
+    tx = ACROSS["opt_eth_v20_native_fill"]["tx_hash"]
+    path = f"/eth/txs/{tx}/conversions"
+
+    def ask(answer):
+        client, _, _ = make_client(
+            log_rows=across_rows("opt_eth_v20_native_fill"),
+            indexed=(tx,),
+            included_bridges=("across",),
+            backend_answer=httpx.Response(200, json=answer),
+        )
+        return client.get(path)
+
+    local, *halves = ask([]).json()
+    assert [half["transfer_id"] for half in halves] == [
+        "58732",
+        "81435",
+        "58731",
+        "81434",
+    ]
+    assert {half["to_asset_transfer"] for half in halves} == {tx[2:]}
+    own, failed, third, fourth = halves
+    pair = {
+        **own,
+        "from_address": "0x517c07288216fd840a49e49d49e2644c5ee5a29d",
+        "from_asset": "native",
+        "from_asset_transfer": "b6fb15e4bcd8f145ab89fbc709e4bdb19e4fb6902acca46c429888edaddddf94",
+        "from_is_supported_asset": True,
+        "to_is_supported_asset": True,
+    }
+    reason = {"partial_reason": "counter_lookup_failed"}
+
+    response = ask([pair, {**failed, **reason}, third, fourth])
+
+    assert response.json() == [local, {**failed, **reason}, third, fourth, pair]
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_a_paired_bridge_replaces_only_the_half_bridge_it_names():

@@ -265,7 +265,10 @@ def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
 
 
 def _names_leg(row: ExternalConversion, half: ExternalConversion) -> bool:
-    """`row` has the known leg of `half` on the same side."""
+    """`row` has the known leg of `half` on the same side. Two rows that both
+    name a transfer id are of one transfer only when the ids agree."""
+    if half.transfer_id and row.transfer_id and half.transfer_id != row.transfer_id:
+        return False
     for side in ("from", "to"):
         transfer = getattr(half, f"{side}_asset_transfer").lower().removeprefix("0x")
         if transfer in _PLACEHOLDERS or getattr(half, f"{side}_network") != getattr(
@@ -275,12 +278,13 @@ def _names_leg(row: ExternalConversion, half: ExternalConversion) -> bool:
         paired_transfer = (
             getattr(row, f"{side}_asset_transfer").lower().removeprefix("0x")
         )
-        if transfer == paired_transfer:
-            return True
-        # A bare leg has no unique Transfer; its asset and amount must agree.
-        if (
-            "_" not in transfer
-            and transfer == paired_transfer.partition("_")[0]
+        if "_" in transfer:
+            if transfer == paired_transfer:
+                return True
+        # A bare leg has no unique Transfer (a relayer tx can fill four native
+        # deposits): its asset and amount must agree as well.
+        elif (
+            transfer == paired_transfer.partition("_")[0]
             and getattr(half, f"{side}_asset") == getattr(row, f"{side}_asset")
             and getattr(half, f"{side}_amount") == getattr(row, f"{side}_amount")
         ):
