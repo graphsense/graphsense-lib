@@ -342,6 +342,24 @@ def test_a_paired_row_that_is_not_final_keeps_its_reason():
     assert response.headers["Cache-Control"] == "no-store"
 
 
+@pytest.mark.parametrize(
+    "reason", [None, "counter_lookup_failed"], ids=["final", "not final"]
+)
+def test_the_local_half_takes_the_transfer_id_only_the_backend_knows(reason):
+    """Circle assigns a CCTP V2 burn's nonce off chain, so the eth logs hold
+    none. The backend's half names it once Circle attested the burn (and the
+    mint is not found): the local half stays, with that id."""
+    nonce = "0x" + "3b" * 32
+    said = {"protocol": "cctp", "transfer_id": nonce}
+    if reason:
+        said["partial_reason"] = reason
+    half = {**BRIDGE_ROW, "to_asset_transfer": "pending", **said}
+    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[half]))
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, {**HALF_ROW, **said}]
+    assert ("Cache-Control" in response.headers) == bool(reason)
+
+
 def test_a_final_half_of_the_backend_leaves_the_local_half_as_it_is():
     """The backend's own half without a reason (the other chain is not
     served, nothing in the window) is no better than the local one."""
