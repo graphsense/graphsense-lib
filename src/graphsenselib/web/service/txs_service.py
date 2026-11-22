@@ -122,7 +122,13 @@ async def get_tx_conversions(
     half in place with the reason it failed for.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
-    asks the backend for the bare hash."""
+    asks the backend for the bare hash.
+
+    A tx that may be a fill no log tells (result.possible_fills, a Relay
+    fill) has no half: the backend is asked as well, and its row of that
+    bridge paying on this network in this tx is the answer's row as it is, a
+    pair or the backend's own half. No such row (a refund, any other payment
+    of that shape) or no answer: no bridge row."""
     result = await ctx.services.txs_service.get_conversions(
         currency,
         tx_hash,
@@ -133,8 +139,8 @@ async def get_tx_conversions(
     halves = [to_api_external_conversion(conv) for conv in result.half_bridges]
     candidates = []
     unanswered = None  # why the backend's pairing gave no answer, if it gave none
-    if halves and pair_bridges is not None:
-        identifier = SubTransactionIdentifier.from_string(tx_hash)
+    identifier = SubTransactionIdentifier.from_string(tx_hash)
+    if (halves or result.possible_fills) and pair_bridges is not None:
         try:
             if result.whole_tx and identifier.tx_type is SubTransactionType.InternalTx:
                 bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
@@ -152,6 +158,7 @@ async def get_tx_conversions(
             )
             for r in bridges
         ]
+    answered = candidates
     # the backend's own halves complete nothing: they say why ours is not final,
     # or name a transfer id ours cannot know
     unpaired = [row for row in candidates if _is_half(row)]
@@ -189,7 +196,29 @@ async def get_tx_conversions(
             local_dropped=len(rows) - len(local),
             kept_halves=len(kept),
         )
-    return local + kept + paired
+    fills = [
+        row
+        for row in answered
+        if not any(row is pair for pair in paired)
+        and _is_fill_here(row, result, currency, identifier)
+    ]
+    return local + kept + paired + fills
+
+
+def _is_fill_here(row: ExternalConversion, result, currency: str, identifier) -> bool:
+    """`row` is the fill the tx may be (result.possible_fills): that bridge's
+    row paying on this network in this tx, and for a sub-tx request with the
+    leg asked for."""
+    paid = row.to_asset_transfer.lower().removeprefix("0x")
+    tx = identifier.tx_hash.lower().removeprefix("0x")
+    return (
+        row.protocol in result.possible_fills
+        and row.to_network == currency
+        and paid.partition("_")[0] == tx
+        and (
+            result.whole_tx or paid == identifier.to_string().lower().removeprefix("0x")
+        )
+    )
 
 
 def _log_merge(

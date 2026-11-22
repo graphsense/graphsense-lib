@@ -184,8 +184,9 @@ def records_of_the_middleware():
         logger.setLevel(previous)
 
 
-def fake_db(log_rows, indexed):
-    """An eth database whose txs `indexed` all have `log_rows` as logs."""
+def fake_db(log_rows, indexed, tx_row=None):
+    """An eth database whose txs `indexed` all have `log_rows` as logs, and
+    the fields of `tx_row` in their row of the transaction table."""
     known = {bytes.fromhex(h.removeprefix("0x")) for h in indexed}
 
     async def get_tx_by_hash(currency, tx_hash):
@@ -196,6 +197,7 @@ def fake_db(log_rows, indexed):
             "block_id": FIXTURE["v2_burn"]["block_id"],
             "from_address": bytes.fromhex("11" * 20),  # every tx row names its sender
             "input": None,
+            **(tx_row or {}),
         }
 
     db = MagicMock()
@@ -218,6 +220,7 @@ def make_client(
     timeout_s=None,
     with_middleware=True,
     included_bridges=("cctp",),
+    tx_row=None,
 ):
     """The txs routes over a fake database behind the middleware, and a
     recording mock backend. `backend_answer` is an httpx.Response or a function
@@ -242,7 +245,9 @@ def make_client(
             "included_bridges": list(included_bridges),
         }
     )
-    db = fake_db(db_rows("v2_burn") if log_rows is None else log_rows, indexed)
+    db = fake_db(
+        db_rows("v2_burn") if log_rows is None else log_rows, indexed, tx_row
+    )
     app.state.config = config
     app.state.db = db
     app.state.services = SimpleNamespace(
@@ -715,6 +720,67 @@ def test_the_opt_out_and_the_currency_roles(headers, roles_config, asked, answer
     response = client.get(CONVERSIONS, headers=headers)
     assert response.json() == answer
     assert len(seen) == int(asked)
+
+
+@pytest.mark.parametrize(
+    "roles, said, expected, stored",
+    [
+        (
+            "currency-arb",
+            {"transfer_id": "0x" + "3b" * 32},
+            {"transfer_id": "0x" + "3b" * 32},
+            True,
+        ),
+        ("currency-bnb", {"transfer_id": "0x" + "3b" * 32}, {}, True),
+        (
+            "currency-bnb",
+            {
+                "transfer_id": "0x" + "3b" * 32,
+                "partial_reason": "counter_lookup_failed",
+            },
+            {"partial_reason": "counter_lookup_failed"},
+            False,
+        ),
+    ],
+    ids=["role", "no role", "no role, not final"],
+)
+def test_a_half_of_the_backend_counts_for_the_roles_like_a_pair(
+    roles, said, expected, stored
+):
+    """The backend's half of the burn names arb. A caller without the arb
+    role gets nothing of that row (its transfer id here), as of a pair. That
+    the leg is not final is no row content: the local half still says so, and
+    the answer is not to be stored."""
+    half = {**BRIDGE_ROW, "to_asset_transfer": "pending", "protocol": "cctp", **said}
+    client, _, _ = make_client(
+        roles_config=ROLES,
+        gated=GATED,
+        backend_answer=httpx.Response(200, json=[half]),
+    )
+    response = client.get(CONVERSIONS, headers={"X-User-Roles": roles})
+    assert response.json() == [LOCAL_ROW, {**HALF_ROW, **expected}]
+    assert ("Cache-Control" not in response.headers) == stored
+
+
+def test_a_backend_out_of_its_budget_leaves_a_half_that_is_not_final():
+    """A 501 `budget_exhausted` is the backend out of time, not "nothing to
+    pair": the local half says counter_lookup_timeout and is not to be
+    stored. Any other 501 leaves the plain half."""
+    out_of_time = httpx.Response(501, json={"reason": "budget_exhausted"})
+    client, _, _ = make_client(backend_answer=out_of_time)
+    response = client.get(CONVERSIONS)
+    assert response.json() == [
+        LOCAL_ROW,
+        {**HALF_ROW, "partial_reason": "counter_lookup_timeout"},
+    ]
+    assert response.headers["Cache-Control"] == "no-store"
+    assert DECLINED_HEADER not in response.headers
+
+    refused = httpx.Response(501, json={"reason": "mint_not_found"})
+    client, _, _ = make_client(backend_answer=refused)
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert "Cache-Control" not in response.headers
 
 
 def test_a_pairing_the_caller_may_see_only_in_part_leaves_the_half_bridges():

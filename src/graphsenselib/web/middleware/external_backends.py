@@ -78,8 +78,11 @@ Decision rules:
    find the other chain's. This middleware offers the pairing on
    ``request.state.pair_bridges``; the conversions route calls it only for a
    tx with such a half bridge, and puts the backend's rows in place of the
-   half bridges they complete (web/service/txs_service.py). The answer passes
-   through untouched. The backend is asked for the same path, sub-tx suffix
+   half bridges they complete (web/service/txs_service.py). It also calls it
+   for a tx that may be a fill no log tells (a Relay fill: its calldata has
+   the shape, defi/bridging/halves/relay.py) and then takes the backend's row
+   for that fill as it is; no row, or no answer, is no bridge row. The answer
+   passes through untouched. The backend is asked for the same path, sub-tx suffix
    included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
    name the tx are taken: the local detection answers swaps. A half row
    (a side's asset transfer "pending" or "unknown", a leg the backend could
@@ -1167,7 +1170,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         backend cannot pair it (a 404 or 501). When it fails (logged with
         why, _fetch_json) the failure is named in `declined` and raised as
         PairingUnanswered: the route's halves are not final and say so
-        (partial_reason). A failure does not start a skip window: the pairing
+        (partial_reason). So is a 501 whose reason is `budget_exhausted`
+        (the backend's own read ran out of time), without naming it declined.
+        A caller who lacks a gated currency one of the rows names, a half's
+        included, gets none of them; a reason among them is still raised. A failure does not start a skip window: the pairing
         only enriches an answer. After the pairs
         come the halves of the backend that say why they are not final
         (partial_reason) or name a transfer id: the conversions route puts
@@ -1233,6 +1239,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if doc is None:
             reason = trace.get("reason", "no_answer")
             log(rows=0, reason=reason)
+            if reason == _BUDGET_EXHAUSTED:
+                # it answered, but only that its own read ran out of time:
+                # not "nothing to pair". The backend is not named as declined
+                raise _unanswered(partial, _LOOKUP_TIMEOUT)
             if backend.url not in declined:
                 return []  # it answered: nothing to pair (a 404 or 501)
             raise _unanswered(
@@ -1272,13 +1282,19 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if reasons:
             trace["partial"] = ",".join(reasons)
         log = functools.partial(log, halves=len(named) - len(bridges) or None)
-        networks = {n for row in bridges for n in (row.from_network, row.to_network)}
+        # the halves count as the pairs do: a half can be the answer's row
+        # itself (a fill no log tells, txs_service.py) and names its chain
+        networks = {n for row in named for n in (row.from_network, row.to_network)}
         if self._entitled(request, networks) != networks:
             # each row replaces only the half bridge whose leg it names
             # (txs_service.py), so the rows the caller may see could be kept;
             # a caller who may see only some of them keeps every half bridge
             # instead, the safe side (module docstring)
             log(rows=len(bridges), reason="entitlement")
+            if reasons:
+                # that a leg is not final is no row content: the route's
+                # halves still say so, and the answer is not stored
+                raise _unanswered(partial, reasons[0])
             return []
         partial.extend(reasons)
         if bridges:
@@ -1473,6 +1489,8 @@ def _refusal_reason(response: httpx.Response) -> str:
 # reasons the backend's own rows use for a lookup that failed or ran out of time
 _LOOKUP_FAILED = "counter_lookup_failed"
 _LOOKUP_TIMEOUT = "counter_lookup_timeout"
+# the reason of the backend's 501 when its bridge read ran out of its own time
+_BUDGET_EXHAUSTED = "budget_exhausted"
 
 
 def _unanswered(partial: List[str], reason: str) -> PairingUnanswered:

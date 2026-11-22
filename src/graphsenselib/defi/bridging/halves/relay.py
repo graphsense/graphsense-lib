@@ -19,17 +19,24 @@ bare-tx leg's fromAddress is the depositor the event states (`from`), never
 the tx's sender, which is a bundler when the deposit comes through an
 ERC-4337 EntryPoint (11 of 80 native deposits the adapter sampled).
 
-Not read: a fill. It logs nothing of Relay's (the order's id is the end of its
-calldata), and a refund looks the same, so an eth fill shows no bridge here;
-seen from its deposit on another chain the pair names it. Not read either: a
-raw `ERC20.transfer` to the Depository, which logs no Depository event.
+A fill is no half bridge: it logs nothing of Relay's. All that tells it is its
+calldata, a payment or a call to one of Relay's contracts with the order's id
+after it, and who sent it, one of Relay's solver wallets. A refund, a solver's
+other payments and anybody's transfer with 32 bytes appended have the same
+calldata, and the wallets are Relay's list, which only the external backend
+holds. So nothing of a fill is read here: `fill_shaped` says a tx MAY be one
+(its calldata alone, the adapter's shapes in services/bridges/relay.py), the
+conversions route then asks the backend and takes its row
+(web/service/txs_service.py), and without its answer there is no row. Not
+read either: a raw `ERC20.transfer` to the Depository, which logs no
+Depository event.
 
 Contract and topic0s: Relay's /chains answer (protocol.v2.depository) and the
 adapter's recorded receipts (tests/data/bridges/relay/), 2026-11-22.
 
 A deposit's transfer id is its `id`, Relay's orderId (0x hex)."""
 
-from typing import List
+from typing import List, Optional
 
 from graphsenselib.defi.bridging.half_common import (
     PENDING,
@@ -53,6 +60,43 @@ _ERC20_DEPOSIT = bytes.fromhex(
 )
 # network -> its Depository; a network not listed has no Relay half bridge
 _DEPOSITORIES = {"eth": bytes.fromhex("4cd00e387622c35bddb9b4c962c136462338bc31")}
+
+# A fill's calldata is a call plus one word, the order's id. Direct: the id
+# alone on a plain value transfer, or after the token's transfer(address,
+# uint256) / transferFrom(address,address,uint256).
+_ID_BYTES = 32
+_TRANSFER = bytes.fromhex("a9059cbb")
+_TRANSFER_FROM = bytes.fromhex("23b872dd")
+# Through one of Relay's contracts (its /chains `contracts`, one address per
+# version on every network): contract -> the call a fill makes on it
+_MULTICALL = bytes.fromhex("cd6e13f7")  # router
+_PERMIT_MULTICALL = bytes.fromhex("0a2b8f36")  # ApprovalProxy
+_EXECUTE = bytes.fromhex("2d9fb478")  # Depository
+_FILL_CALLS = {
+    bytes.fromhex("0729e2a4716d9f7dd17858d5d504426d228697f7"): _MULTICALL,
+    bytes.fromhex("b92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"): _MULTICALL,
+    bytes.fromhex("5567954cd026cebfe486062cb75848e0f1c12e58"): _PERMIT_MULTICALL,
+    bytes.fromhex("ccc88a9d1b4ed6b0eaba998850414b24f1c315be"): _PERMIT_MULTICALL,
+}
+
+
+def fill_shaped(network: str, to: Optional[bytes], data: Optional[bytes]) -> bool:
+    """Whether a tx's calldata has a Relay fill's shape on network (module
+    docstring). to and data: the tx's to_address and input."""
+    depository = _DEPOSITORIES.get(network)
+    if depository is None or not to or not data:
+        return False
+    to, data = bytes(to), bytes(data)
+    selector = data[:4]
+    if len(data) == _ID_BYTES:
+        return True
+    if selector == _TRANSFER:
+        return len(data) == 4 + 2 * 32 + _ID_BYTES
+    if selector == _TRANSFER_FROM:
+        return len(data) == 4 + 3 * 32 + _ID_BYTES
+    if to == depository:
+        return selector == _EXECUTE
+    return _FILL_CALLS.get(to) == selector
 
 
 def read(network: str, logs: List[Log]) -> List[Bridge]:
