@@ -12,8 +12,8 @@ half: the backend answers no pair for it.
 
 Legs, as the external backend adapter reads them (services/bridges/relay.py),
 so its pairs name these legs: the one Transfer of the event's token and amount
-into the Depository among the logs ahead of the event, else the tx (a native
-deposit always). A half's fromAddress is set by half_bridges
+into the Depository among the logs since the deposit before it, else the tx (a
+native deposit always). A half's fromAddress is set by half_bridges
 (delegated._paid_by): whoever paid its leg; the event's `from` is the
 beneficiary, a router often deposits for it.
 
@@ -57,6 +57,7 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
     """A tx's Relay deposits on network, in log order."""
     depository = _DEPOSITORIES.get(network)
     bridges = []
+    since = 0  # the position after the last deposit
     for position, log in enumerate(logs):
         topics = log.get("topics")
         if not topics or bytes(log["address"]) != depository:
@@ -72,11 +73,15 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
             payment = _leg(
                 log,
                 _transfers(
-                    logs[:position], token=token, receiver=depository, value=amount
+                    logs[since:position],
+                    token=token,
+                    receiver=depository,
+                    value=amount,
                 ),
             )
         else:
             continue
+        since = position + 1
         bridges.append(
             Bridge(
                 fromAddress=UNKNOWN,  # set by half_bridges: whoever paid the leg

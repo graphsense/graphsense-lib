@@ -123,6 +123,21 @@ def test_the_eth_halves_name_the_adapters_legs(
     assert (half.toNetwork, half.toPayment) == ("unknown", "pending")
 
 
+def test_equal_deposits_in_one_tx_each_name_their_own_transfer():
+    # the recorded deposit's logs twice in one tx: each deposit is funded by the
+    # Transfer since the deposit before it, as the adapter reads a batch
+    logs = copy.deepcopy(FIXTURE["eth_arb_usdc"]["logs"])
+    again = copy.deepcopy(logs)
+    for log in again:
+        log["log_index"] += 100
+    first, second = half_bridges(
+        "eth", db_rows("eth_arb_usdc", logs + again), ("relay",), tx_sender=SENDER
+    )
+    assert first.fromPayment == f"{bare('eth_arb_usdc')}_T115"
+    assert second.fromPayment == f"{bare('eth_arb_usdc')}_T215"
+    assert first.fromAddress == second.fromAddress != SENDER
+
+
 def test_a_deposit_event_of_another_contract_is_no_half():
     logs = copy.deepcopy(FIXTURE["eth_arb_usdc"]["logs"])
     for log in logs:
