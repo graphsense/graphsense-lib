@@ -806,7 +806,7 @@ def test_any_other_proxied_answer_reads_nothing(path, status, content):
 PAIRS_ON_ETH = "External backends pair the bridges in conversions on: eth"
 PAIRS_NOTHING = (
     "delegated_conversions pairs nothing: included_bridges names none of across, cctp, "
-    "so no half bridge is found to pair"
+    "debridge, layerzero, relay, wormhole, so no half bridge is found to pair"
 )
 
 
