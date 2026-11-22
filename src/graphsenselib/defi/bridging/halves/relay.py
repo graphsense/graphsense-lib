@@ -13,9 +13,11 @@ half: the backend answers no pair for it.
 Legs, as the external backend adapter reads them (services/bridges/relay.py),
 so its pairs name these legs: the one Transfer of the event's token and amount
 into the Depository among the logs since the deposit before it, else the tx (a
-native deposit always). A half's fromAddress is set by half_bridges
-(delegated._paid_by): whoever paid its leg; the event's `from` is the
-beneficiary, a router often deposits for it.
+native deposit always). A Transfer leg's fromAddress is its sender, set by
+half_bridges (delegated._paid_by): a router often deposits for the user. A
+bare-tx leg's fromAddress is the depositor the event states (`from`), never
+the tx's sender, which is a bundler when the deposit comes through an
+ERC-4337 EntryPoint (11 of 80 native deposits the adapter sampled).
 
 Not read: a fill. It logs nothing of Relay's (the order's id is the end of its
 calldata), and a refund looks the same, so an eth fill shows no bridge here;
@@ -64,10 +66,10 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
             continue
         topic0 = bytes(topics[0])
         if topic0 == _NATIVE_DEPOSIT:
-            _, amount, order = _words(log["data"], 3)
+            depositor, amount, order = _words(log["data"], 3)
             asset, payment = NATIVE, _leg(log, [])
         elif topic0 == _ERC20_DEPOSIT:
-            _, token, amount, order = _words(log["data"], 4)
+            depositor, token, amount, order = _words(log["data"], 4)
             token = token.to_bytes(32, "big")[-20:]
             asset = _address(token)
             payment = _leg(
@@ -84,7 +86,9 @@ def read(network: str, logs: List[Log]) -> List[Bridge]:
         since = position + 1
         bridges.append(
             Bridge(
-                fromAddress=UNKNOWN,  # set by half_bridges: whoever paid the leg
+                # the event's depositor; half_bridges puts a Transfer leg's
+                # sender in its place
+                fromAddress=_address(depositor.to_bytes(32, "big")[-20:]),
                 fromAsset=asset,
                 fromAmount=amount,
                 fromNetwork=network,

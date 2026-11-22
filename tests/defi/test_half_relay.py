@@ -76,12 +76,32 @@ def test_relay_eth_deposit_half():
     )
 
 
-def test_relay_native_deposit_is_the_tx_paid_by_its_sender():
+def test_relay_native_deposit_is_the_tx_paid_by_the_events_depositor():
+    """The Depository's event states who deposited. The tx's sender can be a
+    bundler (a deposit through an ERC-4337 EntryPoint), so it is not asked:
+    whoever sent this recorded tx, the half names the event's depositor, as
+    the adapter does (its arb 0x32941498…)."""
     [half] = half_bridges(
         "eth", db_rows("eth_native_deposit"), ("relay",), tx_sender=SENDER
     )
-    assert (half.fromPayment, half.fromAddress) == (bare("eth_native_deposit"), SENDER)
+    assert (half.fromPayment, half.fromAddress) == (
+        bare("eth_native_deposit"),
+        "0x68bbe4ff1dd925ad8e21f90551af342a223fac60",
+    )
     assert (half.fromAsset, half.fromAmount) == ("native", 6775771778909430)
+
+
+def test_relay_token_deposit_without_its_funding_transfer_names_the_depositor():
+    """The recorded USDC deposit without its Transfer into the Depository: the
+    leg is the bare tx, paid by the event's depositor, not the tx's sender."""
+    logs = [log for log in FIXTURE["eth_arb_usdc"]["logs"] if log["log_index"] != 115]
+    [half] = half_bridges(
+        "eth", db_rows("eth_arb_usdc", logs), ("relay",), tx_sender=SENDER
+    )
+    assert (half.fromPayment, half.fromAddress) == (
+        bare("eth_arb_usdc"),
+        "0x5ed534c11e0356832ad40f40ef8e81626fe03ae6",
+    )
 
 
 # The adapter's own reading of the same receipts (its services/bridges/relay.py
