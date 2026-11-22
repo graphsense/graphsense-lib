@@ -1170,7 +1170,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         backend cannot pair it (a 404 or 501). When it fails (logged with
         why, _fetch_json) the failure is named in `declined` and raised as
         PairingUnanswered: the route's halves are not final and say so
-        (partial_reason). A failure does not start a skip window: the pairing
+        (partial_reason).
+        A caller who lacks a gated currency one of the rows names, a half's
+        included, gets none of them; a reason among them is still raised. A failure does not start a skip window: the pairing
         only enriches an answer. After the pairs
         come the halves of the backend that say why they are not final
         (partial_reason) or name a transfer id: the conversions route puts
@@ -1275,13 +1277,19 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if reasons:
             trace["partial"] = ",".join(reasons)
         log = functools.partial(log, halves=len(named) - len(bridges) or None)
-        networks = {n for row in bridges for n in (row.from_network, row.to_network)}
+        # the halves count as the pairs do: a half can be the answer's row
+        # itself (a fill no log tells, txs_service.py) and names its chain
+        networks = {n for row in named for n in (row.from_network, row.to_network)}
         if self._entitled(request, networks) != networks:
             # each row replaces only the half bridge whose leg it names
             # (txs_service.py), so the rows the caller may see could be kept;
             # a caller who may see only some of them keeps every half bridge
             # instead, the safe side (module docstring)
             log(rows=len(bridges), reason="entitlement")
+            if reasons:
+                # that a leg is not final is no row content: the route's
+                # halves still say so, and the answer is not stored
+                raise _unanswered(partial, reasons[0])
             return []
         partial.extend(reasons)
         if bridges:

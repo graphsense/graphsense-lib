@@ -722,6 +722,46 @@ def test_the_opt_out_and_the_currency_roles(headers, roles_config, asked, answer
     assert len(seen) == int(asked)
 
 
+@pytest.mark.parametrize(
+    "roles, said, expected, stored",
+    [
+        (
+            "currency-arb",
+            {"transfer_id": "0x" + "3b" * 32},
+            {"transfer_id": "0x" + "3b" * 32},
+            True,
+        ),
+        ("currency-bnb", {"transfer_id": "0x" + "3b" * 32}, {}, True),
+        (
+            "currency-bnb",
+            {
+                "transfer_id": "0x" + "3b" * 32,
+                "partial_reason": "counter_lookup_failed",
+            },
+            {"partial_reason": "counter_lookup_failed"},
+            False,
+        ),
+    ],
+    ids=["role", "no role", "no role, not final"],
+)
+def test_a_half_of_the_backend_counts_for_the_roles_like_a_pair(
+    roles, said, expected, stored
+):
+    """The backend's half of the burn names arb. A caller without the arb
+    role gets nothing of that row (its transfer id here), as of a pair. That
+    the leg is not final is no row content: the local half still says so, and
+    the answer is not to be stored."""
+    half = {**BRIDGE_ROW, "to_asset_transfer": "pending", "protocol": "cctp", **said}
+    client, _, _ = make_client(
+        roles_config=ROLES,
+        gated=GATED,
+        backend_answer=httpx.Response(200, json=[half]),
+    )
+    response = client.get(CONVERSIONS, headers={"X-User-Roles": roles})
+    assert response.json() == [LOCAL_ROW, {**HALF_ROW, **expected}]
+    assert ("Cache-Control" not in response.headers) == stored
+
+
 def test_a_pairing_the_caller_may_see_only_in_part_leaves_the_half_bridges():
     """The paired rows replace every half bridge of the tx (a backend pairs
     all or none). A caller entitled to arb but not to pol, of a tx bridging

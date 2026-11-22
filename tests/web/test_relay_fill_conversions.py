@@ -149,6 +149,43 @@ def test_a_fill_is_shown_only_to_a_caller_who_may_see_its_deposits_chain(
     assert response.json() == ([row] if shown else [])
 
 
+LIVE = ETH_TXS["live"]
+
+
+@pytest.mark.parametrize(
+    "name, roles, shown",
+    [
+        ("fill_of_raw_arb_deposit", "currency-arb", True),
+        ("fill_of_raw_arb_deposit", "currency-bnb", False),
+        ("fill_of_solana_deposit", "currency-bnb", True),
+    ],
+    ids=["arb half, arb role", "arb half, no arb role", "solana half"],
+)
+def test_a_half_fill_row_is_shown_only_to_a_caller_who_may_see_the_chain_it_names(
+    name, roles, shown
+):
+    """The backend's half is this answer's row itself, so the roles count for
+    it as for a pair: eth 0xa1b72201… answers a half naming arb (its deposit
+    there logged no event), which a caller without the arb role must not get.
+    A chain no role gates (solana) is anybody's to see."""
+    recorded = LIVE[name]
+    (half,) = recorded["adapter_rows"]
+    tx = recorded["tx_hash"]
+    assert tx_row(recorded) and half["from_asset_transfer"] == "unknown"
+    client, seen, _ = make_client(
+        log_rows=[],
+        indexed=(tx,),
+        included_bridges=("relay",),
+        tx_row=tx_row(recorded),
+        backend_answer=httpx.Response(200, json=[half]),
+        roles_config=ROLES,
+        gated=GATED,
+    )
+    response = client.get(f"/eth/txs/{tx}/conversions", headers={"X-User-Roles": roles})
+    assert len(seen) == 1
+    assert response.json() == ([half] if shown else [])
+
+
 def test_a_fills_token_leg_answers_the_row_and_another_leg_does_not():
     """A sub-tx request: the row only for the leg it names."""
     recorded = FILLS["usdc_fill"]
