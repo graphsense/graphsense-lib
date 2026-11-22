@@ -40,7 +40,13 @@ from graphsenselib.defi.bridging.half_common import (
     _transfers,
     _words,
 )
-from graphsenselib.defi.bridging.halves import across, debridge, layerzero, wormhole
+from graphsenselib.defi.bridging.halves import (
+    across,
+    debridge,
+    layerzero,
+    relay,
+    wormhole,
+)
 from graphsenselib.defi.bridging.models import Bridge
 from graphsenselib.utils.transactions import SubTransactionIdentifier
 
@@ -51,6 +57,7 @@ ACROSS = "across"
 DEBRIDGE = "debridge"
 LAYERZERO = "layerzero"
 WORMHOLE = "wormhole"
+RELAY = "relay"
 _ZERO_ADDRESS = bytes(20)
 
 # Circle's domains of the networks the conversions name, all of them EVM
@@ -316,6 +323,7 @@ _HALF_BRIDGE_READERS: Dict[str, Dict[str, Callable[[List[Log]], List[Bridge]]]] 
         DEBRIDGE: partial(debridge.read, "eth"),
         LAYERZERO: partial(layerzero.read, "eth"),
         WORMHOLE: partial(wormhole.read, "eth"),
+        RELAY: partial(relay.read, "eth"),
     },
 }
 
