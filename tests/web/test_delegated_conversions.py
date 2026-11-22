@@ -114,8 +114,10 @@ LOCAL_ROW = {
 
 def half_row(part):
     """A fixture tx's half bridge as the route answers it: no token is
-    configured, so no asset is supported."""
+    configured, so no asset is supported. It names its protocol, and the
+    transfer id where the eth logs hold one."""
     bridge = HALF_BRIDGES[part]
+    names = {"protocol": bridge.protocol, "transfer_id": bridge.transferId}
     return {
         "conversion_type": "bridge_tx",
         "from_address": bridge.fromAddress,
@@ -130,6 +132,7 @@ def half_row(part):
         "to_network": bridge.toNetwork,
         "from_is_supported_asset": False,
         "to_is_supported_asset": False,
+        **{name: value for name, value in names.items() if value is not None},
     }
 
 
@@ -358,8 +361,12 @@ def test_a_complete_backend_answer_is_not_partial():
 
 @pytest.mark.parametrize(
     "names",
-    [{}, {"protocol": "across", "transfer_id": "1108583"}],
-    ids=["an older backend: none", "across"],
+    [
+        {},
+        {"protocol": "across", "transfer_id": "1108583"},
+        {"protocol": "cctp", "transfer_id": "0x" + "3b" * 32},
+    ],
+    ids=["an older backend: none", "across", "cctp"],
 )
 def test_a_paired_row_keeps_the_protocol_and_transfer_id_it_names(names):
     """The backend's protocol and transfer_id reach the caller as it sent
