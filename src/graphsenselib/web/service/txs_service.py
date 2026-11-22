@@ -112,8 +112,8 @@ async def get_tx_conversions(
     a half no row names stays, a row naming no half
     was not asked for and is dropped, and an ambiguous match keeps the half.
     A half of the backend leaves our half in place; ours takes its
-    partial_reason (it could not pair the leg for now) and, where ours has
-    none, its transfer id.
+    partial_reason (it could not pair the leg for now), where ours has
+    none its transfer id, and the other chain's name where ours is unknown.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
     asks the backend for the bare hash."""
@@ -239,14 +239,21 @@ def _with_reason(
     half: ExternalConversion, unpaired: Sequence[ExternalConversion]
 ) -> ExternalConversion:
     """`half`, with what the backend's half of the same leg adds to it: its
-    partial_reason, and its transfer id where ours has none (Circle assigns
-    a CCTP V2 burn's nonce off chain, so only the backend can name it)."""
+    partial_reason, its transfer id where ours has none (Circle assigns a
+    CCTP V2 burn's nonce off chain, so only the backend can name it), and the
+    other chain's name where ours says "unknown" (the backend names chains
+    neither of us serves: solana, linea)."""
     for row in unpaired:
         if _names_leg(row, half):
             return half.model_copy(
                 update={
                     "partial_reason": row.partial_reason,
                     "transfer_id": half.transfer_id or row.transfer_id,
+                    **{
+                        f"{side}_network": getattr(row, f"{side}_network")
+                        for side in ("from", "to")
+                        if getattr(half, f"{side}_network") == "unknown"
+                    },
                 }
             )
     return half

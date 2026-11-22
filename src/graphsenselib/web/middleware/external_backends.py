@@ -1252,14 +1252,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # a half row (a leg the backend could not pair either) is no better
         # than the local half: only a complete pair may replace one
         bridges = [row for row in named if not _is_half(row)]
-        # a half that says what the local half cannot know: why it is not
-        # final, or the transfer's id (a CCTP V2 burn's nonce is Circle's to
-        # tell). The local half takes both.
-        unpaired = [
-            row
-            for row in named
-            if _is_half(row) and (row.partial_reason or row.transfer_id)
-        ]
+        # a half can say what the local half cannot know: why it is not
+        # final, the transfer's id (a CCTP V2 burn's nonce is Circle's to
+        # tell), the name of a chain neither of us serves. The local half
+        # takes those (txs_service.py).
+        unpaired = [row for row in named if _is_half(row)]
         reasons = sorted({r.partial_reason for r in named if r.partial_reason})
         if reasons:
             trace["partial"] = ",".join(reasons)

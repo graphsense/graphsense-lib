@@ -360,6 +360,54 @@ def test_the_local_half_takes_the_transfer_id_only_the_backend_knows(reason):
     assert ("Cache-Control" in response.headers) == bool(reason)
 
 
+def _burn_to(domain):
+    """The V2 burn's logs with another destination domain."""
+    logs = [dict(log) for log in FIXTURE["v2_burn"]["logs"]]
+    burn = next(log for log in logs if log["log_index"] == 698)
+    data = burn["data"].removeprefix("0x")
+    burn["data"] = "0x" + data[:128] + f"{domain:064x}" + data[192:]
+    return logs
+
+
+def test_the_local_half_takes_the_chain_the_backends_half_names():
+    """A burn to Solana (domain 5): the eth logs name no network for it, the
+    backend's half does. The local half takes that name and nothing else of
+    the side: the answer is final, and the asset stays unsupported."""
+    ours = {**HALF_ROW, "to_network": "unknown", "to_address": "unknown"}
+    theirs = {**ours, "to_network": "solana"}
+    client, _, _ = make_client(
+        log_rows=db_rows("v2_burn", _burn_to(5)),
+        backend_answer=httpx.Response(200, json=[theirs]),
+    )
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, theirs]
+    assert theirs["to_is_supported_asset"] is False
+    assert "Cache-Control" not in response.headers
+
+
+def test_a_mint_takes_the_source_chain_the_backends_half_names():
+    """A mint whose MessageReceived is not in the logs comes from an unknown
+    network; the backend's half names it."""
+    tx = FIXTURE["v2_mint"]["tx_hash"]
+    logs = [log for log in FIXTURE["v2_mint"]["logs"] if log["log_index"] != 567]
+    ours = {**half_row("v2_mint"), "from_network": "unknown"}
+    del ours["transfer_id"]  # the nonce was in the missing log
+    theirs = {**ours, "from_network": "solana"}
+    client, _, _ = make_client(
+        log_rows=db_rows("v2_mint", logs),
+        indexed=(tx,),
+        backend_answer=httpx.Response(200, json=[theirs]),
+    )
+    assert client.get(f"/eth/txs/{tx}/conversions").json() == [LOCAL_ROW, theirs]
+
+
+def test_a_network_the_local_half_names_is_not_replaced():
+    """The eth logs name arb: the backend's half of the leg changes nothing."""
+    theirs = {**HALF_ROW, "to_network": "solana"}
+    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[theirs]))
+    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, HALF_ROW]
+
+
 def test_a_final_half_of_the_backend_leaves_the_local_half_as_it_is():
     """The backend's own half without a reason (the other chain is not
     served, nothing in the window) is no better than the local one."""
