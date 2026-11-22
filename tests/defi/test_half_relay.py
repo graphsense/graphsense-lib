@@ -13,11 +13,23 @@ from pathlib import Path
 
 import pytest
 
-from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES, half_bridges
+from graphsenselib.defi.bridging.delegated import (
+    DELEGATED_BRIDGES,
+    half_bridges,
+    possible_fills,
+)
 from graphsenselib.defi.bridging.models import Bridge
 
 FIXTURE = json.loads(
     (Path(__file__).parent / "data" / "bridges" / "relay" / "eth_logs.json").read_text()
+)
+# eth txs with their tx row, no logs (the adapter's tests/data/bridges/relay/
+# gslib/eth_fills.json): six fills, a refund, a fill paying a third address,
+# and a deposit, which has no fill's shape
+ETH_TXS = json.loads(
+    (
+        Path(__file__).parent / "data" / "bridges" / "relay" / "eth_fills.json"
+    ).read_text()
 )
 USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
@@ -177,3 +189,35 @@ def test_relay_is_read_on_eth_only_and_only_when_included():
     rows = db_rows("eth_arb_usdc")
     assert half_bridges("arb", rows, ("relay",)) == ()
     assert half_bridges("eth", rows, ("wormhole",)) == ()
+
+
+def tx_row(recorded):
+    """A recorded tx as a row of the transaction table."""
+    return {
+        "tx_hash": unhex(recorded["tx_hash"]),
+        "block_id": recorded["block_id"],
+        "from_address": unhex(recorded["from"]),
+        "to_address": unhex(recorded["to"]),
+        "value": int(recorded["value"], 16),
+        "input": unhex(recorded["input"]),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(ETH_TXS["fills"]))
+def test_a_tx_with_a_fills_shape_may_be_a_relay_fill(name):
+    """A fill logs nothing of Relay's: all that tells it is its calldata, a
+    payment or a call to one of Relay's contracts with the order's id after
+    it. A refund has the same shape; who sent it is the backend's to say."""
+    tx = tx_row(ETH_TXS["fills"][name])
+    assert possible_fills("eth", tx, ("relay",)) == ("relay",)
+    assert possible_fills("eth", tx, ("across", "cctp")) == ()
+    assert possible_fills("trx", tx, ("relay",)) == ()
+
+
+def test_a_tx_of_another_shape_is_no_possible_fill():
+    """A recorded deposit, a plain transfer without data, a contract creation."""
+    deposit = tx_row(ETH_TXS["other"]["usdc_deposit"])
+    assert possible_fills("eth", deposit, ("relay",)) == ()
+    assert possible_fills("eth", {**deposit, "input": b""}, ("relay",)) == ()
+    assert possible_fills("eth", {**deposit, "input": None}, ("relay",)) == ()
+    assert possible_fills("eth", {**deposit, "to_address": None}, ("relay",)) == ()

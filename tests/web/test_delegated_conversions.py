@@ -184,8 +184,9 @@ def records_of_the_middleware():
         logger.setLevel(previous)
 
 
-def fake_db(log_rows, indexed):
-    """An eth database whose txs `indexed` all have `log_rows` as logs."""
+def fake_db(log_rows, indexed, tx_row=None):
+    """An eth database whose txs `indexed` all have `log_rows` as logs, and
+    the fields of `tx_row` in their row of the transaction table."""
     known = {bytes.fromhex(h.removeprefix("0x")) for h in indexed}
 
     async def get_tx_by_hash(currency, tx_hash):
@@ -196,6 +197,7 @@ def fake_db(log_rows, indexed):
             "block_id": FIXTURE["v2_burn"]["block_id"],
             "from_address": bytes.fromhex("11" * 20),  # every tx row names its sender
             "input": None,
+            **(tx_row or {}),
         }
 
     db = MagicMock()
@@ -218,6 +220,7 @@ def make_client(
     timeout_s=None,
     with_middleware=True,
     included_bridges=("cctp",),
+    tx_row=None,
 ):
     """The txs routes over a fake database behind the middleware, and a
     recording mock backend. `backend_answer` is an httpx.Response or a function
@@ -242,7 +245,9 @@ def make_client(
             "included_bridges": list(included_bridges),
         }
     )
-    db = fake_db(db_rows("v2_burn") if log_rows is None else log_rows, indexed)
+    db = fake_db(
+        db_rows("v2_burn") if log_rows is None else log_rows, indexed, tx_row
+    )
     app.state.config = config
     app.state.db = db
     app.state.services = SimpleNamespace(

@@ -29,7 +29,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from graphsenselib.defi.bridging.half_common import (
     PENDING,
@@ -163,6 +163,19 @@ def half_bridges(
         for read in wanted
         for bridge in read(logs)
     )
+
+
+def possible_fills(
+    network: str, tx: Dict[str, Any], included_bridges: Sequence[str]
+) -> Tuple[str, ...]:
+    """The bridges of included_bridges this tx may be a fill of although no
+    log says so: no half bridge can be read for it, only the external backend
+    can tell (halves/relay.py). tx: its row of the transaction table."""
+    if RELAY in included_bridges and relay.fill_shaped(
+        network, tx.get("to_address"), tx.get("input")
+    ):
+        return (RELAY,)
+    return ()
 
 
 class PairingUnanswered(Exception):

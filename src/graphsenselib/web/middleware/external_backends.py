@@ -78,8 +78,11 @@ Decision rules:
    find the other chain's. This middleware offers the pairing on
    ``request.state.pair_bridges``; the conversions route calls it only for a
    tx with such a half bridge, and puts the backend's rows in place of the
-   half bridges they complete (web/service/txs_service.py). The answer passes
-   through untouched. The backend is asked for the same path, sub-tx suffix
+   half bridges they complete (web/service/txs_service.py). It also calls it
+   for a tx that may be a fill no log tells (a Relay fill: its calldata has
+   the shape, defi/bridging/halves/relay.py) and then takes the backend's row
+   for that fill as it is; no row, or no answer, is no bridge row. The answer
+   passes through untouched. The backend is asked for the same path, sub-tx suffix
    included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
    name the tx are taken: the local detection answers swaps. A half row
    (a side's asset transfer "pending" or "unknown", a leg the backend could
