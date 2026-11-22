@@ -186,6 +186,28 @@ def test_a_half_fill_row_is_shown_only_to_a_caller_who_may_see_the_chain_it_name
     assert response.json() == ([half] if shown else [])
 
 
+@pytest.mark.parametrize(
+    "answer, final",
+    [
+        (httpx.Response(501, json={"reason": "budget_exhausted"}), False),
+        (httpx.Response(501, json={"reason": "unsupported_bridge"}), True),
+        (httpx.Response(404), True),
+    ],
+    ids=["out of its budget", "501 cannot pair", "404"],
+)
+def test_a_backend_that_ran_out_of_time_on_a_possible_fill_is_no_final_answer(
+    answer, final
+):
+    """The backend answers 501 `budget_exhausted` when its bridge read ran
+    out of time: that is no "nothing to pair". No row, and the answer must
+    not be stored; the backend answered, so it is not named as declined."""
+    response, seen = ask(FILLS["usdc_fill"], backend_answer=answer)
+    assert response.status_code == 200 and response.json() == []
+    assert response.headers.get("Cache-Control") == (None if final else "no-store")
+    assert DECLINED_HEADER not in response.headers
+    assert len(seen) == 1
+
+
 def test_a_fills_token_leg_answers_the_row_and_another_leg_does_not():
     """A sub-tx request: the row only for the leg it names."""
     recorded = FILLS["usdc_fill"]

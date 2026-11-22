@@ -762,6 +762,27 @@ def test_a_half_of_the_backend_counts_for_the_roles_like_a_pair(
     assert ("Cache-Control" not in response.headers) == stored
 
 
+def test_a_backend_out_of_its_budget_leaves_a_half_that_is_not_final():
+    """A 501 `budget_exhausted` is the backend out of time, not "nothing to
+    pair": the local half says counter_lookup_timeout and is not to be
+    stored. Any other 501 leaves the plain half."""
+    out_of_time = httpx.Response(501, json={"reason": "budget_exhausted"})
+    client, _, _ = make_client(backend_answer=out_of_time)
+    response = client.get(CONVERSIONS)
+    assert response.json() == [
+        LOCAL_ROW,
+        {**HALF_ROW, "partial_reason": "counter_lookup_timeout"},
+    ]
+    assert response.headers["Cache-Control"] == "no-store"
+    assert DECLINED_HEADER not in response.headers
+
+    refused = httpx.Response(501, json={"reason": "mint_not_found"})
+    client, _, _ = make_client(backend_answer=refused)
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert "Cache-Control" not in response.headers
+
+
 def test_a_pairing_the_caller_may_see_only_in_part_leaves_the_half_bridges():
     """The paired rows replace every half bridge of the tx (a backend pairs
     all or none). A caller entitled to arb but not to pol, of a tx bridging

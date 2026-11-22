@@ -1170,7 +1170,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         backend cannot pair it (a 404 or 501). When it fails (logged with
         why, _fetch_json) the failure is named in `declined` and raised as
         PairingUnanswered: the route's halves are not final and say so
-        (partial_reason).
+        (partial_reason). So is a 501 whose reason is `budget_exhausted`
+        (the backend's own read ran out of time), without naming it declined.
         A caller who lacks a gated currency one of the rows names, a half's
         included, gets none of them; a reason among them is still raised. A failure does not start a skip window: the pairing
         only enriches an answer. After the pairs
@@ -1238,6 +1239,10 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         if doc is None:
             reason = trace.get("reason", "no_answer")
             log(rows=0, reason=reason)
+            if reason == _BUDGET_EXHAUSTED:
+                # it answered, but only that its own read ran out of time:
+                # not "nothing to pair". The backend is not named as declined
+                raise _unanswered(partial, _LOOKUP_TIMEOUT)
             if backend.url not in declined:
                 return []  # it answered: nothing to pair (a 404 or 501)
             raise _unanswered(
@@ -1484,6 +1489,8 @@ def _refusal_reason(response: httpx.Response) -> str:
 # reasons the backend's own rows use for a lookup that failed or ran out of time
 _LOOKUP_FAILED = "counter_lookup_failed"
 _LOOKUP_TIMEOUT = "counter_lookup_timeout"
+# the reason of the backend's 501 when its bridge read ran out of its own time
+_BUDGET_EXHAUSTED = "budget_exhausted"
 
 
 def _unanswered(partial: List[str], reason: str) -> PairingUnanswered:
