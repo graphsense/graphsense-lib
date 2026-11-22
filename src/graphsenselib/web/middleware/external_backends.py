@@ -1163,9 +1163,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         backend cannot pair it (a 404 or 501) or fails (logged with why,
         _fetch_json); a failure is named in `declined`, and does not start a
         skip window: the pairing only enriches an answer. After the pairs
-        come the halves the backend could not pair for now (their
-        partial_reason says why): the conversions route names that reason on
-        its own half. Every reason a returned row states is appended to
+        come the halves of the backend that say why they are not final
+        (partial_reason) or name a transfer id: the conversions route puts
+        both on its own half. Every reason a returned row states is appended to
         `partial`.
 
         Every call logs one INFO ``event=bridge_pairing`` line (_log_pairing)
@@ -1252,8 +1252,14 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # a half row (a leg the backend could not pair either) is no better
         # than the local half: only a complete pair may replace one
         bridges = [row for row in named if not _is_half(row)]
-        # a half it could not pair for now: the local half takes its reason
-        unpaired = [row for row in named if _is_half(row) and row.partial_reason]
+        # a half that says what the local half cannot know: why it is not
+        # final, or the transfer's id (a CCTP V2 burn's nonce is Circle's to
+        # tell). The local half takes both.
+        unpaired = [
+            row
+            for row in named
+            if _is_half(row) and (row.partial_reason or row.transfer_id)
+        ]
         reasons = sorted({r.partial_reason for r in named if r.partial_reason})
         if reasons:
             trace["partial"] = ",".join(reasons)

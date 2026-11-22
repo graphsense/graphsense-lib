@@ -22,6 +22,7 @@ paid the recipient, each found among the logs since the previous burn or
 mint. When none fits a DepositForBurn, the event is not a burn: V1's
 replaceDepositForBurn re-emits it for an earlier burn, with its amount and
 depositor, and moves nothing. When several fit, the leg is the tx itself.
+The transfer id is Circle's nonce (_transfer_id), where the logs hold it.
 """
 
 import logging
@@ -267,6 +268,9 @@ def _burn(
         toAmount=0,  # less Circle's fee, known when minted
         toNetwork=network or UNKNOWN,
         toPayment=PENDING,
+        protocol=CCTP,
+        # V1 logs the nonce with the burn; Circle assigns a V2 burn's off chain
+        transferId=_transfer_id(version, topics[1] if version.number == 1 else None),
     )
 
 
@@ -292,7 +296,21 @@ def _mint(
         toAmount=amount,
         toNetwork="eth",
         toPayment=_leg(log, payout),
+        protocol=CCTP,
+        transferId=_transfer_id(
+            version, received["topics"][2] if received is not None else None
+        ),
     )
+
+
+def _transfer_id(version: _CctpVersion, nonce: Optional[bytes]) -> Optional[str]:
+    """Circle's nonce as the row names it, like the external backend: V1's
+    uint64 in decimal (unique per source domain only), V2's bytes32 as 0x hex.
+    None where the logs do not hold it."""
+    if nonce is None:
+        return None
+    raw = bytes(nonce)
+    return str(int.from_bytes(raw, "big")) if version.number == 1 else "0x" + raw.hex()
 
 
 # (topic0, emitter) -> the reader of that CCTP event, and its version
