@@ -5,7 +5,11 @@ from typing import Awaitable, Callable, Optional, Sequence, Set
 from graphsenselib.db.asynchronous.services.models import (
     ExternalConversion as ServiceExternalConversion,
 )
-from graphsenselib.defi.bridging.delegated import PENDING, UNKNOWN
+from graphsenselib.defi.bridging.delegated import (
+    PENDING,
+    UNKNOWN,
+    PairingUnanswered,
+)
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -112,8 +116,10 @@ async def get_tx_conversions(
     a half no row names stays, a row naming no half
     was not asked for and is dropped, and an ambiguous match keeps the half.
     A half of the backend leaves our half in place; ours takes its
-    partial_reason (it could not pair the leg for now) and, where ours has
-    none, its transfer id.
+    partial_reason (it could not pair the leg for now), where ours has
+    none its transfer id, and the other chain's name where ours is unknown.
+    A backend that did not answer at all (PairingUnanswered) leaves every
+    half in place with the reason it failed for.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
     asks the backend for the bare hash."""
@@ -126,12 +132,16 @@ async def get_tx_conversions(
     rows = [to_api_external_conversion(conv) for conv in result.conversions]
     halves = [to_api_external_conversion(conv) for conv in result.half_bridges]
     candidates = []
+    unanswered = None  # why the backend's pairing gave no answer, if it gave none
     if halves and pair_bridges is not None:
         identifier = SubTransactionIdentifier.from_string(tx_hash)
-        if result.whole_tx and identifier.tx_type is SubTransactionType.InternalTx:
-            bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
-        else:
-            bridges = await pair_bridges()
+        try:
+            if result.whole_tx and identifier.tx_type is SubTransactionType.InternalTx:
+                bridges = await pair_bridges(tx_identifier=identifier.tx_hash)
+            else:
+                bridges = await pair_bridges()
+        except PairingUnanswered as exc:
+            bridges, unanswered = [], exc.reason
         # the backend's names as the API can state them (bridge_names)
         candidates = [
             ExternalConversion(
@@ -167,6 +177,8 @@ async def get_tx_conversions(
         for i, half in enumerate(halves)
         if i not in replaced
     ]
+    if unanswered:
+        kept = [half.model_copy(update={"partial_reason": unanswered}) for half in kept]
     if halves:
         _log_merge(
             tx_hash,
@@ -239,14 +251,21 @@ def _with_reason(
     half: ExternalConversion, unpaired: Sequence[ExternalConversion]
 ) -> ExternalConversion:
     """`half`, with what the backend's half of the same leg adds to it: its
-    partial_reason, and its transfer id where ours has none (Circle assigns
-    a CCTP V2 burn's nonce off chain, so only the backend can name it)."""
+    partial_reason, its transfer id where ours has none (Circle assigns a
+    CCTP V2 burn's nonce off chain, so only the backend can name it), and the
+    other chain's name where ours says "unknown" (the backend names chains
+    neither of us serves: solana, linea)."""
     for row in unpaired:
         if _names_leg(row, half):
             return half.model_copy(
                 update={
                     "partial_reason": row.partial_reason,
                     "transfer_id": half.transfer_id or row.transfer_id,
+                    **{
+                        f"{side}_network": getattr(row, f"{side}_network")
+                        for side in ("from", "to")
+                        if getattr(half, f"{side}_network") == "unknown"
+                    },
                 }
             )
     return half
@@ -258,7 +277,10 @@ def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
 
 
 def _names_leg(row: ExternalConversion, half: ExternalConversion) -> bool:
-    """`row` has the known leg of `half` on the same side."""
+    """`row` has the known leg of `half` on the same side. Two rows that both
+    name a transfer id are of one transfer only when the ids agree."""
+    if half.transfer_id and row.transfer_id and half.transfer_id != row.transfer_id:
+        return False
     for side in ("from", "to"):
         transfer = getattr(half, f"{side}_asset_transfer").lower().removeprefix("0x")
         if transfer in _PLACEHOLDERS or getattr(half, f"{side}_network") != getattr(
@@ -268,12 +290,13 @@ def _names_leg(row: ExternalConversion, half: ExternalConversion) -> bool:
         paired_transfer = (
             getattr(row, f"{side}_asset_transfer").lower().removeprefix("0x")
         )
-        if transfer == paired_transfer:
-            return True
-        # A bare leg has no unique Transfer; its asset and amount must agree.
-        if (
-            "_" not in transfer
-            and transfer == paired_transfer.partition("_")[0]
+        if "_" in transfer:
+            if transfer == paired_transfer:
+                return True
+        # A bare leg has no unique Transfer (a relayer tx can fill four native
+        # deposits): its asset and amount must agree as well.
+        elif (
+            transfer == paired_transfer.partition("_")[0]
             and getattr(half, f"{side}_asset") == getattr(row, f"{side}_asset")
             and getattr(half, f"{side}_amount") == getattr(row, f"{side}_amount")
         ):

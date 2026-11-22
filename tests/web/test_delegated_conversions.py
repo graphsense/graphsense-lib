@@ -41,6 +41,8 @@ from tests.defi.test_delegated_bridges import (
     db_rows,
     without_cctp_events,
 )
+from tests.defi.test_half_across import FIXTURE as ACROSS
+from tests.defi.test_half_across import db_rows as across_rows
 
 BACKEND_URL = "https://backend.test"
 USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
@@ -139,6 +141,14 @@ def half_row(part):
 # the burn's half bridge: its eth leg is the one BRIDGE_ROW names
 HALF_ROW = half_row("v2_burn")
 assert HALF_ROW["from_asset_transfer"] == BRIDGE_ROW["from_asset_transfer"]
+
+
+def unanswered(error=None):
+    """The burn's half when the backend did not answer: not final, and its
+    row says why (out of time for a timeout, failed for anything else)."""
+    timed_out = isinstance(error, (httpx.TimeoutException, TimeoutError))
+    reason = "counter_lookup_timeout" if timed_out else "counter_lookup_failed"
+    return {**HALF_ROW, "partial_reason": reason}
 
 
 @pytest.fixture(autouse=True)
@@ -360,6 +370,69 @@ def test_the_local_half_takes_the_transfer_id_only_the_backend_knows(reason):
     assert ("Cache-Control" in response.headers) == bool(reason)
 
 
+def test_a_half_of_the_backend_is_never_a_row_of_the_answer():
+    """Every half the backend answers reaches the merge (it may carry a reason,
+    a transfer id or a chain name for ours). It never becomes a row: the half
+    of our own leg leaves ours as it is, and a half of a leg we do not have is
+    dropped, so no local half is replaced or doubled."""
+    ours = {**BRIDGE_ROW, "to_asset_transfer": "pending"}
+    another = {**ours, "from_asset_transfer": f"{CCTP_BURN[2:]}_T1"}
+    client, _, _ = make_client(
+        backend_answer=httpx.Response(200, json=[ours, another, ours])
+    )
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert "Cache-Control" not in response.headers
+
+
+def _burn_to(domain):
+    """The V2 burn's logs with another destination domain."""
+    logs = [dict(log) for log in FIXTURE["v2_burn"]["logs"]]
+    burn = next(log for log in logs if log["log_index"] == 698)
+    data = burn["data"].removeprefix("0x")
+    burn["data"] = "0x" + data[:128] + f"{domain:064x}" + data[192:]
+    return logs
+
+
+def test_the_local_half_takes_the_chain_the_backends_half_names():
+    """A burn to Solana (domain 5): the eth logs name no network for it, the
+    backend's half does. The local half takes that name and nothing else of
+    the side: the answer is final, and the asset stays unsupported."""
+    ours = {**HALF_ROW, "to_network": "unknown", "to_address": "unknown"}
+    theirs = {**ours, "to_network": "solana"}
+    client, _, _ = make_client(
+        log_rows=db_rows("v2_burn", _burn_to(5)),
+        backend_answer=httpx.Response(200, json=[theirs]),
+    )
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, theirs]
+    assert theirs["to_is_supported_asset"] is False
+    assert "Cache-Control" not in response.headers
+
+
+def test_a_mint_takes_the_source_chain_the_backends_half_names():
+    """A mint whose MessageReceived is not in the logs comes from an unknown
+    network; the backend's half names it."""
+    tx = FIXTURE["v2_mint"]["tx_hash"]
+    logs = [log for log in FIXTURE["v2_mint"]["logs"] if log["log_index"] != 567]
+    ours = {**half_row("v2_mint"), "from_network": "unknown"}
+    del ours["transfer_id"]  # the nonce was in the missing log
+    theirs = {**ours, "from_network": "solana"}
+    client, _, _ = make_client(
+        log_rows=db_rows("v2_mint", logs),
+        indexed=(tx,),
+        backend_answer=httpx.Response(200, json=[theirs]),
+    )
+    assert client.get(f"/eth/txs/{tx}/conversions").json() == [LOCAL_ROW, theirs]
+
+
+def test_a_network_the_local_half_names_is_not_replaced():
+    """The eth logs name arb: the backend's half of the leg changes nothing."""
+    theirs = {**HALF_ROW, "to_network": "solana"}
+    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[theirs]))
+    assert client.get(CONVERSIONS).json() == [LOCAL_ROW, HALF_ROW]
+
+
 def test_a_final_half_of_the_backend_leaves_the_local_half_as_it_is():
     """The backend's own half without a reason (the other chain is not
     served, nothing in the window) is no better than the local one."""
@@ -482,6 +555,49 @@ def test_a_paired_bridge_takes_the_place_of_the_half_bridge_it_names(
     )
     expected = [LOCAL_ROW, bridge] if paired else [LOCAL_ROW, HALF_ROW]
     assert client.get(CONVERSIONS).json() == expected
+
+
+def test_a_pair_takes_only_its_own_half_among_the_native_fills_of_one_tx():
+    """eth 0x7d7e5024…6353: a relayer tx filling four Across deposits in
+    native ETH, so each local half names the same bare tx hash as its leg.
+    The pair the backend answers for opt deposit 58732 replaces that half
+    alone, and the reason it gives for the sibling it could not look up
+    (arb deposit 81435) lands on that sibling alone."""
+    tx = ACROSS["opt_eth_v20_native_fill"]["tx_hash"]
+    path = f"/eth/txs/{tx}/conversions"
+
+    def ask(answer):
+        client, _, _ = make_client(
+            log_rows=across_rows("opt_eth_v20_native_fill"),
+            indexed=(tx,),
+            included_bridges=("across",),
+            backend_answer=httpx.Response(200, json=answer),
+        )
+        return client.get(path)
+
+    local, *halves = ask([]).json()
+    assert [half["transfer_id"] for half in halves] == [
+        "58732",
+        "81435",
+        "58731",
+        "81434",
+    ]
+    assert {half["to_asset_transfer"] for half in halves} == {tx[2:]}
+    own, failed, third, fourth = halves
+    pair = {
+        **own,
+        "from_address": "0x517c07288216fd840a49e49d49e2644c5ee5a29d",
+        "from_asset": "native",
+        "from_asset_transfer": "b6fb15e4bcd8f145ab89fbc709e4bdb19e4fb6902acca46c429888edaddddf94",
+        "from_is_supported_asset": True,
+        "to_is_supported_asset": True,
+    }
+    reason = {"partial_reason": "counter_lookup_failed"}
+
+    response = ask([pair, {**failed, **reason}, third, fourth])
+
+    assert response.json() == [local, {**failed, **reason}, third, fourth, pair]
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_a_paired_bridge_replaces_only_the_half_bridge_it_names():
@@ -661,10 +777,40 @@ def test_a_failed_backend_leaves_the_half_bridge_and_is_named(answer, level):
     with records_of_the_middleware() as records:
         response = client.get(CONVERSIONS)
     assert response.status_code == 200
-    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert response.json() == [LOCAL_ROW, unanswered()]
     assert response.headers[DECLINED_HEADER] == BACKEND_URL
     # the alert, then the pairing's INFO line and the merge's
     assert [r.levelno for r in records] == [level, logging.INFO, logging.INFO]
+
+
+async def _slow(request):
+    await asyncio.sleep(3)
+    return httpx.Response(200, json=[BRIDGE_ROW])
+
+
+@pytest.mark.parametrize(
+    "backend, reason",
+    [
+        ({"timeout_s": 0.2, "backend_answer": _slow}, "counter_lookup_timeout"),
+        ({"fail_with": httpx.ReadTimeout("hung")}, "counter_lookup_timeout"),
+        ({"fail_with": httpx.ConnectError("refused")}, "counter_lookup_failed"),
+        ({"backend_answer": httpx.Response(503)}, "counter_lookup_failed"),
+        ({"backend_answer": httpx.Response(200, json=[])}, None),
+        ({"backend_answer": httpx.Response(404)}, None),
+    ],
+    ids=["timeout", "hung", "refused", "503", "empty answer", "404"],
+)
+def test_the_local_half_says_why_when_the_backend_did_not_answer(backend, reason):
+    """A backend that did not answer leaves the local half in place, and the
+    half is not final: its row says why, and the answer must not be stored.
+    A backend that answered "nothing to pair" leaves a final half."""
+    client, _, _ = make_client(**backend)
+    response = client.get(CONVERSIONS)
+    assert response.status_code == 200
+    half = {**HALF_ROW, "partial_reason": reason} if reason else HALF_ROW
+    assert response.json() == [LOCAL_ROW, half]
+    assert response.headers.get("Cache-Control") == ("no-store" if reason else None)
+    assert (DECLINED_HEADER in response.headers) == bool(reason)
 
 
 @pytest.mark.parametrize(
@@ -681,7 +827,7 @@ def test_an_unreachable_or_hung_backend_is_asked_again_by_the_next_pairing(
     with records_of_the_middleware() as records:
         answers = [client.get(CONVERSIONS), client.get(CONVERSIONS)]
     for response in answers:
-        assert response.json() == [LOCAL_ROW, HALF_ROW]
+        assert response.json() == [LOCAL_ROW, unanswered(error)]
         assert response.headers[DECLINED_HEADER] == BACKEND_URL
     assert len(seen) == 2
     (alert,) = [r.getMessage() for r in records if r.levelno == logging.ERROR]
@@ -705,7 +851,7 @@ def test_merge_timeout_s_bounds_the_whole_call():
         again = client.get(CONVERSIONS)
     assert elapsed < 2
     for answer in (response, again):
-        assert answer.json() == [LOCAL_ROW, HALF_ROW]
+        assert answer.json() == [LOCAL_ROW, unanswered(TimeoutError())]
         assert answer.headers[DECLINED_HEADER] == BACKEND_URL
     assert len(seen) == 2
     assert any(r.levelno == logging.ERROR for r in records)
@@ -806,7 +952,7 @@ def test_any_other_proxied_answer_reads_nothing(path, status, content):
 PAIRS_ON_ETH = "External backends pair the bridges in conversions on: eth"
 PAIRS_NOTHING = (
     "delegated_conversions pairs nothing: included_bridges names none of across, cctp, "
-    "so no half bridge is found to pair"
+    "debridge, layerzero, relay, wormhole, so no half bridge is found to pair"
 )
 
 

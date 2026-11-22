@@ -165,12 +165,23 @@ def half_bridges(
     )
 
 
+class PairingUnanswered(Exception):
+    """The backend asked to pair a tx's half bridges gave no usable answer
+    (no connection, no answer in time, an error): the halves are not final.
+    `reason` is the partial_reason they take."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _paid_by(
     bridge: Bridge, network: str, logs: List[Log], tx_sender: Optional[str]
 ) -> Bridge:
     """A half this tx sends with fromAddress whoever paid its leg (user decision
     2026-11-18, as the adapter): the sender of its fromPayment Transfer, the
-    tx's sender for a bare-tx leg, unknown for an unknown leg. Pathfinder reads
+    tx's sender for a bare-tx leg (Relay: the depositor its event states),
+    unknown for an unknown leg. Pathfinder reads
     Input Value off that leg for fromAddress."""
     if bridge.fromNetwork != network:
         return bridge  # the other chain sent it: its own event names the sender
@@ -178,7 +189,11 @@ def _paid_by(
         payer = UNKNOWN
     else:
         leg = SubTransactionIdentifier.from_string(bridge.fromPayment)
-        if leg.sub_index is None:
+        if leg.sub_index is None and bridge.protocol == RELAY:
+            # Relay's event states who deposited, and the tx's sender can be
+            # a bundler: its reader named the payer (halves/relay.py)
+            payer = bridge.fromAddress
+        elif leg.sub_index is None:
             payer = tx_sender or UNKNOWN
         else:
             paid = next(log for log in logs if log["log_index"] == leg.sub_index)

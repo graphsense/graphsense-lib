@@ -215,7 +215,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from graphsenselib.db.asynchronous.services.models import ExternalConversion
-from graphsenselib.defi.bridging.delegated import PENDING, UNKNOWN
+from graphsenselib.defi.bridging.delegated import (
+    PENDING,
+    UNKNOWN,
+    PairingUnanswered,
+)
 from graphsenselib.web.config import (
     CurrencyRolesConfig,
     ExternalBackendConfig,
@@ -1160,9 +1164,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """Rule 6: the bridge rows the backend pairs for the requested tx, or
         for `tx_identifier` when the conversions route names one (the bare
         hash when the requested root trace is the whole tx). [] when the
-        backend cannot pair it (a 404 or 501) or fails (logged with why,
-        _fetch_json); a failure is named in `declined`, and does not start a
-        skip window: the pairing only enriches an answer. After the pairs
+        backend cannot pair it (a 404 or 501). When it fails (logged with
+        why, _fetch_json) the failure is named in `declined` and raised as
+        PairingUnanswered: the route's halves are not final and say so
+        (partial_reason). A failure does not start a skip window: the pairing
+        only enriches an answer. After the pairs
         come the halves of the backend that say why they are not final
         (partial_reason) or name a transfer id: the conversions route puts
         both on its own half. Every reason a returned row states is appended to
@@ -1214,7 +1220,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 pairing=True,
             )
             log(rows=0, reason="timeout")
-            return []
+            raise _unanswered(partial, _LOOKUP_TIMEOUT) from None
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
             # bridges are served, never a 500
@@ -1223,10 +1229,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 declined, backend.url, path, type(exc).__name__, pairing=True
             )
             log(rows=0, reason="invalid_json")
-            return []
+            raise _unanswered(partial, _LOOKUP_FAILED) from None
         if doc is None:
-            log(rows=0, reason=trace.get("reason", "no_answer"))
-            return []
+            reason = trace.get("reason", "no_answer")
+            log(rows=0, reason=reason)
+            if backend.url not in declined:
+                return []  # it answered: nothing to pair (a 404 or 501)
+            raise _unanswered(
+                partial, _LOOKUP_TIMEOUT if "Timeout" in reason else _LOOKUP_FAILED
+            )
         try:
             rows = _CONVERSIONS.validate_python(doc)
         except ValidationError as exc:
@@ -1240,7 +1251,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 exc.error_count(),
             )
             log(rows=0, reason="invalid_rows")
-            return []
+            raise _unanswered(partial, _LOOKUP_FAILED) from None
         # the local lookup ignores whitespace in a hash (bytes.fromhex)
         tx = "".join(_tx_of(identifier).split())
         named = [
@@ -1252,14 +1263,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # a half row (a leg the backend could not pair either) is no better
         # than the local half: only a complete pair may replace one
         bridges = [row for row in named if not _is_half(row)]
-        # a half that says what the local half cannot know: why it is not
-        # final, or the transfer's id (a CCTP V2 burn's nonce is Circle's to
-        # tell). The local half takes both.
-        unpaired = [
-            row
-            for row in named
-            if _is_half(row) and (row.partial_reason or row.transfer_id)
-        ]
+        # a half can say what the local half cannot know: why it is not
+        # final, the transfer's id (a CCTP V2 burn's nonce is Circle's to
+        # tell), the name of a chain neither of us serves. The local half
+        # takes those (txs_service.py).
+        unpaired = [row for row in named if _is_half(row)]
         reasons = sorted({r.partial_reason for r in named if r.partial_reason})
         if reasons:
             trace["partial"] = ",".join(reasons)
@@ -1459,6 +1467,20 @@ def _refusal_reason(response: httpx.Response) -> str:
     if isinstance(reason, str) and _REASON_CODE.fullmatch(reason):
         return reason
     return f"http_{response.status_code}"
+
+
+# what a local half says when the backend that pairs it did not answer: the
+# reasons the backend's own rows use for a lookup that failed or ran out of time
+_LOOKUP_FAILED = "counter_lookup_failed"
+_LOOKUP_TIMEOUT = "counter_lookup_timeout"
+
+
+def _unanswered(partial: List[str], reason: str) -> PairingUnanswered:
+    """The pairing gave no usable answer: `reason` goes to `partial` (the
+    answer must not be stored) and to the conversions route, which puts it on
+    its halves."""
+    partial.append(reason)
+    return PairingUnanswered(reason)
 
 
 def _is_half(row: ExternalConversion) -> bool:
