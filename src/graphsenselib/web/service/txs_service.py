@@ -111,6 +111,8 @@ async def get_tx_conversions(
     network on that side, or a bare tx with matching asset and amount);
     a half no row names stays, a row naming no half
     was not asked for and is dropped, and an ambiguous match keeps the half.
+    A half the backend could not pair for now (its own half row with a
+    partial_reason) leaves our half in place, with that reason.
     So with several bridges in a tx, one bridge's pairing never hides
     another's half. A root-trace request (<hash>_I<n> that is the whole tx)
     asks the backend for the bare hash."""
@@ -139,6 +141,9 @@ async def get_tx_conversions(
             )
             for r in bridges
         ]
+    # the backend's own halves complete nothing: they say why ours is not final
+    unpaired = [row for row in candidates if _is_half(row)]
+    candidates = [row for row in candidates if not _is_half(row)]
 
     matches = [
         [i for i, half in enumerate(halves) if _matches_half(row, half)]
@@ -155,7 +160,11 @@ async def get_tx_conversions(
     # Only accepted pairs may remove local conversions naming their legs.
     named = set().union(*map(_asset_transfers, paired))
     local = [row for row in rows if not _asset_transfers(row) & named]
-    kept = [half for i, half in enumerate(halves) if i not in replaced]
+    kept = [
+        _with_reason(half, unpaired)
+        for i, half in enumerate(halves)
+        if i not in replaced
+    ]
     if halves:
         _log_merge(
             tx_hash,
@@ -217,13 +226,31 @@ def _log_merge(
     log_safely("bridge_merge", emit)
 
 
-def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
-    # a half row (the middleware drops them) completes no half
-    if any(
+def _is_half(row: ExternalConversion) -> bool:
+    return any(
         transfer.lower() in _PLACEHOLDERS
         for transfer in (row.from_asset_transfer, row.to_asset_transfer)
-    ):
-        return False
+    )
+
+
+def _with_reason(
+    half: ExternalConversion, unpaired: Sequence[ExternalConversion]
+) -> ExternalConversion:
+    """`half`, with the partial_reason of the backend's half of the same leg,
+    if it sent one."""
+    for row in unpaired:
+        if _names_leg(row, half):
+            return half.model_copy(update={"partial_reason": row.partial_reason})
+    return half
+
+
+def _matches_half(row: ExternalConversion, half: ExternalConversion) -> bool:
+    # a half row completes no half
+    return not _is_half(row) and _names_leg(row, half)
+
+
+def _names_leg(row: ExternalConversion, half: ExternalConversion) -> bool:
+    """`row` has the known leg of `half` on the same side."""
     for side in ("from", "to"):
         transfer = getattr(half, f"{side}_asset_transfer").lower().removeprefix("0x")
         if transfer in _PLACEHOLDERS or getattr(half, f"{side}_network") != getattr(

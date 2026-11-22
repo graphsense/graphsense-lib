@@ -241,12 +241,12 @@ SERVED_BY_VALUE = "external-backend"
 # partial answer that looks complete is the failure mode this exists to prevent.
 DECLINED_HEADER = "X-Ikn-Backends-Declined"
 
-# A backend's 200 that lacks rows a retry may find (the adapter's reasons,
-# comma-separated, e.g. ``counter_lookup_failed``: a counter-chain lookup
-# failed, that leg is a half). Passed on with ``Cache-Control: no-store``, so
-# nothing keeps the answer as final and the next request asks again.
-PARTIAL_HEADER = "X-Ikn-Partial"
-_PARTIAL_REASONS = re.compile(r"[a-z0-9_]{1,64}(,[a-z0-9_]{1,64}){0,7}")
+# A backend's conversions row that is not final says why in the body
+# (ExternalConversion.partial_reason, e.g. ``counter_lookup_failed``: a
+# counter-chain lookup failed, that leg is a half). An answer with such a row
+# goes out with ``Cache-Control: no-store``, so nothing keeps it as final and
+# the next request asks again. No response header carries the reason.
+CACHE_CONTROL_HEADER = "Cache-Control"
 
 # One id per request, so a backend's log lines can be joined with ours: an
 # incoming ``X-Request-Id`` is kept when it is well-formed (the adapter's own
@@ -938,12 +938,6 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
             return None
         self._backend_answered(base_url)
-        # validated before it is passed on: a backend's header is its own
-        partial = response.headers.get(PARTIAL_HEADER)
-        if partial is not None:
-            trace["partial"] = (
-                partial if _PARTIAL_REASONS.fullmatch(partial) else "unspecified"
-            )
         return response.json()
 
     def _merge_failed(
@@ -1104,17 +1098,12 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         self._backend_answered(backend.url)
         headers = {SERVED_BY_HEADER: SERVED_BY_VALUE}
         # the backend headers the proxy carries through: a 429 that does not
-        # say when to come back is barely better than a 500, and a partial
-        # answer that reaches the client as a plain 200 is kept as final
-        retry_after = backend_response.headers.get(RETRY_AFTER_HEADER)
-        if retry_after:
-            headers[RETRY_AFTER_HEADER] = retry_after
-        partial = backend_response.headers.get(PARTIAL_HEADER)
-        if partial is not None:
-            headers[PARTIAL_HEADER] = (
-                partial if _PARTIAL_REASONS.fullmatch(partial) else "unspecified"
-            )
-            headers["Cache-Control"] = "no-store"
+        # say when to come back is barely better than a 500, and an answer
+        # the backend forbids storing (a row of it is not final) stays so
+        for name in (RETRY_AFTER_HEADER, CACHE_CONTROL_HEADER):
+            value = backend_response.headers.get(name)
+            if value:
+                headers[name] = value
         return Response(
             content=backend_response.content,
             status_code=backend_response.status_code,
@@ -1156,8 +1145,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers.update(_declined_header(declined))
         if partial and response.status_code < 400:
-            response.headers[PARTIAL_HEADER] = ",".join(partial)
-            response.headers["Cache-Control"] = "no-store"
+            response.headers[CACHE_CONTROL_HEADER] = "no-store"
         return response
 
     async def _paired_bridges(
@@ -1174,9 +1162,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         hash when the requested root trace is the whole tx). [] when the
         backend cannot pair it (a 404 or 501) or fails (logged with why,
         _fetch_json); a failure is named in `declined`, and does not start a
-        skip window: the pairing only enriches an answer. A partial answer
-        (the backend's PARTIAL_HEADER) is taken like any other, its reasons
-        appended to `partial`.
+        skip window: the pairing only enriches an answer. After the pairs
+        come the halves the backend could not pair for now (their
+        partial_reason says why): the conversions route names that reason on
+        its own half. Every reason a returned row states is appended to
+        `partial`.
 
         Every call logs one INFO ``event=bridge_pairing`` line (_log_pairing)
         saying what was asked, what came back, how long it took and why
@@ -1251,8 +1241,6 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             )
             log(rows=0, reason="invalid_rows")
             return []
-        if "partial" in trace:
-            partial.append(trace["partial"])
         # the local lookup ignores whitespace in a hash (bytes.fromhex)
         tx = "".join(_tx_of(identifier).split())
         named = [
@@ -1264,6 +1252,11 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # a half row (a leg the backend could not pair either) is no better
         # than the local half: only a complete pair may replace one
         bridges = [row for row in named if not _is_half(row)]
+        # a half it could not pair for now: the local half takes its reason
+        unpaired = [row for row in named if _is_half(row) and row.partial_reason]
+        reasons = sorted({r.partial_reason for r in named if r.partial_reason})
+        if reasons:
+            trace["partial"] = ",".join(reasons)
         log = functools.partial(log, halves=len(named) - len(bridges) or None)
         networks = {n for row in bridges for n in (row.from_network, row.to_network)}
         if self._entitled(request, networks) != networks:
@@ -1273,11 +1266,12 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             # instead, the safe side (module docstring)
             log(rows=len(bridges), reason="entitlement")
             return []
+        partial.extend(reasons)
         if bridges:
             log(rows=len(bridges), reason="paired")
         else:
             log(rows=0, reason="half" if named else "empty")
-        return bridges
+        return bridges + unpaired
 
     def _log_pairing(
         self,

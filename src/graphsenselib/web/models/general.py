@@ -300,3 +300,14 @@ class ExternalConversion(APIModel):
             " message guid; Wormhole: the VAA id)."
         ),
     )
+    # set by an external backend when the row is not final: a lookup it needs
+    # failed or was cut off by a deadline (counter_lookup_failed,
+    # counter_lookup_timeout). A half row without it is the chain's answer.
+    partial_reason: Optional[str] = Field(
+        default=None,
+        description=(
+            "Bridge rows: set when the row is not final, because a lookup on"
+            " the other chain failed (counter_lookup_failed) or ran out of"
+            " time (counter_lookup_timeout). Ask again later."
+        ),
+    )

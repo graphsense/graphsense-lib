@@ -63,7 +63,6 @@ from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
 from graphsenselib.web.middleware.currency_roles import CurrencyRoleMiddleware
 from graphsenselib.web.middleware.external_backends import (
     DECLINED_HEADER,
-    PARTIAL_HEADER,
     RETRY_AFTER_HEADER,
     SERVED_BY_HEADER,
     ExternalBackendMiddleware,
@@ -1238,7 +1237,6 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
 EXPOSED_HEADERS = [
     "*",
     DECLINED_HEADER,
-    PARTIAL_HEADER,
     RETRY_AFTER_HEADER,
     SERVED_BY_HEADER,
 ]

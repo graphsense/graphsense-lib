@@ -29,7 +29,6 @@ from graphsenselib.web.config import CurrencyRolesConfig, GSRestConfig
 from graphsenselib.web.middleware import external_backends
 from graphsenselib.web.middleware.external_backends import (
     DECLINED_HEADER,
-    PARTIAL_HEADER,
     SERVED_BY_HEADER,
     SERVED_BY_VALUE,
     ExternalBackendMiddleware,
@@ -308,60 +307,52 @@ def test_any_other_eth_tx_is_passed_through_and_reads_what_it_read_before():
 
 
 @pytest.mark.parametrize(
-    "answer, half",
-    [
-        ([{**BRIDGE_ROW, **FIAT}, SWAP_ROW], False),
-        # the adapter's own half of the burn: no better than the local one
-        ([{**BRIDGE_ROW, "to_asset_transfer": "pending"}], True),
-    ],
-    ids=["paired", "half"],
+    "reason", ["counter_lookup_failed", "counter_lookup_timeout"]
 )
-def test_a_partial_backend_answer_keeps_its_rows_and_says_so(answer, half):
-    """The backend answers 200 with what it proved, but a counter-chain lookup
-    failed (X-Ikn-Partial): its rows are taken as always, and the response says
-    it is incomplete and must not be stored, so the next request asks again."""
-    client, _, _ = make_client(
-        backend_answer=httpx.Response(
-            200, json=answer, headers={PARTIAL_HEADER: "counter_lookup_failed"}
-        )
-    )
+def test_a_half_the_backend_could_not_pair_for_now_says_why_in_its_row(reason):
+    """The backend answers 200 with the burn as a half whose counter-chain
+    lookup failed or was cut off (the row's partial_reason). The local half
+    stays, with that reason in the body: no response header names it. The
+    answer must not be stored, so the next request asks again."""
+    unpaired = {**BRIDGE_ROW, "to_asset_transfer": "pending", "partial_reason": reason}
+    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[unpaired]))
     with records_of_the_middleware() as records:
         response = client.get(CONVERSIONS)
     assert response.status_code == 200
-    assert response.json() == [LOCAL_ROW, HALF_ROW if half else BRIDGE_ROW]
-    assert response.headers[PARTIAL_HEADER] == "counter_lookup_failed"
+    assert response.json() == [LOCAL_ROW, {**HALF_ROW, "partial_reason": reason}]
+    assert "X-Ikn-Partial" not in response.headers
     assert response.headers["Cache-Control"] == "no-store"
     assert DECLINED_HEADER not in response.headers
     (record,) = [r for r in records if "event=bridge_pairing" in r.getMessage()]
-    assert "partial=counter_lookup_failed" in record.getMessage()
+    assert f"partial={reason}" in record.getMessage()
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        "counter_lookup_timeout",
-        "counter_lookup_failed,counter_lookup_timeout",
-    ],
-)
-def test_every_partial_reason_the_backend_names_is_passed_on(value):
-    """The adapter's reasons: counter_lookup_failed and, for a lookup the
-    pairing deadline cut off, counter_lookup_timeout (alone or together)."""
+def test_a_paired_row_that_is_not_final_keeps_its_reason():
+    """The pair is proven, the name of its native payout could not be read:
+    the row replaces the half and still says it is not final."""
+    row = {**BRIDGE_ROW, "partial_reason": "counter_lookup_failed"}
     client, _, _ = make_client(
-        backend_answer=httpx.Response(
-            200, json=[{**BRIDGE_ROW, **FIAT}], headers={PARTIAL_HEADER: value}
-        )
+        backend_answer=httpx.Response(200, json=[{**row, **FIAT}, SWAP_ROW])
     )
     response = client.get(CONVERSIONS)
-    assert response.json() == [LOCAL_ROW, BRIDGE_ROW]
-    assert response.headers[PARTIAL_HEADER] == value
+    assert response.json() == [LOCAL_ROW, row]
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_a_final_half_of_the_backend_leaves_the_local_half_as_it_is():
+    """The backend's own half without a reason (the other chain is not
+    served, nothing in the window) is no better than the local one."""
+    final = {**BRIDGE_ROW, "to_asset_transfer": "pending"}
+    client, _, _ = make_client(backend_answer=httpx.Response(200, json=[final]))
+    response = client.get(CONVERSIONS)
+    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert "Cache-Control" not in response.headers
 
 
 def test_a_complete_backend_answer_is_not_partial():
     client, _, _ = make_client()
     response = client.get(CONVERSIONS)
     assert response.json() == [LOCAL_ROW, BRIDGE_ROW]
-    assert PARTIAL_HEADER not in response.headers
     assert "Cache-Control" not in response.headers
 
 

@@ -40,7 +40,8 @@ class ExternalConversion(BaseModel):
     protocol: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol the bridge went through.")
     protocol_app: Optional[StrictStr] = Field(default=None, description="Bridge rows: the app on top of the protocol, where known.")
     transfer_id: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol's own id of the transfer, where known (Across: the deposit id; deBridge: the order id; LayerZero: the message guid; Wormhole: the VAA id).")
-    __properties: ClassVar[List[str]] = ["conversion_type", "from_address", "to_address", "from_asset", "to_asset", "from_amount", "to_amount", "from_asset_transfer", "to_asset_transfer", "from_network", "to_network", "from_is_supported_asset", "to_is_supported_asset", "protocol", "protocol_app", "transfer_id"]
+    partial_reason: Optional[StrictStr] = Field(default=None, description="Bridge rows: set when the row is not final, because a lookup on the other chain failed (counter_lookup_failed) or ran out of time (counter_lookup_timeout). Ask again later.")
+    __properties: ClassVar[List[str]] = ["conversion_type", "from_address", "to_address", "from_asset", "to_asset", "from_amount", "to_amount", "from_asset_transfer", "to_asset_transfer", "from_network", "to_network", "from_is_supported_asset", "to_is_supported_asset", "protocol", "protocol_app", "transfer_id", "partial_reason"]
 
     @field_validator('conversion_type')
     def conversion_type_validate_enum(cls, value):
@@ -126,7 +127,8 @@ class ExternalConversion(BaseModel):
             "to_is_supported_asset": obj.get("to_is_supported_asset"),
             "protocol": obj.get("protocol"),
             "protocol_app": obj.get("protocol_app"),
-            "transfer_id": obj.get("transfer_id")
+            "transfer_id": obj.get("transfer_id"),
+            "partial_reason": obj.get("partial_reason")
         })
         return _obj
 

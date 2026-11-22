@@ -386,6 +386,9 @@ class ExternalConversion(BaseModel):
     protocol: Optional[str] = None
     protocol_app: Optional[str] = None
     transfer_id: Optional[str] = None
+    # an external backend's row that is not final says why (a lookup failed
+    # or was cut off); None on every row of our own
+    partial_reason: Optional[str] = None
 
 
 class LinkUtxo(BaseModel):
