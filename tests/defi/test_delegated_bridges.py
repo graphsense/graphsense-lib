@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from graphsenselib.defi.bridging.delegated import half_bridges
+from graphsenselib.defi.bridging.delegated import DELEGATED_BRIDGES, half_bridges
+from graphsenselib.defi.bridging.halves import layerzero, wormhole
 from graphsenselib.defi.bridging.models import Bridge
 
 FIXTURE = json.loads((Path(__file__).parent / "cctp_eth_logs.json").read_text())
@@ -308,3 +309,112 @@ def test_no_logs_or_a_log_without_topics_is_none():
     assert half_bridges("eth", [], CCTP) == ()
     bare_log = {"address": unhex(V2_TOKEN_MESSENGER), "topics": [], "log_index": 0}
     assert half_bridges("eth", [bare_log], CCTP) == ()
+
+
+# Made-up logs whose shape a reader does not expect. Any contract can emit
+# them, so a reader that raises on one costs only its own protocol's halves
+# of that tx (half_bridges).
+STRANGER = bytes.fromhex("55" * 20)
+WH_CORE = bytes.fromhex("98f3c9e6e3face36baad05fe09d375ef1464288b")
+WH_BRIDGE = bytes.fromhex("3ee18b2214aff97000d974cf647e7c347e8fa585")
+TRANSFER = bytes.fromhex(
+    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+)
+ODD_TX = bytes.fromhex("ab" * 32)
+
+
+def word(n):
+    return n.to_bytes(32, "big")
+
+
+def padded(address):
+    return bytes(12) + address
+
+
+def odd_log(index, address, topics, data=b""):
+    return {
+        "tx_hash": ODD_TX,
+        "log_index": index,
+        "address": address,
+        "topics": topics,
+        "data": data,
+    }
+
+
+def token_bridge_message(index, amount, token):
+    """A Core LogMessagePublished of the Token Bridge: a transfer of amount
+    of token (payload type 1) to chain 23."""
+    payload = (
+        bytes([1])
+        + word(amount)
+        + padded(token)
+        + (2).to_bytes(2, "big")
+        + padded(STRANGER)
+        + (23).to_bytes(2, "big")
+        + word(0)
+    )
+    data = word(7) + word(0) + word(128) + word(1) + word(len(payload)) + payload
+    return odd_log(
+        index, WH_CORE, [wormhole._LOG_MESSAGE_PUBLISHED, padded(WH_BRIDGE)], data
+    )
+
+
+ODD_LOGS = {
+    "lz_oft_sent_one_topic": (
+        "layerzero",
+        [odd_log(0, STRANGER, [layerzero._OFT_SENT])],
+    ),
+    "lz_oft_received_one_topic": (
+        "layerzero",
+        [odd_log(0, STRANGER, [layerzero._OFT_RECEIVED])],
+    ),
+    "wh_message_of_amount_zero": (
+        "wormhole",
+        [
+            odd_log(
+                0, STRANGER, [TRANSFER, padded(STRANGER), padded(WH_BRIDGE)], word(0)
+            ),
+            token_bridge_message(1, 0, STRANGER),
+        ],
+    ),
+    "wh_deposit_one_topic_before_the_message": (
+        "wormhole",
+        [
+            odd_log(0, STRANGER, [wormhole._DEPOSIT]),
+            token_bridge_message(1, 5, STRANGER),
+        ],
+    ),
+    "wh_withdrawal_one_topic_after_a_redeem": (
+        "wormhole",
+        [
+            odd_log(
+                0,
+                WH_BRIDGE,
+                [wormhole._TRANSFER_REDEEMED, word(23), padded(STRANGER), word(9)],
+            ),
+            odd_log(1, STRANGER, [wormhole._WITHDRAWAL]),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(ODD_LOGS))
+def test_a_log_a_reader_cannot_read_is_no_half_bridge(case, caplog):
+    protocol, logs = ODD_LOGS[case]
+    with caplog.at_level(logging.ERROR):
+        assert (
+            half_bridges("eth", logs, DELEGATED_BRIDGES, tx_sender="0x" + "00" * 20)
+            == ()
+        )
+    [record] = caplog.records
+    assert record.exc_info is not None
+    assert protocol in record.getMessage()
+    assert ODD_TX.hex() in record.getMessage()
+
+
+def test_a_log_a_reader_cannot_read_leaves_the_other_protocols_halves():
+    stranger = {**ODD_LOGS["lz_oft_sent_one_topic"][1][0], "log_index": 10_000}
+    rows = db_rows("v2_burn") + [stranger]
+    assert half_bridges("eth", rows, ("cctp", "layerzero")) == (
+        HALF_BRIDGES["v2_burn"],
+    )

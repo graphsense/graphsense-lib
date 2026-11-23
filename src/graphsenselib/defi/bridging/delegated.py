@@ -152,17 +152,29 @@ def half_bridges(
 ) -> Tuple[Bridge, ...]:
     """The half bridges among a tx's raw logs (rows of the log table), of the
     bridges in included_bridges. A half this tx sends names whoever paid its
-    leg (_paid_by); tx_sender is the tx's from_address (0x hex)."""
+    leg (_paid_by); tx_sender is the tx's from_address (0x hex). A protocol
+    whose reader raises on this tx's logs contributes no half."""
     readers = _HALF_BRIDGE_READERS.get(network, {})
-    wanted = [read for bridge, read in readers.items() if bridge in included_bridges]
+    wanted = [
+        (name, read) for name, read in readers.items() if name in included_bridges
+    ]
     if not wanted:
         return ()
     logs = sorted(raw_logs, key=lambda log: log["log_index"])
-    return tuple(
-        _paid_by(bridge, network, logs, tx_sender)
-        for read in wanted
-        for bridge in read(logs)
-    )
+    halves = []
+    for name, read in wanted:
+        try:
+            found = read(logs)
+        except Exception:  # a log's shape is chosen by whoever emits it
+            logger.exception(
+                "%s half bridges of %s tx %s do not decode",
+                name,
+                network,
+                bytes(logs[0]["tx_hash"]).hex(),
+            )
+            continue
+        halves.extend(_paid_by(bridge, network, logs, tx_sender) for bridge in found)
+    return tuple(halves)
 
 
 def possible_fills(
