@@ -1,0 +1,69 @@
+# Weekly vulnerability scan (Trivy) of the published images. New CVEs show up
+# for images that were clean when they were built, so the report-only scan
+# after each build (github-packages-publish.yaml, spark_docker_publish.yml)
+# is not enough. A finding (CRITICAL/HIGH with a fix available, not in
+# .trivyignore) fails the run, and GitHub notifies about a failed scheduled
+# run: that failure is the alarm, it blocks nothing.
+#
+# The alarm skips the jars bundled by Spark and Hadoop (pyspark/jars in
+# graphsense-lib; the Spark and Hadoop distributions in graphsense-spark).
+# Their findings (netty, jackson, hadoop-client-runtime, ...) can only be
+# fixed by a newer Spark, i.e. a cluster upgrade (pyspark is pinned to 3.5.x
+# to match the cluster), so they would keep this run red permanently. They
+# stay visible: the report-only scan after each image build covers everything.
+# Re-check on every Spark upgrade.
+name: Trivy scan of the published images
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'   # Mondays 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to scan (default: latest)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: graphsense-lib
+            skip-dirs: usr/local/lib/python3.13/site-packages/pyspark/jars
+          - image: graphsense-spark
+            skip-dirs: opt/spark-*/jars,opt/hadoop-*
+    env:
+      TAG: ${{ github.event.inputs.tag || 'latest' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Scan ghcr.io/graphsense/${{ matrix.image }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ghcr.io/graphsense/${{ matrix.image }}:${{ env.TAG }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          skip-dirs: ${{ matrix.skip-dirs }}
+          exit-code: '1'
+          format: table
+          output: trivy-report.txt
+      - name: Scan report to the job summary
+        if: always()
+        run: |
+          {
+            echo "### Trivy: ${{ matrix.image }}:${TAG} (without ${{ matrix.skip-dirs }})"
+            echo '```'
+            cat trivy-report.txt 2>/dev/null || echo "(no report: the scan step failed, see its log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat trivy-report.txt 2>/dev/null || true   # also in the job log

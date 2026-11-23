@@ -150,6 +150,14 @@ MAX_HEX_STRING_LENGTH = 64
 FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
+# TODO(remove after 2026-12-31): the deprecated `Address.status` field.
+# Always "clean" since the per-address `dirty_addresses` lookup was dropped
+# (it could only say "dirty" on delta updater v1 keyspaces). It is still sent
+# because the dashboard's generated decoder requires it; drop the field, the
+# model attribute and this constant once a dashboard that no longer reads it
+# is deployed everywhere.
+DEPRECATED_ADDRESS_STATUS = "clean"
+
 # Bound on concurrent per-row trace/log/timestamp lookups in
 # normalize_address_transactions — turns up to `pagesize` sequential round-trips
 # per page into bounded-concurrent ones on the hottest (address-txs) endpoint.
@@ -4097,14 +4105,7 @@ class Cassandra:
 
         summaries_task = _tx_summaries()
 
-        has_address = "address" in row
-        if has_address:
-            dirty_task = self.is_address_dirty(currency, row["address"])
-            results = await asyncio.gather(balance_task, summaries_task, dirty_task)
-            summaries, is_dirty = results[1], results[2]
-        else:
-            results = await asyncio.gather(balance_task, summaries_task)
-            summaries = results[1]
+        _, summaries = await asyncio.gather(balance_task, summaries_task)
 
         tx1 = summaries.get(row["first_tx_id"])
         tx2 = summaries.get(row["last_tx_id"])
@@ -4122,8 +4123,8 @@ class Cassandra:
             tx_hash=tx2["tx_hash"], timestamp=tx2["timestamp"], height=tx2["block_id"]
         )
 
-        if has_address:
-            row["status"] = "dirty" if is_dirty else "clean"
+        if "address" in row:
+            row["status"] = DEPRECATED_ADDRESS_STATUS
 
         return row
 
@@ -4149,17 +4150,16 @@ class Cassandra:
             return row
 
         balance_task = self.add_balance(currency, row)
-        dirty_task = self.is_address_dirty(currency, row["address"])
 
         # first_tx_id == -1 is the sentinel for "address has no transactions of
         # its own" (e.g. an account address that only paid a failed-tx gas fee, or
         # a coinbase/miner-reward-only address). Don't try to resolve it — that
         # would find nothing and trip the inconsistency guard below.
         if row["first_tx_id"] is None or row["first_tx_id"] == -1:
-            _, is_dirty = await asyncio.gather(balance_task, dirty_task)
+            await balance_task
             row["first_tx"] = None
             row["last_tx"] = None
-            row["status"] = "dirty" if is_dirty else "clean"
+            row["status"] = DEPRECATED_ADDRESS_STATUS
             return row
 
         tx_tasks = [
@@ -4167,8 +4167,7 @@ class Cassandra:
             for id in [row["first_tx_id"], row["last_tx_id"]]
         ]
 
-        results = await asyncio.gather(balance_task, *tx_tasks, dirty_task)
-        tx1, tx2, is_dirty = results[1], results[2], results[3]
+        _, tx1, tx2 = await asyncio.gather(balance_task, *tx_tasks)
 
         if not tx1 or not tx2:
             raise DBInconsistencyException(
@@ -4187,35 +4186,9 @@ class Cassandra:
             height=tx2["block_id"],
         )
 
-        row["status"] = "dirty" if is_dirty else "clean"
+        row["status"] = DEPRECATED_ADDRESS_STATUS
 
         return row
-
-    async def is_address_dirty(self, currency, address):
-        if not self.parameters[currency]["use_delta_updater_v1"]:
-            return False
-
-        prefix = self.scrub_prefix(currency, address)
-        if is_eth_like(currency):
-            prefix = prefix.upper()
-        prefix_length = self.get_prefix_lengths(currency)["address"]
-        query = (
-            "SELECT address FROM dirty_addresses "
-            "WHERE address_prefix = %s AND address = %s"
-        )
-        try:
-            result = await self.execute_async(
-                currency, "transformed", query, [prefix[:prefix_length], address]
-            )
-
-            result = one(result)
-            if result:
-                return True
-        except InvalidRequest as e:
-            if "dirty_addresses" not in str(e):
-                raise e
-
-        return False
 
     @eth
     async def add_balance(self, currency, row):

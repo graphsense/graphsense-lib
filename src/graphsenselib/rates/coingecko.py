@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time, timezone
 from typing import List, Optional
 
 import pandas as pd
@@ -47,10 +47,12 @@ def fetch_ecb_rates(symbol_list: List) -> pd.DataFrame:
 
 
 def coingecko_historical_url(symbol: str, start: date, end: date) -> str:
-    """Returns URL for CoinMarketCap API request."""
+    """Returns URL for CoinGecko API request."""
 
-    fromd = int(datetime.combine(start, datetime.max.time()).timestamp())
-    tod = int(datetime.combine(end, datetime.max.time()).timestamp())
+    # UTC day bounds: the whole start day (00:00:00) up to the end of the end
+    # day. Naive datetimes would be read in the host's local time zone.
+    fromd = int(datetime.combine(start, time.min, tzinfo=timezone.utc).timestamp())
+    tod = int(datetime.combine(end, time.max, tzinfo=timezone.utc).timestamp())
 
     return (
         "https://pro-api.coingecko.com/api/v3/coins/"
@@ -63,10 +65,19 @@ def parse_coingecko_historical_response(
     response: requests.Response,
 ) -> pd.DataFrame:
     """Parse historical exchange rates (JSON) from coingecko."""
+    # Fail with the HTTP status (bad key, rate or plan limit) instead of
+    # trying to unpack the error object as candles.
+    response.raise_for_status()
+    candles = json.loads(response.content)
+    if not isinstance(candles, list):
+        raise ValueError(f"Unexpected CoinGecko OHLC response: {candles!r:.500}")
     # flake8: noqa: E741
     json_data = [
-        [date.fromtimestamp(d // 1000).strftime(DATE_FORMAT), c]
-        for d, o, h, l, c in json.loads(response.content)
+        [
+            datetime.fromtimestamp(d // 1000, tz=timezone.utc).strftime(DATE_FORMAT),
+            c,
+        ]
+        for d, o, h, l, c in candles
     ]
 
     return pd.DataFrame(json_data, columns=["date", "USD"])
@@ -75,7 +86,7 @@ def parse_coingecko_historical_response(
 def fetch_coingecko_rates(
     start: str, end: str, crypto_currency: str, api_key: str
 ) -> pd.DataFrame:
-    """Fetch cryptocurrency exchange rates from CoinMarketCap."""
+    """Fetch cryptocurrency exchange rates from CoinGecko."""
 
     user_agent = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1) "
@@ -85,40 +96,54 @@ def fetch_coingecko_rates(
     headers = {
         "User-Agent": user_agent,
         "x-cg-pro-api-key": api_key,
-        "accept": "accept: application/json",
+        "accept": "application/json",
     }
 
     start_date = date.fromisoformat(start)
     end_date = date.fromisoformat(end)
 
-    # coingecko restricts queries to 180 days
-    cmc_rates = pd.DataFrame()
-    for s, e in batch_date(start_date, end_date, days=180):
+    # coingecko restricts queries to 180 days; batch_date includes both
+    # ends, so a step of 179 days yields at most 180 days per request
+    parts = []
+    for s, e in batch_date(start_date, end_date, days=179):
         url = coingecko_historical_url(crypto_currency, s, e)
 
         logger.info(f"Fetching {crypto_currency} exchange rates from {url}")
         response = rates_session().get(url, headers=headers, timeout=HTTP_TIMEOUT)
-        cmc_rates_part = parse_coingecko_historical_response(response)
-        cmc_rates = pd.concat([cmc_rates, cmc_rates_part])
-
-    # assert that all dates are consecutive
-    assert len(cmc_rates.date) == len(set(cmc_rates.date))
-    assert (
-        set(cmc_rates.date).difference(
-            {
-                x.strftime(DATE_FORMAT)
-                for x in generate_date_range_days(start_date, end_date)
-            }
-        )
-        == set()
+        parts.append(parse_coingecko_historical_response(response))
+    coingecko_rates = (
+        pd.concat(parts, ignore_index=True)
+        if parts
+        else pd.DataFrame(columns=["date", "USD"])
     )
 
-    if len(cmc_rates) > 0:
-        last_record = cmc_rates.date.tolist()[-1]
+    expected_dates = [
+        x.strftime(DATE_FORMAT) for x in generate_date_range_days(start_date, end_date)
+    ]
+    # drop candles outside the requested days, e.g. a boundary candle
+    coingecko_rates = coingecko_rates[coingecko_rates.date.isin(expected_dates)]
+    duplicates = coingecko_rates.date[coingecko_rates.date.duplicated()]
+    if len(duplicates) > 0:
+        raise ValueError(
+            f"CoinGecko returned duplicate {crypto_currency} rates for "
+            f"{sorted(set(duplicates))}"
+        )
+    coingecko_rates = coingecko_rates.sort_values("date").reset_index(drop=True)
+    # missing days are not an error here: fetch_impl reports them and
+    # decides, depending on abort_on_gaps, whether to abort
+    missing = sorted(set(expected_dates) - set(coingecko_rates.date))
+    if missing:
+        logger.warning(
+            f"CoinGecko returned no {crypto_currency} rate for {len(missing)} "
+            f"day(s): {missing}"
+        )
+
+    if len(coingecko_rates) > 0:
+        last_record = coingecko_rates.date.tolist()[-1]
     else:
         last_record = None
     logger.info(f"Last record: {last_record}")
-    return cmc_rates
+    return coingecko_rates
 
 
 def fetch(env, currency, fiat_currencies, start_date, end_date, api_key: str):
@@ -186,15 +211,30 @@ def fetch_impl(
         raise SystemExit(1)
 
     # fetch cryptocurrency exchange rates in USD
-    cmc_rates = fetch_coingecko_rates(start_date, end_date, currency, api_key)
+    coingecko_rates = fetch_coingecko_rates(start_date, end_date, currency, api_key)
 
     ecb_rates = fetch_ecb_rates(fiat_currencies)
 
     # query conversion rates and merge converted values in exchange rates
-    exchange_rates = cmc_rates
+    exchange_rates = coingecko_rates
     date_range = pd.date_range(start_dt.date(), end_dt.date())
     date_range = pd.DataFrame(date_range, columns=["date"])
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
+
+    # CoinGecko gaps: unlike a weekend ECB gap, a missing crypto price is
+    # never filled in, and ingest() drops the day via dropna(). A gap at the
+    # end of the window (not published yet) heals on the next run, so it is
+    # recoverable (15); a gap inside the window stays after the next resume,
+    # so it is critical (2). Re-run without --abort-on-gaps to write around it.
+    missing_usd = sorted(set(date_range) - set(coingecko_rates.date))
+    if abort_on_gaps and missing_usd:
+        trailing = list(date_range[-len(missing_usd) :]) == missing_usd
+        logger.error(
+            f"Error: CoinGecko has no {currency} USD rate for {missing_usd}, "
+            "aborting import."
+        )
+        if not dry_run:
+            raise SystemExit(15 if trailing else 2)
 
     for fiat_currency in set(fiat_currencies) - {"USD"}:
         # Gap-free, forward-filled ECB rate so weekend / not-yet-published
@@ -203,7 +243,7 @@ def fetch_impl(
         ecb_rate = forward_filled_fx_rate(ecb_rates, fiat_currency, end_date)
         merged_df = (
             pd.DataFrame({"date": date_range})
-            .merge(cmc_rates, on="date", how="left")
+            .merge(coingecko_rates, on="date", how="left")
             .merge(ecb_rate, on="date", how="left")
         )
 

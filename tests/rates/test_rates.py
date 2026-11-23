@@ -299,3 +299,201 @@ def test_explicit_start_after_end_still_errors():
             True,
             "api-key",
         )
+
+
+def _utc_ms(day: str, hour: int = 0) -> int:
+    from datetime import timezone
+
+    dt = datetime.fromisoformat(day).replace(hour=hour, tzinfo=timezone.utc)
+    return int(dt.timestamp()) * 1000
+
+
+class FakeCoingeckoResponse:
+    def __init__(self, payload, status_code=200):
+        import json
+
+        self.content = json.dumps(payload).encode()
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        import requests
+
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error")
+
+
+def _candles(days):
+    return [[_utc_ms(d), 1.0, 2.0, 0.5, float(i + 1)] for i, d in enumerate(days)]
+
+
+def _install_fake_coingecko(monkeypatch, responder):
+    urls = []
+
+    class FakeSession:
+        def get(self, url, headers, timeout):
+            assert headers["accept"] == "application/json"
+            urls.append(url)
+            return responder(url)
+
+    monkeypatch.setattr(coingecko, "rates_session", lambda: FakeSession())
+    return urls
+
+
+def _url_bounds(url):
+    from urllib.parse import parse_qs, urlparse
+
+    q = parse_qs(urlparse(url).query)
+    return int(q["from"][0]), int(q["to"][0])
+
+
+def test_coingecko_url_covers_whole_utc_days(monkeypatch):
+    # the host time zone must not move the request window
+    import time as _time
+    from datetime import date
+
+    monkeypatch.setenv("TZ", "America/New_York")
+    if hasattr(_time, "tzset"):
+        _time.tzset()
+    try:
+        url = coingecko.coingecko_historical_url(
+            "btc", date(2026, 1, 1), date(2026, 1, 2)
+        )
+    finally:
+        monkeypatch.delenv("TZ")
+        if hasattr(_time, "tzset"):
+            _time.tzset()
+    fromd, tod = _url_bounds(url)
+    assert fromd == _utc_ms("2026-01-01") // 1000
+    assert tod == _utc_ms("2026-01-03") // 1000 - 1
+
+
+def test_coingecko_parse_uses_utc_dates(monkeypatch):
+    import time as _time
+
+    # 00:00 UTC is still the previous day in New York
+    monkeypatch.setenv("TZ", "America/New_York")
+    if hasattr(_time, "tzset"):
+        _time.tzset()
+    try:
+        df = coingecko.parse_coingecko_historical_response(
+            FakeCoingeckoResponse(_candles(["2026-01-01"]))
+        )
+    finally:
+        monkeypatch.delenv("TZ")
+        if hasattr(_time, "tzset"):
+            _time.tzset()
+    assert df.to_dict("records") == [{"date": "2026-01-01", "USD": 1.0}]
+
+
+def test_coingecko_http_error_surfaces_status():
+    import requests
+
+    with pytest.raises(requests.HTTPError, match="401"):
+        coingecko.parse_coingecko_historical_response(
+            FakeCoingeckoResponse({"status": {"error_code": 10002}}, 401)
+        )
+
+
+def test_coingecko_non_list_payload_is_a_clear_error():
+    with pytest.raises(ValueError, match="Unexpected CoinGecko OHLC response"):
+        coingecko.parse_coingecko_historical_response(
+            FakeCoingeckoResponse({"status": {"error_code": 10002}})
+        )
+
+
+def test_coingecko_batches_have_at_most_180_days(monkeypatch):
+    def responder(url):
+        fromd, tod = _url_bounds(url)
+        days = pd.date_range(
+            pd.Timestamp(fromd, unit="s"), pd.Timestamp(tod, unit="s"), freq="D"
+        ).strftime("%Y-%m-%d")
+        return FakeCoingeckoResponse(_candles(list(days)))
+
+    urls = _install_fake_coingecko(monkeypatch, responder)
+    df = coingecko.fetch_coingecko_rates("2026-01-01", "2026-12-31", "btc", "k")
+
+    assert len(urls) == 3
+    for url in urls:
+        fromd, tod = _url_bounds(url)
+        assert (tod + 1 - fromd) // 86400 <= 180
+    # every day once, the first day of each batch included
+    assert list(df.date) == list(
+        pd.date_range("2026-01-01", "2026-12-31").strftime("%Y-%m-%d")
+    )
+
+
+def test_coingecko_drops_out_of_range_candles_and_reports_gaps(monkeypatch, caplog):
+    def responder(url):
+        # a candle before the window, and no rate for 2026-01-02
+        return FakeCoingeckoResponse(
+            _candles(["2025-12-31", "2026-01-01", "2026-01-03"])
+        )
+
+    _install_fake_coingecko(monkeypatch, responder)
+    with caplog.at_level("WARNING"):
+        df = coingecko.fetch_coingecko_rates("2026-01-01", "2026-01-03", "btc", "k")
+
+    assert list(df.date) == ["2026-01-01", "2026-01-03"]
+    assert "2026-01-02" in caplog.text
+
+
+def test_coingecko_duplicate_days_raise(monkeypatch):
+    _install_fake_coingecko(
+        monkeypatch,
+        lambda url: FakeCoingeckoResponse(_candles(["2026-01-01", "2026-01-01"])),
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        coingecko.fetch_coingecko_rates("2026-01-01", "2026-01-01", "btc", "k")
+
+
+def _fetch_impl_with_usd_days(monkeypatch, usd_days, abort_on_gaps=True):
+    monkeypatch.setattr(
+        coingecko,
+        "fetch_coingecko_rates",
+        lambda start, end, c, k: pd.DataFrame(
+            {"date": usd_days, "USD": [100.0] * len(usd_days)}
+        ),
+    )
+    monkeypatch.setattr(
+        coingecko,
+        "fetch_ecb_rates",
+        lambda symbols: pd.DataFrame(
+            {"date": ["2026-03-16"], "USD": [1.0], "EUR": [0.9]}
+        ),
+    )
+    return coingecko.fetch_impl(
+        None,
+        "dev",
+        "BTC",
+        ["USD", "EUR"],
+        "2026-03-16",
+        "2026-03-19",
+        "exchange_rates",
+        True,  # force
+        False,  # dry_run
+        abort_on_gaps,
+        "api-key",
+    )
+
+
+def test_coingecko_interior_usd_gap_is_critical(monkeypatch):
+    # a hole inside the window never heals on resume -> exit 2
+    with pytest.raises(SystemExit) as e:
+        _fetch_impl_with_usd_days(
+            monkeypatch, ["2026-03-16", "2026-03-18", "2026-03-19"]
+        )
+    assert e.value.code == 2
+
+
+def test_coingecko_trailing_usd_gap_is_recoverable(monkeypatch):
+    # not yet published at the end of the window -> exit 15, retried next run
+    with pytest.raises(SystemExit) as e:
+        _fetch_impl_with_usd_days(monkeypatch, ["2026-03-16", "2026-03-17"])
+    assert e.value.code == 15
+
+
+def test_coingecko_usd_gap_without_abort_writes_around_it(monkeypatch):
+    df = _fetch_impl_with_usd_days(
+        monkeypatch, ["2026-03-16", "2026-03-18", "2026-03-19"], abort_on_gaps=False
+    )
+    assert list(df.date) == ["2026-03-16", "2026-03-18", "2026-03-19"]

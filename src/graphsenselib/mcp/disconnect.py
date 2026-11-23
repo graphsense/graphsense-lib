@@ -22,6 +22,12 @@ root level (WARNING) because ``setup_logging`` only sets the level of the web
 app's logger, so INFO would never reach the logs. Not ERROR: that pages Slack
 for what is usually a client's own choice.
 
+The client can also hang up earlier, while the SDK still reads the request
+body (``await request.body()``). Starlette then raises ``ClientDisconnect``,
+which used to travel up through the middlewares to the catch-all handler and
+was logged at ERROR the same way. The wrapper treats it like the silent return:
+one WARNING and the 499, never an exception.
+
 An app that returns without a response while the client is still connected is
 a real bug, so in that case the wrapper sends nothing and the error stays loud.
 """
@@ -31,6 +37,7 @@ from __future__ import annotations
 import logging
 import time
 
+from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
@@ -64,7 +71,12 @@ class RespondAfterDisconnect:
                 started = True
             await send(message)
 
-        await self.app(scope, watching_receive, watching_send)
+        try:
+            await self.app(scope, watching_receive, watching_send)
+        except ClientDisconnect:
+            # Raised by Starlette's Request.stream() on http.disconnect while
+            # reading the body; nobody is left to report an error to.
+            disconnected = True
 
         if started or not disconnected:
             return

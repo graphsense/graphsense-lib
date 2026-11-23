@@ -94,6 +94,36 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Vulnerability scan of the image just pushed (Trivy). Report only: it
+      # never fails the build; the weekly trivy-scan.yml is the alarm. Only
+      # CRITICAL/HIGH with a fix available; accepted findings go into
+      # .trivyignore, each with a reason and a re-check date.
+      - name: Scan image (Trivy, report only)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '0'
+          format: table
+          output: trivy-report.txt
+
+      - name: Scan report to the job summary
+        if: always()
+        run: |
+          {
+            echo '### Trivy: CRITICAL/HIGH vulnerabilities with a fix available'
+            echo '```'
+            cat trivy-report.txt 2>/dev/null || echo "(no report: the scan step failed or was skipped, see its log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat trivy-report.txt 2>/dev/null || true   # also in the job log
+
       # Only writes to the public Rekor transparency log while the package is
       # public, which avoids leaking data for a private one.
       - name: Sign the published Docker image

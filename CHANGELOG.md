@@ -12,6 +12,32 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Upgrade notes
+- **CoinGecko rates now treat a missing USD price as a gap.** With `--abort-on-gaps` (and in the pre-ingest rates step of `ingest from-node`), a day CoinGecko has no price for exits 15 when it is at the end of the window (retried next run) and 2 when it is inside it. Re-run `exchange-rates coingecko ingest` without `--abort-on-gaps` to write around a permanent hole.
+
+### Web API + Python client
+
+#### Fixed
+- **Address lookups make one Cassandra query fewer.** The deprecated `status` field of an address is now always `"clean"`; the per-address `dirty_addresses` lookup behind it is gone. The field itself will be removed after 2026-12-31: clients must not require it.
+- **An MCP client hanging up while its request body is still being read no longer logs `starlette.requests.ClientDisconnect` at ERROR.** The 2.21.0 fix only covered a client leaving during the tool call. The `/mcp` mount now answers this case the same way too: an empty 499 and one WARNING (`mcp/disconnect.py`).
+
+### Library
+
+#### Fixed
+- **CoinGecko exchange rates no longer drop days without a word.** A missing day used to pass the checks and be removed by `ingest()`; it is now logged, and `--abort-on-gaps` stops on it (see the upgrade note). The first day of each window is requested again (the window started at 23:59:59 of that day), dates are computed in UTC rather than the host time zone, each request asks for at most 180 days instead of 181, HTTP errors (bad key, rate limit) are raised with their status instead of an unpacking error, and the `Accept` header is `application/json`.
+
+## [2.21.0] - 2026-11-19
+
+`GET /eth/txs/{tx}/conversions` reports Circle CCTP bridges, which an external backend can pair with the other chain's leg. Tag summaries gain per-label `actors` and `tag_types`, and `report-tag` takes optional `concepts`. A Redis restart no longer fails requests until gs-rest is restarted, and `tagpack-tool sync` refreshes the views once instead of twice. API version 2.20.0 (new Python client; additive fields only).
+
+### Upgrade notes
+- **Create the tagstore index before deploying**, or `GET /tags/actors/{actor}/tags` gets slower than before for callers with private tag access: `CREATE INDEX CONCURRENTLY tag_actor_confidence_id_idx ON tag (actor, confidence, id) WHERE actor IS NOT NULL;`
+- **`is_possible_service` flags more addresses on account networks** (busy senders and payout wallets); UTXO networks are unchanged.
+- **MCP `open_url` is on by default** when downloads are served from `GS_MCP_PATHFINDER_REST_URL` (default `https://api.iknaio.com`). Set `GS_MCP_PATHFINDER_OPEN_URL_ENABLED=false` to keep it off.
+- **`external_backends.delegated_conversions`** is refused by images before this one; set it only together with 2.21.0.
+- **`tagpack-tool sync` with a cluster mapping no longer refreshes the views when the mapping fails**; they are refreshed by the next successful sync.
+- **Python API: `get_conversions_from_db` returns `DetectedConversions` and `TxsService.get_conversions` returns `TxConversions`**, not lists; read `.conversions` (and `.half_bridges`).
+
 ### Web API + Python client
 
 - **A conversions bridge row that is not final says so: `partial_reason`.** When an external backend could not read the other chain right now (`counter_lookup_failed`) or ran out of time (`counter_lookup_timeout`), the affected `bridge_tx` row carries the reason in the body and the answer goes out with `Cache-Control: no-store`. A half row without the field is final. No response header carries the reason.
@@ -49,6 +75,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Changed
+- **`get_conversions_from_db` and `TxsService.get_conversions` return a result object instead of a list.** `get_conversions_from_db` returns `DetectedConversions` and `TxsService.get_conversions` returns `TxConversions`; both have `conversions` and `half_bridges` (tuples, filtered to the sub-tx suffix by `get_conversions`). `half_bridges` are the bridges of `included_bridges` that graphsense-lib finds only half of (Circle CCTP, `defi/bridging/delegated.py`), each a `Bridge` (a row in `TxConversions`) with the other chain's leg `pending` or `unknown`. They are found in the logs the conversions are read from, so they cost no extra read.
 - **`is_possible_service` also flags busy senders on account networks.** Besides `in_degree > 7500` or more than 500 incoming txs, an address now counts as a possible service with `out_degree > 7500` (a payout wallet: few deposits, very many recipients), or with at least 500 txs at 100 or more txs per day over its active span (first to last tx). Before, an address that paid out to tens of thousands of recipients in a few days but had under 500 incoming txs was not flagged. Calibrated on trx/eth: the new rules add hot-wallet-like senders and almost no low-activity addresses. UTXO networks are unchanged (judged by their cluster).
 - **`tagpack-tool sync` refreshes the views once, after the cluster mapping.** With `--run-`, `--rerun-` or `--auto-rerun-cluster-mapping-with-env`, the views were refreshed before the mapping and again after it. Nothing in between reads them (the mapping reads the `address` table), so the first refresh is dropped; on a large tagstore this saves about half an hour per sync. Without a mapping the views are refreshed once, as before. If the mapping fails, the views are not refreshed in that run.
 
@@ -122,7 +149,6 @@ Security fix: a failing `graphsense-cli` command no longer prints local variable
 - **`sync run` warns once, not every second, when the `sync` section or a `-c` network is missing from the config**; with `--once` it then exits 2 instead of 0.
 - **Sync jobs log the config file they run with**, instead of "Running version … without a config".
 - **Compatible with pandas 3.1** (no `inplace=True`, deprecated there). Dependency updates: pandas 3.1.0, fastapi 0.162.0, authlib 1.9.1, dnspython 2.9.0 (GHSA-45c3-73f7-pv4m), aiohttp 3.14.4, uv image 0.13.6; Python client: python-dateutil 3.0.0.
-- **`get_conversions_from_db` and `TxsService.get_conversions` return a result object instead of a list.** `get_conversions_from_db` returns `DetectedConversions` and `TxsService.get_conversions` returns `TxConversions`; both have `conversions` and `half_bridges` (tuples, filtered to the sub-tx suffix by `get_conversions`). `half_bridges` are the bridges of `included_bridges` that graphsense-lib finds only half of (Circle CCTP, `defi/bridging/delegated.py`), each a `Bridge` (a row in `TxConversions`) with the other chain's leg `pending` or `unknown`. They are found in the logs the conversions are read from, so they cost no extra read.
 
 #### Fixed
 - **Delta Lake compaction no longer deletes files a running Spark job still reads.** Vacuum kept no removed files (retention 0), so a transformation or `pubkey-update` that overlapped a compaction of its source network could fail mid-read on a missing parquet file. Removed files are now kept for 48h; storage of compacted-away files is freed that much later. The time of the last vacuum is stored in the table property `graphsense.lastVacuum`, since a vacuum that deletes nothing leaves no commit to schedule `auto_compact` on.
