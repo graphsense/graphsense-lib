@@ -1,16 +1,20 @@
 import importlib
 import asyncio
+import atexit
 import json
 import logging
 import logging.handlers
 import os
+import queue
 import re
+import time
 import traceback
 from contextlib import asynccontextmanager, suppress
 from html import escape
 from typing import Any, Optional
 
 import yaml
+from cassandra.cluster import NoHostAvailable
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -44,7 +48,10 @@ from graphsenselib.utils.address import (
     address_checksum_invalid,
     bech32_mixed_case,
 )
-from graphsenselib.utils.slack import SlackLogHandler
+from graphsenselib.utils.slack_aggregation import (
+    RedisBurstCoordinator,
+    SlackBurstHandler,
+)
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
@@ -469,11 +476,37 @@ def load_config(config_file: str) -> dict:
     return resolve_env_vars(config)
 
 
+def _slack_coordinator(slack_config, fallback_redis_url, environment):
+    """Redis coordination of the workers' Slack messages, or None."""
+    if not slack_config.coordinate_workers or slack_config.window_s <= 0:
+        return None
+    url = slack_config.redis_url or fallback_redis_url
+    if not url:
+        return None
+    from graphsenselib.web.redis_client import redact_redis_url
+
+    try:
+        coordinator = RedisBurstCoordinator(url, environment)
+    except Exception as e:  # e.g. a malformed URL: post per worker instead
+        logger.warning(
+            "Slack notifications: no worker coordination (%s): %r",
+            redact_redis_url(url),
+            e,
+        )
+        return None
+    logger.info(
+        "Slack notifications: workers coordinated through Redis at %s",
+        redact_redis_url(url),
+    )
+    return coordinator
+
+
 def setup_logging(
     app_logger,
     slack_exception_hook,
     default_environment: Optional[str],
     logging_config: LoggingConfig,
+    fallback_redis_url: Optional[str] = None,
 ):
     level = logging_config.level.upper()
     level = getattr(logging, level)
@@ -521,16 +554,36 @@ def setup_logging(
         mcp_logger = logging.getLogger("graphsenselib.mcp")
         # The external backends middleware logs at ERROR exactly once per
         # outage of a backend (its module docstring).
+        slack_loggers = (app_logger, mcp_logger, backends_logger)
+        # A second setup (tests, app factory called again) replaces the
+        # handlers instead of stacking another sender thread per call.
+        for lg in slack_loggers:
+            for old in [h for h in lg.handlers if isinstance(h, SlackBurstHandler)]:
+                lg.removeHandler(old)
+                old.close()
+        slack_config = logging_config.slack
+        coordinator = _slack_coordinator(
+            slack_config, fallback_redis_url, default_environment
+        )
+        # One handler per webhook, shared by the three loggers, so that their
+        # errors are collapsed together. It posts from its own thread: the
+        # logging call only enqueues (2026-11-23: a burst of Cassandra errors
+        # posted one blocking request per error from the event loop).
         for h in slack_exception_hook.hooks:
-            slack_handler = SlackLogHandler(h, environment=default_environment)
+            slack_handler = SlackBurstHandler(
+                h,
+                environment=default_environment,
+                window_s=slack_config.window_s,
+                traceback_lines=slack_config.traceback_lines,
+                queue_size=slack_config.queue_size,
+                coordinator=coordinator,
+            )
             slack_handler.setLevel("ERROR")
-            app_logger.addHandler(slack_handler)
-            mcp_handler = SlackLogHandler(h, environment=default_environment)
-            mcp_handler.setLevel("ERROR")
-            mcp_logger.addHandler(mcp_handler)
-            backends_handler = SlackLogHandler(h, environment=default_environment)
-            backends_handler.setLevel("ERROR")
-            backends_logger.addHandler(backends_handler)
+            slack_handler.setFormatter(
+                logging.Formatter("%(levelname)s %(name)s: %(message)s")
+            )
+            for lg in slack_loggers:
+                lg.addHandler(slack_handler)
 
     smtp = logging_config.smtp
     if not smtp:
@@ -554,7 +607,18 @@ def setup_logging(
     )
 
     handler.setLevel(getattr(logging, smtp.level))
-    app_logger.addHandler(handler)
+    # SMTPHandler connects and sends inside emit(): from the request that
+    # would block the event loop for the whole SMTP dialogue, so it runs
+    # behind a queue in its own listener thread.
+    log_queue: queue.Queue = queue.Queue(maxsize=1000)
+    queue_handler = logging.handlers.QueueHandler(log_queue)
+    queue_handler.setLevel(handler.level)
+    listener = logging.handlers.QueueListener(
+        log_queue, handler, respect_handler_level=True
+    )
+    listener.start()
+    atexit.register(listener.stop)
+    app_logger.addHandler(queue_handler)
 
 
 def log_slack_notification_status(
@@ -901,6 +965,11 @@ async def lifespan(app: FastAPI):
     await teardown_database(app)
 
 
+# A Cassandra outage logs one ERROR, then warnings until this long without
+# a NoHostAvailable (database_unavailable_handler).
+DB_UNAVAILABLE_QUIET_S = 120
+
+
 def _get_request_context(request: Request) -> str:
     """Get user and URL context for error logging."""
     username = request.headers.get("X-Consumer-Username", "unknown")
@@ -980,6 +1049,38 @@ def _register_exception_handlers(app: FastAPI):
         return JSONResponse(
             status_code=408,
             content={"detail": "Request timeout"},
+        )
+
+    # time of the last NoHostAvailable in this worker (None: none yet)
+    db_unavailable: dict = {"last": None}
+
+    @app.exception_handler(NoHostAvailable)
+    async def database_unavailable_handler(request: Request, exc: NoHostAvailable):
+        # The driver has no usable connection to any Cassandra node (all
+        # marked down, pools shut down or overloaded): a temporary outage of
+        # the database, not a bug of this request. 503 tells clients to retry
+        # (the dashboard does, with backoff); a 500 per request also posted
+        # one Slack message each (2026-11-23). One ERROR per outage, the
+        # rest are warnings.
+        now = time.monotonic()
+        last = db_unavailable["last"]
+        first = last is None or now - last > DB_UNAVAILABLE_QUIET_S
+        db_unavailable["last"] = now
+        msg = (
+            f"Cassandra unavailable (NoHostAvailable), answering 503 | "
+            f"{_get_request_context(request)} | {str(exc)[:500]}"
+        )
+        if first:
+            logger.error(
+                msg + f" (further ones are warnings until "
+                f"{DB_UNAVAILABLE_QUIET_S}s without one)"
+            )
+        else:
+            logger.warning(msg)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database temporarily unavailable, please retry"},
+            headers={"Retry-After": "5"},
         )
 
     @app.exception_handler(Exception)
@@ -1349,7 +1450,20 @@ def create_app(
     default_environment = config.environment or gslib_config.default_environment
     config.slack_info_hook = slack_info_hook
 
-    setup_logging(logger, slack_exception_hook, default_environment, config.logging)
+    # Redis for coordinating the workers' Slack messages when the logging
+    # config names none: the app's own, as the features that use it see it.
+    fallback_redis_url = None
+    if config.file_store and config.file_store.enabled:
+        fallback_redis_url = config.file_store.redis_url or "redis://localhost"
+    elif config.tag_access_logger and config.tag_access_logger.enabled:
+        fallback_redis_url = config.tag_access_logger.redis_url or "redis://localhost"
+    setup_logging(
+        logger,
+        slack_exception_hook,
+        default_environment,
+        config.logging,
+        fallback_redis_url=fallback_redis_url,
+    )
     for error in gslib_config_errors:
         logger.warning("Ignoring invalid gslib config setting: %s", error)
     log_slack_notification_status(

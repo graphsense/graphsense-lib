@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Protocol
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from graphsenselib.datatypes.common import NodeType
-from graphsenselib.errors import ClusterNotFoundException
+from graphsenselib.errors import ClusterNotFoundException, GsTimeoutException
 from graphsenselib.utils.address import address_to_user_format
 
 from .blocks_service import BlocksService
@@ -407,7 +407,9 @@ class EntitiesService:
                 timeout=request_timeout,
             )
         except asyncio.TimeoutError:
-            raise Exception(
+            # 408 (GsTimeoutException handler), not an unhandled 500; see
+            # addresses_service.list_address_links.
+            raise GsTimeoutException(
                 f"Timeout while fetching links for {currency}/{entity_id} "
                 f"to {neighbor_id}"
             )

@@ -1474,7 +1474,7 @@ def test_the_outage_alert_reaches_slack(monkeypatch):
     """setup_logging gives the middleware's logger the same Slack handler as
     the app's: it is a sibling logger tree, so without it the alert would
     only reach the log."""
-    from graphsenselib.utils.slack import SlackLogHandler
+    from graphsenselib.utils.slack_aggregation import SlackBurstHandler
     from graphsenselib.web.app import setup_logging
     from graphsenselib.web.config import LoggingConfig
 
@@ -1498,8 +1498,11 @@ def test_the_outage_alert_reaches_slack(monkeypatch):
     )
 
     handlers = logging.getLogger(names[2]).handlers
-    assert [type(h) for h in handlers] == [SlackLogHandler]
+    assert [type(h) for h in handlers] == [SlackBurstHandler]
     assert handlers[0].level == logging.ERROR
+    # one handler per webhook, shared by the three loggers (collapsed together)
+    assert all(logging.getLogger(n).handlers == handlers for n in names)
+    handlers[0].close()
 
 
 @pytest.mark.parametrize("level", ["INFO", "WARNING"])
