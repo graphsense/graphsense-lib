@@ -15,6 +15,12 @@ logging:
     #     subject: "GraphSense REST API Error"
     #     secure: true
     #     timeout: 10
+    # slack:  # how ERROR lines reach the Slack "exceptions" topic (defaults shown)
+    #     window_s: 300          # repeats of an error within it: one summary (0: post every line)
+    #     traceback_lines: 30    # last traceback lines in the message (full one in the log)
+    #     queue_size: 1000       # per worker; beyond it lines are counted, not queued
+    #     coordinate_workers: true  # one message per deployment via Redis, else per worker
+    #     redis_url: null        # default: the file store's or tag access logger's Redis
 
 database:
     retry_interval: 10
