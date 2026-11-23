@@ -18,6 +18,9 @@ Use one changelog file, but separate entries by track in each release window.
 ### Web API + Python client
 
 #### Fixed
+- **A few parallel cluster `/links` requests between large clusters can no longer take the whole API down.** The cluster filter resolved the cluster id of every input and output address of a candidate batch (up to `links_adaptive_fetch_size_cap` txs) at once, putting tens of thousands of statements on the driver's connections; the driver reported them overloaded, missed heartbeats and marked every Cassandra host down, so every request of that worker failed with `NoHostAvailable`. Each address is now resolved once per request, at most `MAX_ROW_LOOKUP_CONCURRENCY` (100) at a time, and the matching stops at the inputs when the source cluster is not among them.
+- **New `max_concurrent_statements` (database config, default 1024): a per-process cap on Cassandra statements in flight.** Excess statements wait for a slot instead of overloading the driver's one connection per host; `0` restores the old unbounded behavior.
+- **A `/links` request that runs into `address_links_request_timeout` now answers 408 and logs a warning** (`GsTimeoutException`) instead of an unhandled 500 with an ERROR log (and an exceptions notification per request).
 - **Address lookups make one Cassandra query fewer.** The deprecated `status` field of an address is now always `"clean"`; the per-address `dirty_addresses` lookup behind it is gone. The field itself will be removed after 2026-12-31: clients must not require it.
 - **An MCP client hanging up while its request body is still being read no longer logs `starlette.requests.ClientDisconnect` at ERROR.** The 2.21.0 fix only covered a client leaving during the tool call. The `/mcp` mount now answers this case the same way too: an empty 499 and one WARNING (`mcp/disconnect.py`).
 
