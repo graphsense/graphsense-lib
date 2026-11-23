@@ -18,6 +18,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Web API + Python client
 
 #### Fixed
+- **Address lookups make one Cassandra query fewer.** The deprecated `status` field of an address is now always `"clean"`; the per-address `dirty_addresses` lookup behind it is gone. The field itself will be removed after 2026-12-31: clients must not require it.
 - **An MCP client hanging up while its request body is still being read no longer logs `starlette.requests.ClientDisconnect` at ERROR.** The 2.21.0 fix only covered a client leaving during the tool call. The `/mcp` mount now answers this case the same way too: an empty 499 and one WARNING (`mcp/disconnect.py`).
 
 ### Library
