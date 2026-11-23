@@ -78,6 +78,14 @@ async def _silent_after_disconnect(scope, receive, send):
         pass
 
 
+async def _reads_body_then_client_gone(scope, receive, send):
+    """What the SDK does when the client hangs up while the body is read:
+    Request.body() raises ClientDisconnect."""
+    from starlette.requests import Request
+
+    await Request(scope, receive).body()
+
+
 async def _silent(scope, receive, send):
     """An app bug: returns without a response, client still connected."""
     await receive()
@@ -108,6 +116,38 @@ async def test_answers_after_disconnect(caplog):
 async def test_base_http_middleware_does_not_raise_after_disconnect():
     app = _behind_middleware(RespondAfterDisconnect(_silent_after_disconnect))
     sent = await _call(app)
+    assert _statuses(sent) == [CLIENT_CLOSED_REQUEST]
+
+
+async def _call_disconnect_first(app):
+    """The client is gone before the body arrives."""
+    sent = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    await asyncio.wait_for(app(_scope(b"{}"), receive, send), 10)
+    return sent
+
+
+async def test_client_disconnect_while_reading_body_is_answered(caplog):
+    caplog.set_level(logging.WARNING, logger="graphsenselib.mcp.disconnect")
+    sent = await _call_disconnect_first(
+        RespondAfterDisconnect(_reads_body_then_client_gone)
+    )
+    assert _statuses(sent) == [CLIENT_CLOSED_REQUEST]
+    [record] = [r for r in caplog.records if r.name == "graphsenselib.mcp.disconnect"]
+    assert record.levelno == logging.WARNING
+
+
+async def test_client_disconnect_while_reading_body_behind_middleware():
+    """As in prod: ClientDisconnect must not reach the BaseHTTPMiddlewares
+    (and from there the catch-all handler, which logs at ERROR)."""
+    app = _behind_middleware(RespondAfterDisconnect(_reads_body_then_client_gone))
+    sent = await _call_disconnect_first(app)
     assert _statuses(sent) == [CLIENT_CLOSED_REQUEST]
 
 

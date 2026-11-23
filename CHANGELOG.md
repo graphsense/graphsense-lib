@@ -26,6 +26,10 @@ Use one changelog file, but separate entries by track in each release window.
   - The format is described in `docs/graph_convert_format.md`. The same conversion is available as `graphsense-cli convert gs-files convert`.
   - Each tx is looked up once, in-process, with the caller's headers. A failed lookup only leaves that tx without flow edges; the warnings are counted in `X-Convert-Warnings`. At most 500 nodes and 4 MiB.
 
+#### Fixed
+- **Address lookups make one Cassandra query fewer.** The deprecated `status` field of an address is now always `"clean"`; the per-address `dirty_addresses` lookup behind it is gone. The field itself will be removed after 2026-12-31: clients must not require it.
+- **An MCP client hanging up while its request body is still being read no longer logs `starlette.requests.ClientDisconnect` at ERROR.** The 2.21.0 fix only covered a client leaving during the tool call. The `/mcp` mount now answers this case the same way too: an empty 499 and one WARNING (`mcp/disconnect.py`).
+
 ### Library
 
 #### Fixed

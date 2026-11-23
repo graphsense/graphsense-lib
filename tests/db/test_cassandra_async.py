@@ -451,15 +451,11 @@ def _make_finish_address_self(tx_rows_by_id, calls, no_row_calls=None):
     async def add_balance(currency, row):
         row["balance"] = 0
 
-    async def is_address_dirty(currency, address):
-        return False
-
     ns = SimpleNamespace(
         parameters={"btc": {"tx_bucket_size": 1000, "fiat_currencies": ["EUR", "USD"]}},
         execute_async=execute_async,
         get_tx_by_id=get_tx_by_id,
         add_balance=add_balance,
-        is_address_dirty=is_address_dirty,
     )
     ns.markup_values = Cassandra.markup_values.__get__(ns)
     ns.markup_currency = Cassandra.markup_currency.__get__(ns)

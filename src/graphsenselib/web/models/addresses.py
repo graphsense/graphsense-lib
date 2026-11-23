@@ -129,6 +129,8 @@ class Address(APIModel):
         "external GraphSense-compatible backends; "
         "local Cassandra serving computes exact aggregates.",
     )
+    # TODO(remove after 2026-12-31): always "clean" now; see
+    # DEPRECATED_ADDRESS_STATUS in db/asynchronous/cassandra.py.
     status: Optional[str] = Field(
         default=None,
         description="Legacy field. Do not use — retained only for backwards "
