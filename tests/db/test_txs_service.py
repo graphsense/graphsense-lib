@@ -1085,6 +1085,8 @@ class TestConversionsWithHalfBridges:
             "tx_hash": bytes.fromhex(CCTP_BURN[2:]),
             "block_id": FIXTURE["v2_burn"]["block_id"],
             "input": None,
+            # the sender of the root call below
+            "from_address": b"\x0a" * 20,
         }
         db = MagicMock()
         db.get_tx_by_hash = AsyncMock(return_value=tx)
@@ -1121,6 +1123,7 @@ class TestConversionsWithHalfBridges:
                 to_network="arb",
                 from_is_supported_asset=False,
                 to_is_supported_asset=False,
+                protocol="cctp",
             ),
         )
 
