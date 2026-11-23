@@ -38,10 +38,50 @@ class SMTPConfig(BaseSettings):
     level: str = Field(default="CRITICAL", description="Log level for SMTP handler")
 
 
+class SlackNotificationConfig(BaseSettings):
+    """How ERROR log lines reach the Slack "exceptions" topic.
+
+    Sent from a background thread per worker (never from the request), and
+    collapsed: the first line of an error is posted at once, repeats within
+    the same clock-aligned window are posted as one count at its end.
+    """
+
+    window_s: int = Field(
+        default=300,
+        description="Window in seconds within which repeats of the same "
+        "error are counted and posted as one summary; 0 posts every error "
+        "line (still without blocking the request).",
+    )
+    traceback_lines: int = Field(
+        default=30,
+        description="Traceback lines kept in the posted message (the last "
+        "ones; the full traceback stays in the log).",
+    )
+    queue_size: int = Field(
+        default=1000,
+        description="Error lines waiting to be sent per worker; beyond it "
+        "they are counted and reported, not queued.",
+    )
+    coordinate_workers: bool = Field(
+        default=True,
+        description="Share first messages and counts between the workers "
+        "through Redis (redis_url, else the file store's or the tag access "
+        "logger's Redis when enabled). Without Redis each worker posts its "
+        "own.",
+    )
+    redis_url: Optional[str] = Field(
+        default=None, description="Redis for coordinate_workers."
+    )
+
+
 class LoggingConfig(BaseSettings):
     level: str = Field(default="INFO", description="Logging level")
     smtp: Optional[SMTPConfig] = Field(
         default=None, description="SMTP configuration for email logging"
+    )
+    slack: SlackNotificationConfig = Field(
+        default_factory=SlackNotificationConfig,
+        description="Slack notifications of ERROR log lines",
     )
 
 
