@@ -15,6 +15,11 @@ Use one changelog file, but separate entries by track in each release window.
 ### Upgrade notes
 - **CoinGecko rates now treat a missing USD price as a gap.** With `--abort-on-gaps` (and in the pre-ingest rates step of `ingest from-node`), a day CoinGecko has no price for exits 15 when it is at the end of the window (retried next run) and 2 when it is inside it. Re-run `exchange-rates coingecko ingest` without `--abort-on-gaps` to write around a permanent hole.
 
+### Web API + Python client
+
+#### Fixed
+- **An MCP client hanging up while its request body is still being read no longer logs `starlette.requests.ClientDisconnect` at ERROR.** The 2.21.0 fix only covered a client leaving during the tool call. The `/mcp` mount now answers this case the same way too: an empty 499 and one WARNING (`mcp/disconnect.py`).
+
 ### Library
 
 #### Fixed
