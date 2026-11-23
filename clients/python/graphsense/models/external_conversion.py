@@ -37,8 +37,8 @@ class ExternalConversion(BaseModel):
     to_network: StrictStr
     from_is_supported_asset: StrictBool
     to_is_supported_asset: StrictBool
-    protocol: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol the bridge went through.")
-    protocol_app: Optional[StrictStr] = Field(default=None, description="Bridge rows: the app on top of the protocol, where known.")
+    protocol: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol the bridge went through (across, cctp, debridge, layerzero, wormhole, relay). New values may be added.")
+    protocol_app: Optional[StrictStr] = Field(default=None, description="Bridge rows: the app on top of the protocol, where known (LayerZero: stargate, usdt0). New values may be added.")
     transfer_id: Optional[StrictStr] = Field(default=None, description="Bridge rows: the protocol's own id of the transfer, where known (Across: the deposit id; deBridge: the order id; LayerZero: the message guid; Wormhole: the VAA id; CCTP: Circle's nonce; Relay: the order id).")
     partial_reason: Optional[StrictStr] = Field(default=None, description="Bridge rows: set when the row is not final, because a lookup on the other chain failed (counter_lookup_failed) or ran out of time (counter_lookup_timeout). Ask again later.")
     __properties: ClassVar[List[str]] = ["conversion_type", "from_address", "to_address", "from_asset", "to_asset", "from_amount", "to_amount", "from_asset_transfer", "to_asset_transfer", "from_network", "to_network", "from_is_supported_asset", "to_is_supported_asset", "protocol", "protocol_app", "transfer_id", "partial_reason"]
@@ -48,16 +48,6 @@ class ExternalConversion(BaseModel):
         """Validates the enum"""
         if value not in set(['dex_swap', 'bridge_tx']):
             raise ValueError("must be one of enum values ('dex_swap', 'bridge_tx')")
-        return value
-
-    @field_validator('protocol')
-    def protocol_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['across', 'cctp', 'debridge', 'layerzero', 'wormhole', 'relay']):
-            raise ValueError("must be one of enum values ('across', 'cctp', 'debridge', 'layerzero', 'wormhole', 'relay')")
         return value
 
     model_config = ConfigDict(

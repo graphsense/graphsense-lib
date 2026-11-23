@@ -257,8 +257,9 @@ class RelatedAddresses(APIModel):
     next_page: Optional[str] = None
 
 
-# The protocol a bridge_tx row went through: the values the external backend
-# adapter's ExternalConversion sends (more with each delegated bridge)
+# The protocols this version knows a bridge_tx row to go through: the values
+# the external backend sends (more with each delegated bridge). Internal only:
+# the API field is an open string, so a client of this version takes a newer one
 BridgeProtocol = Literal["across", "cctp", "debridge", "layerzero", "wormhole", "relay"]
 
 
@@ -286,13 +287,19 @@ class ExternalConversion(APIModel):
     # Wormhole VAA id (<emitterChain>/<emitterAddress, 64 hex>/<sequence>),
     # CCTP nonce (V2: 0x hex; V1: decimal, unique per source domain only),
     # Relay orderId (0x hex)
-    protocol: Optional[BridgeProtocol] = Field(
+    protocol: Optional[str] = Field(
         default=None,
-        description="Bridge rows: the protocol the bridge went through.",
+        description=(
+            "Bridge rows: the protocol the bridge went through (across, cctp,"
+            " debridge, layerzero, wormhole, relay). New values may be added."
+        ),
     )
     protocol_app: Optional[str] = Field(
         default=None,
-        description="Bridge rows: the app on top of the protocol, where known.",
+        description=(
+            "Bridge rows: the app on top of the protocol, where known"
+            " (LayerZero: stargate, usdt0). New values may be added."
+        ),
     )
     transfer_id: Optional[str] = Field(
         default=None,
