@@ -114,6 +114,18 @@ class CassandraConfig(BaseSettings):
         description="Ignore missing traces in list_address_txs for Ethereum-like currencies",
     )
 
+    max_concurrent_statements: int = Field(
+        default=1024,
+        description=(
+            "Upper bound on Cassandra statements in flight per process (per "
+            "REST worker); more wait for a free slot. Without it a few heavy "
+            "requests (e.g. parallel cluster /links between large clusters) "
+            "put tens of thousands of statements on the driver's one "
+            "connection per host, the driver reports it overloaded, misses "
+            "heartbeats and marks every host down, failing all requests of "
+            "the process. 0 disables the bound."
+        ),
+    )
     links_adaptive_fetch_size_cap: int = Field(
         default=8192,
         description=(

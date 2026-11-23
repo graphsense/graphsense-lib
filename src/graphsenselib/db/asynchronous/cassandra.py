@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import logging
 import re
@@ -1087,6 +1088,25 @@ class Cassandra:
         result = self.session.execute(q, params, paging_state=paging_state)
         return result
 
+    def _statement_slot(self):
+        """Process-wide cap on statements in flight (max_concurrent_statements).
+
+        The driver keeps one connection per host per process. When requests
+        put tens of thousands of statements on it at once, it reports the
+        connection as overloaded, heartbeats time out, and the driver marks
+        every host down: then every request of the process fails with
+        NoHostAvailable, not only the heavy ones (prod 2026-11-23). Waiting
+        for a slot here queues the excess in the process instead. The
+        semaphore is created lazily so it binds to the serving event loop.
+        """
+        limit = getattr(self.tconfig, "max_concurrent_statements", 0) or 0
+        if limit <= 0:
+            return contextlib.nullcontext()
+        sem = getattr(self, "_statement_sem", None)
+        if sem is None:
+            sem = self._statement_sem = asyncio.Semaphore(limit)
+        return sem
+
     async def execute_async(
         self,
         currency,
@@ -1098,14 +1118,15 @@ class Cassandra:
         autopaging=False,
     ):
         try:
-            result = await self.execute_async_lowlevel(
-                currency,
-                keyspace_type,
-                query,
-                params=params,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
+            async with self._statement_slot():
+                result = await self.execute_async_lowlevel(
+                    currency,
+                    keyspace_type,
+                    query,
+                    params=params,
+                    paging_state=paging_state,
+                    fetch_size=fetch_size,
+                )
         except ProtocolException as e:
             if "Invalid value for the paging state" not in str(e):
                 raise e
@@ -2539,6 +2560,10 @@ class Cassandra:
                 )
             )
 
+        # address -> cluster id, shared by every candidate batch of this
+        # request (UTXO cluster links): busy addresses recur in many txs.
+        cluster_id_cache = {}
+
         prefetch = self.tconfig.links_candidate_prefetch_enabled
         candidate_task = fetch_candidates(page, fetch_size)
         # The finally block guarantees an in-flight prefetch never
@@ -2713,38 +2738,9 @@ class Cassandra:
                             and has_address_in_ios(neighbor, r["outputs"])
                         ]
                     else:
-
-                        def get_address_from_io(x):
-                            address_wrapped = x.address
-                            if address_wrapped is None:
-                                return None
-                            assert len(address_wrapped) == 1
-                            return address_wrapped[0]
-
-                        async def cluster_ids_of(ios):
-                            addresses_io = [get_address_from_io(x) for x in ios]
-                            addresses_io = [a for a in addresses_io if a is not None]
-                            # resolve the io addresses' cluster ids concurrently
-                            return set(
-                                await asyncio.gather(
-                                    *[
-                                        self.get_address_entity_id(currency, a)
-                                        for a in addresses_io
-                                    ]
-                                )
-                            )
-
-                        async def cluster_row_matches(r):
-                            in_ids, out_ids = await asyncio.gather(
-                                cluster_ids_of(r["inputs"]),
-                                cluster_ids_of(r["outputs"]),
-                            )
-                            return id in in_ids and neighbor in out_ids
-
-                        keep = await asyncio.gather(
-                            *[cluster_row_matches(r) for r in results2]
+                        results2 = await self._filter_links_rows_by_cluster(
+                            currency, results2, id, neighbor, cluster_id_cache
                         )
-                        results2 = [r for r, k in zip(results2, keep) if k]
 
                 final_results.extend(results2)
 
@@ -2815,6 +2811,60 @@ class Cassandra:
         self.logger.debug(f"final_results len {len(final_results)}")
 
         return final_results, str(page) if page is not None else None
+
+    async def _filter_links_rows_by_cluster(
+        self, currency, rows, id, neighbor, cluster_id_cache
+    ):
+        """Keep the UTXO txs with cluster `id` among the inputs and cluster
+        `neighbor` among the outputs (raw io membership, see list_links).
+
+        Every io address needs its cluster id (two point reads each). A
+        candidate batch grows to links_adaptive_fetch_size_cap txs with up to
+        hundreds of ios each; resolving them all with one unbounded gather put
+        tens of thousands of statements in flight per request, and a handful of
+        parallel requests between large clusters overloaded the driver's
+        connections until every node was marked down (prod outage 2026-11-23).
+        So: each distinct address once per request (`cluster_id_cache`, shared
+        by the request's batches), at most MAX_ROW_LOOKUP_CONCURRENCY at a time.
+        """
+
+        def addresses_of(ios):
+            out = []
+            for x in ios or ():
+                if x.address is None:
+                    continue
+                assert len(x.address) == 1
+                out.append(x.address[0])
+            return out
+
+        missing = list(
+            dict.fromkeys(
+                a
+                for r in rows
+                for a in addresses_of(r["inputs"]) + addresses_of(r["outputs"])
+                if a not in cluster_id_cache
+            )
+        )
+        if missing:
+            sem = asyncio.Semaphore(MAX_ROW_LOOKUP_CONCURRENCY)
+
+            async def resolve(address):
+                async with sem:
+                    return await self.get_address_entity_id(currency, address)
+
+            for address, cluster_id in zip(
+                missing, await asyncio.gather(*[resolve(a) for a in missing])
+            ):
+                cluster_id_cache[address] = cluster_id
+
+        def matches(r):
+            in_ids = {cluster_id_cache[a] for a in addresses_of(r["inputs"])}
+            if id not in in_ids:
+                return False
+            out_ids = {cluster_id_cache[a] for a in addresses_of(r["outputs"])}
+            return neighbor in out_ids
+
+        return [r for r in rows if matches(r)]
 
     async def _list_matching_addresses_short_prefix_and_postfix_eth(
         self, currency: str, prefix: str, postfix: str, limit: int

@@ -10,6 +10,7 @@ from graphsenselib.errors import (
     NetworkNotFoundException,
     ClusterNotFoundException,
     DBInconsistencyException,
+    GsTimeoutException,
 )
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.bch import (
@@ -648,7 +649,11 @@ class AddressesService:
                 timeout=request_timeout,
             )
         except asyncio.TimeoutError:
-            raise Exception(
+            # 408 via the GsTimeoutException handler, logged as a warning: a
+            # links scan that outlives the timeout is expected for some
+            # pairs, not an unhandled 500 (which also posted to Slack, once
+            # per request, 2026-11-23).
+            raise GsTimeoutException(
                 f"Timeout while fetching links for {currency}/"
                 f"{address_to_user_format(currency, address)} to "
                 f"{address_to_user_format(currency, neighbor)}"
