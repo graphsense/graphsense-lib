@@ -44,7 +44,15 @@ def test_queries_and_tables_select_by_regime():
         "best_cluster_tag",
         "tag_count_by_cluster_v2",
         "best_cluster_tag_v2",
+        "best_cluster_tag_winner",
+        "best_cluster_tag_winner_v2",
     }
+    # a winner view reads its candidate view, so it is refreshed after it
+    mvs = list(ts_mod._CLUSTER_MVS)
+    for suffix in ("", "_v2"):
+        assert mvs.index(f"best_cluster_tag_winner{suffix}") > mvs.index(
+            f"best_cluster_tag{suffix}"
+        )
 
 
 class _RecordingTagStore:

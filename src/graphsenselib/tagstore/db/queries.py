@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 from datetime import timezone
 from enum import IntEnum
@@ -35,6 +36,8 @@ from .models import (
     AddressClusterMappingV2,
     BestClusterTagView,
     BestClusterTagViewV2,
+    BestClusterTagWinnerView,
+    BestClusterTagWinnerViewV2,
     Concept,
     Confidence,
     Country,
@@ -391,6 +394,11 @@ def _cluster_models(fresh: bool):
     return (AddressClusterMapping, BestClusterTagView, TagCountByClusterView)
 
 
+def _winner_model(fresh: bool):
+    """The per-(cluster, ACL group) winner view of one clustering regime."""
+    return BestClusterTagWinnerViewV2 if fresh else BestClusterTagWinnerView
+
+
 def _cluster_relations_for(cluster_id):
     """Route a public cluster id to its relations: (trio..., raw id).
 
@@ -431,18 +439,42 @@ def _definer_tie_break():
     return (Tag.tagpack_id.collate("C"), Tag.id)
 
 
-def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str]):
+def _get_best_cluster_tag_stmt(
+    cluster_id: int, network: str, groups: List[str], use_winner_view: bool = False
+):
+    """The best cluster tag the caller's groups may see.
+
+    With ``use_winner_view`` it picks among the precomputed winners of the
+    caller's groups (at most one row per group); otherwise among every
+    candidate in best_cluster_tag, which for a cluster with millions of
+    definer tags means joining and sorting all of them on every request.
+    Both give the same tag: the order is total, so the best of the per-group
+    winners is the overall winner."""
+    fresh = is_fresh_cluster_id(int(cluster_id))
     _, BestClusterTag, _, cluster_id = _cluster_relations_for(cluster_id)
-    return (
+    stmt = (
         select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(BestClusterTag.cluster_id == cluster_id)
-        .where(BestClusterTag.network == network)
-        .where(Tag.tagpack_id == TagPack.id)
-        .where(BestClusterTag.tag_id == Tag.id)
+    )
+    if use_winner_view:
+        Winner = _winner_model(fresh)
+        stmt = (
+            stmt.where(Winner.cluster_id == cluster_id)
+            .where(Winner.network == network)
+            .where(Winner.acl_group.in_(groups))
+            .where(Winner.tag_id == Tag.id)
+        )
+    else:
+        stmt = (
+            stmt.where(BestClusterTag.cluster_id == cluster_id)
+            .where(BestClusterTag.network == network)
+            .where(BestClusterTag.tag_id == Tag.id)
+        )
+    return (
+        stmt.where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
         .order_by(Confidence.level.desc(), *_definer_tie_break())
@@ -451,7 +483,11 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
 
 
 def _get_best_cluster_tag_winners_stmt(
-    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
+    cluster_ids: List[int],
+    network: str,
+    groups: List[str],
+    fresh: bool,
+    use_winner_view: bool = False,
 ):
     # Takes RAW ids of one regime (callers split mixed public id lists via
     # _routed_id_batches). Picks (cluster_id, winning_tag_id) per cluster at
@@ -461,7 +497,22 @@ def _get_best_cluster_tag_winners_stmt(
     # cluster's tagset would be shipped back through the joinedloaded
     # relationships and Cartesian'd by Tag.concepts, observed at >5min on
     # a single cluster before this rewrite.
+    # With use_winner_view, the candidates are the precomputed winners of
+    # the caller's groups (see _get_best_cluster_tag_stmt).
     _, BestClusterTag, _ = _cluster_models(fresh)
+    if use_winner_view:
+        Winner = _winner_model(fresh)
+        return (
+            select(Winner.cluster_id, Tag.id)
+            .distinct(Winner.cluster_id)
+            .where(Winner.cluster_id.in_(cluster_ids))
+            .where(Winner.network == network)
+            .where(Winner.acl_group.in_(groups))
+            .where(Winner.tag_id == Tag.id)
+            .where(Tag.tagpack_id == TagPack.id)
+            .where(Confidence.id == Tag.confidence_id)
+            .order_by(Winner.cluster_id, Confidence.level.desc(), *_definer_tie_break())
+        )
     return (
         select(BestClusterTag.cluster_id, Tag.id)
         .distinct(BestClusterTag.cluster_id)
@@ -933,6 +984,10 @@ def _get_labels_by_clusterids_batch_stmt(
 
 
 # Facades
+# How long a missing best_cluster_tag_winner view is trusted to stay missing.
+WINNER_VIEW_RECHECK_S = 300
+
+
 def _inject_session(f):
     @wraps(f)
     async def inner_f(self, *args, **kwargs):
@@ -957,6 +1012,34 @@ class TagstoreDbAsync:
         # the tag summary (see _only_actor_tags). REST sets it from
         # tag_summary_only_propagate_high_confidence_actors.
         self.only_actor_tags_in_actor_lists = only_actor_tags_in_actor_lists
+        # fresh -> (winner view exists, monotonic time of the check)
+        self._winner_view_state: Dict[bool, tuple] = {}
+
+    async def _use_winner_view(self, session, fresh: bool) -> bool:
+        """Whether the best_cluster_tag_winner view of the regime exists.
+
+        A tagstore that has not run `tagstore init` since the view was added
+        lacks it; lookups then fall back to the candidate view. A missing view
+        is checked again after WINNER_VIEW_RECHECK_S, so running the init
+        takes effect without a restart."""
+        state = self._winner_view_state.get(fresh)
+        now = time.monotonic()
+        if state is not None and (state[0] or now - state[1] < WINNER_VIEW_RECHECK_S):
+            return state[0]
+        name = _winner_model(fresh).__tablename__
+        exists = (
+            await session.exec(
+                text("SELECT to_regclass(:name) IS NOT NULL").bindparams(name=name)
+            )
+        ).one()[0]
+        if not exists and state is None:
+            logger.warning(
+                f"Materialized view {name} does not exist: best cluster tags "
+                "are picked from all candidates, which is slow for clusters "
+                "with many definer tags (run `graphsense-cli tagstore init`)"
+            )
+        self._winner_view_state[fresh] = (bool(exists), now)
+        return bool(exists)
 
     @staticmethod
     def from_url(db_url):
@@ -1290,8 +1373,11 @@ class TagstoreDbAsync:
         for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
             if not raw_ids:
                 continue
+            use_winner = await self._use_winner_view(session, fresh)
             winners = await session.exec(
-                _get_best_cluster_tag_winners_stmt(raw_ids, network, groups, fresh)
+                _get_best_cluster_tag_winners_stmt(
+                    raw_ids, network, groups, fresh, use_winner_view=use_winner
+                )
             )
             cid_to_tag_id.update({cid + shift: tid for cid, tid in winners})
         if not cid_to_tag_id:
@@ -1445,8 +1531,15 @@ class TagstoreDbAsync:
     ) -> Optional[TagPublic]:
         if not is_representable_entity_id(int(cluster_id)):
             return None
+        use_winner = await self._use_winner_view(
+            session, is_fresh_cluster_id(int(cluster_id))
+        )
         result = (
-            await session.exec(_get_best_cluster_tag_stmt(cluster_id, network, groups))
+            await session.exec(
+                _get_best_cluster_tag_stmt(
+                    cluster_id, network, groups, use_winner_view=use_winner
+                )
+            )
         ).first()
         if result is not None:
             t, tp, _ = result

@@ -160,7 +160,7 @@ def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
     captured = {}
 
     def fake_setup_logging(
-        app_logger, slack_exception_hook, default_environment, logging_config
+        app_logger, slack_exception_hook, default_environment, logging_config, **_
     ):
         captured["slack_exception_hook"] = slack_exception_hook
         captured["default_environment"] = default_environment
@@ -189,7 +189,7 @@ def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
 
 def _create_app_logs(monkeypatch, caplog, slack_topics_env):
     monkeypatch.setenv("GRAPHSENSE_SLACK_TOPICS", slack_topics_env)
-    monkeypatch.setattr("graphsenselib.web.app.setup_logging", lambda *args: None)
+    monkeypatch.setattr("graphsenselib.web.app.setup_logging", lambda *a, **kw: None)
     cfg = GSRestConfig.from_dict({"database": {"nodes": ["localhost"]}})
 
     with caplog.at_level("INFO", logger="graphsenselib.web.app"):

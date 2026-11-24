@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import time
+import traceback
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Pool, cpu_count
 
@@ -708,6 +709,7 @@ def _sync_impl(
 
 
 ADDRESS_VALIDATION_MODES = ("off", "warn", "error")
+NETWORK_NAMES_MODES = ("off", "warn", "error")
 
 
 def _validate_tagpack_file(
@@ -718,6 +720,7 @@ def _validate_tagpack_file(
     address_validation,
     use_pyyaml,
     with_hints=False,
+    network_names="warn",
 ) -> tuple:
     """Load and validate one tagpack file; returns the actors it references
     and its invalid addresses (``AddressFinding``s, hinted if ``with_hints``).
@@ -727,7 +730,7 @@ def _validate_tagpack_file(
         tagpack_file, tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
     )
     logger.info(f"Validating {tagpack_file}")
-    tagpack.validate()
+    tagpack.validate(network_names=network_names)
     findings = []
     if address_validation != "off":
         findings = tagpack.verify_addresses(with_hints=with_hints)
@@ -774,10 +777,13 @@ def validate_tagpack(
     use_pyyaml=False,
     jobs=1,
     invalid_addresses_report=None,
+    network_names="warn",
 ):
     """``address_validation``: off, warn (log invalid addresses) or error
     (a pack with invalid addresses fails). ``invalid_addresses_report``: path
-    of a TSV file listing every invalid address with a hint."""
+    of a TSV file listing every invalid address with a hint. ``network_names``:
+    off, warn or error (the pack fails) for chain names used as network
+    ("Bitcoin" instead of "BTC")."""
     t0 = time.time()
     if jobs < 1:
         jobs = os.cpu_count() or 1
@@ -891,6 +897,7 @@ def validate_tagpack(
                     address_validation,
                     use_pyyaml,
                     with_hints,
+                    network_names,
                 )
                 addr_ok = addresses_ok(tagpack_file, findings)
                 if (not check or check_actors(tagpack_file, actors)) and addr_ok:
@@ -911,6 +918,7 @@ def validate_tagpack(
                 address_validation,
                 use_pyyaml,
                 with_hints,
+                network_names,
             ),
         ) as pool:
             results = pool.map(_validate_tagpack_file_in_worker, work, chunksize=1)
@@ -1267,6 +1275,15 @@ def tagpack():
     "fails). Unsupported networks are only counted.",
 )
 @click.option(
+    "--network-names",
+    type=click.Choice(NETWORK_NAMES_MODES),
+    default="warn",
+    show_default=True,
+    help="Tags whose network is a chain name ('Bitcoin', 'Ethereum') instead "
+    "of a network code ('BTC', 'ETH'); such tags never reach their cluster: "
+    "off, warn, or error (the pack fails).",
+)
+@click.option(
     "--no-address-validation",
     is_flag=True,
     help="Same as --address-validation off (deprecated).",
@@ -1322,6 +1339,7 @@ def validate_tagpack_cli(
     actorpack_path,
     use_pyyaml,
     jobs,
+    network_names,
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
@@ -1337,6 +1355,7 @@ def validate_tagpack_cli(
         use_pyyaml,
         jobs,
         invalid_addresses_report,
+        network_names,
     )
 
 
@@ -1993,15 +2012,39 @@ def check_cluster_mapping_staleness(
     return overall, per_network
 
 
-def insert_cluster_mapping_wp(network, ks_mapping, args, batch, fresh):
+# A cluster-mapping batch is tried this often before the sync fails; the
+# inserts are upserts, so a repeated batch writes the same rows again.
+CLUSTER_MAPPING_BATCH_ATTEMPTS = 2
+CLUSTER_MAPPING_RETRY_DELAY_S = 10
+
+
+class ClusterMappingBatchError(RuntimeError):
+    """A cluster-mapping batch failed in a pool worker, as plain text.
+
+    The worker's original exception can hold driver objects (Cassandra
+    connections with locks) that do not pickle. The pool then cannot send it
+    back and the parent only sees ``MaybeEncodingError: ... cannot pickle
+    '_thread.RLock' object`` (nightly sync 2026-11-24), without the cause.
+    This one carries the original type, message and traceback as a string.
+    """
+
+
+def _insert_cluster_mapping_batch(network, ks_mapping, args, batch, fresh):
     tagstore = TagStore(args.url, args.schema)
-    gs = GraphSense(
-        args.db_nodes,
-        ks_mapping,
-        username=args.cassandra_username,
-        password=args.cassandra_password,
-    )
-    if gs.keyspace_for_network_exists(network):
+    gs = None
+    try:
+        gs = GraphSense(
+            args.db_nodes,
+            ks_mapping,
+            username=args.cassandra_username,
+            password=args.cassandra_password,
+        )
+        if not gs.keyspace_for_network_exists(network):
+            logger.error(
+                "At least one of the configured keyspaces"
+                f" for network {network} does not exist."
+            )
+            return (network, 0)
         clusters = gs.get_address_clusters(batch, network, fresh=False)
         clusters["network"] = network
         tagstore.insert_cluster_mappings(clusters, fresh=False)
@@ -2013,13 +2056,46 @@ def insert_cluster_mapping_wp(network, ks_mapping, args, batch, fresh):
             fresh_clusters = gs.get_address_clusters(batch, network, fresh=True)
             fresh_clusters["network"] = network
             tagstore.insert_cluster_mappings(fresh_clusters, fresh=True)
-    else:
-        clusters = []
-        logger.error(
-            "At least one of the configured keyspaces"
-            f" for network {network} does not exist."
+        return (network, len(clusters))
+    finally:
+        # Shut the Cassandra session down here, not at process exit: a
+        # worker that ended with requests in flight logged "cannot schedule
+        # new futures after shutdown" for each of its driver retries.
+        closers = (
+            getattr(gs, "close", None),
+            getattr(getattr(tagstore, "conn", None), "close", None),
         )
-    return (network, len(clusters))
+        for close in closers:
+            if close is None:
+                continue
+            try:
+                close()
+            except Exception as e:
+                logger.warning(f"Closing a cluster-mapping connection failed: {e!r}")
+
+
+def insert_cluster_mapping_wp(network, ks_mapping, args, batch, fresh):
+    """Map one batch of addresses (pool worker); retried once on any error."""
+    failure = None
+    for attempt in range(1, CLUSTER_MAPPING_BATCH_ATTEMPTS + 1):
+        try:
+            return _insert_cluster_mapping_batch(
+                network, ks_mapping, args, batch, fresh
+            )
+        except Exception as e:
+            failure = (type(e).__qualname__, str(e)[:2000], traceback.format_exc())
+            logger.warning(
+                f"Cluster mapping of a batch of {len(batch)} {network} addresses "
+                f"failed (attempt {attempt}/{CLUSTER_MAPPING_BATCH_ATTEMPTS}): "
+                f"{failure[0]}: {failure[1][:300]}"
+            )
+            if attempt < CLUSTER_MAPPING_BATCH_ATTEMPTS:
+                time.sleep(CLUSTER_MAPPING_RETRY_DELAY_S * attempt)
+    name, msg, tb = failure
+    raise ClusterMappingBatchError(
+        f"cluster mapping of a batch of {len(batch)} {network} addresses failed "
+        f"{CLUSTER_MAPPING_BATCH_ATTEMPTS} times: {name}: {msg}\n{tb}"
+    )
 
 
 def load_ks_mapping(args):

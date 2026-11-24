@@ -311,6 +311,16 @@ class BestClusterTagView(SQLModel, table=True):
     tag_id: int = Field(primary_key=True)
 
 
+class BestClusterTagWinnerView(SQLModel, table=True):
+    """The winner of best_cluster_tag per cluster and ACL group (init.sql)."""
+
+    __tablename__ = "best_cluster_tag_winner"
+    network: str = Field(primary_key=True)
+    cluster_id: int = Field(primary_key=True)
+    acl_group: str = Field(primary_key=True)
+    tag_id: int
+
+
 class TagCountByClusterView(SQLModel, table=True):
     __tablename__ = "tag_count_by_cluster"
     gs_cluster_id: int = Field(primary_key=True)
@@ -360,6 +370,14 @@ class BestClusterTagViewV2(SQLModel, table=True):
     cluster_id: int = Field(primary_key=True)
     network: str = Field(primary_key=True)
     tag_id: int = Field(primary_key=True)
+
+
+class BestClusterTagWinnerViewV2(SQLModel, table=True):
+    __tablename__ = "best_cluster_tag_winner_v2"
+    network: str = Field(primary_key=True)
+    cluster_id: int = Field(primary_key=True)
+    acl_group: str = Field(primary_key=True)
+    tag_id: int
 
 
 class TagCountByClusterViewV2(SQLModel, table=True):

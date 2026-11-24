@@ -253,6 +253,9 @@ def _seed(engine):
         for view in (
             "best_cluster_tag",
             "best_cluster_tag_v2",
+            # after the two above, which they read from
+            "best_cluster_tag_winner",
+            "best_cluster_tag_winner_v2",
             "tag_count_by_cluster",
             "tag_count_by_cluster_v2",
         ):
