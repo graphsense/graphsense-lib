@@ -1335,7 +1335,12 @@ def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
 # cover a request with credentials: which external backends are missing from
 # a merged answer, and when to retry a proxied request (a 429, or a 503 for a
 # backend that is down).
-EXPOSED_HEADERS = ["*", DECLINED_HEADER, RETRY_AFTER_HEADER, SERVED_BY_HEADER]
+EXPOSED_HEADERS = [
+    "*",
+    DECLINED_HEADER,
+    RETRY_AFTER_HEADER,
+    SERVED_BY_HEADER,
+]
 
 
 def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):

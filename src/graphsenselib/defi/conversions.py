@@ -18,7 +18,7 @@ from graphsenselib.defi.bridging.symbiosis import (
     get_bridges_from_symbiosis_decoded_logs,
 )
 from graphsenselib.datatypes.abi import decode_logs_dict
-from graphsenselib.defi.bridging.delegated import half_bridges
+from graphsenselib.defi.bridging.delegated import half_bridges, possible_fills
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
 from graphsenselib.db.asynchronous.cassandra import Cassandra
@@ -33,11 +33,13 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class DetectedConversions:
     """What get_conversions_from_db finds in a tx: the swaps and bridges it
-    detects, and the bridges it finds only half of (defi/bridging/delegated.py),
-    which an external backend may complete."""
+    detects, the bridges it finds only half of (defi/bridging/delegated.py),
+    which an external backend may complete, and the bridges it may be a fill
+    of, which only an external backend can tell."""
 
     conversions: Tuple[Union[ExternalSwap, Bridge], ...] = ()
     half_bridges: Tuple[Bridge, ...] = ()
+    possible_fills: Tuple[str, ...] = ()
 
 
 async def is_direct_vault_deposit(
@@ -173,7 +175,13 @@ async def get_conversions_from_db(
     )
     return DetectedConversions(
         tuple(conversions),
-        half_bridges(network, tx_logs_raw or (), included_bridges),
+        half_bridges(
+            network,
+            tx_logs_raw or (),
+            included_bridges,
+            tx_sender="0x" + bytes(tx["from_address"]).hex(),
+        ),
+        possible_fills(network, tx, included_bridges),
     )
 
 

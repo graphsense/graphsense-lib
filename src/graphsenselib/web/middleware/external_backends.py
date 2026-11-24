@@ -78,10 +78,17 @@ Decision rules:
    find the other chain's. This middleware offers the pairing on
    ``request.state.pair_bridges``; the conversions route calls it only for a
    tx with such a half bridge, and puts the backend's rows in place of the
-   half bridges they complete (web/service/txs_service.py). The answer passes
-   through untouched. The backend is asked for the same path, sub-tx suffix
+   half bridges they complete (web/service/txs_service.py). It also calls it
+   for a tx that may be a fill no log tells (a Relay fill: its calldata has
+   the shape, defi/bridging/halves/relay.py) and then takes the backend's row
+   for that fill as it is; no row, or no answer, is no bridge row. The answer
+   passes through untouched. The backend is asked for the same path, sub-tx suffix
    included, with ``only_bridges=true``, and only its ``bridge_tx`` rows that
-   name the tx are taken: the local detection answers swaps. The route may
+   name the tx are taken: the local detection answers swaps. A half row
+   (a side's asset transfer "pending" or "unknown", a leg the backend could
+   not pair either) is dropped: only a complete pair replaces a local half,
+   and only the one half it alone names (web/service/txs_service.py). The
+   route may
    name the tx instead (``pair_bridges(tx_identifier=...)``): it passes the
    bare hash when the requested root trace (``_I0``) is the whole tx, since
    the backend scopes its answer to the sub-tx it is asked for and no bridge
@@ -211,6 +218,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from graphsenselib.db.asynchronous.services.models import ExternalConversion
+from graphsenselib.defi.bridging.delegated import (
+    PENDING,
+    UNKNOWN,
+    PairingUnanswered,
+)
 from graphsenselib.web.config import (
     CurrencyRolesConfig,
     ExternalBackendConfig,
@@ -235,6 +247,13 @@ SERVED_BY_VALUE = "external-backend"
 # they declined (429) or failed (unreachable, timed out, error answer). A
 # partial answer that looks complete is the failure mode this exists to prevent.
 DECLINED_HEADER = "X-Ikn-Backends-Declined"
+
+# A backend's conversions row that is not final says why in the body
+# (ExternalConversion.partial_reason, e.g. ``counter_lookup_failed``: a
+# counter-chain lookup failed, that leg is a half). An answer with such a row
+# goes out with ``Cache-Control: no-store``, so nothing keeps it as final and
+# the next request asks again. No response header carries the reason.
+CACHE_CONTROL_HEADER = "Cache-Control"
 
 # One id per request, so a backend's log lines can be joined with ours: an
 # incoming ``X-Request-Id`` is kept when it is well-formed (the adapter's own
@@ -312,6 +331,8 @@ _EVM_NETWORK = "eth"
 _CONVERSIONS_PATH = re.compile(r"^/([^/]+)/txs/([^/]+)/conversions$")
 _CONVERSIONS = TypeAdapter(List[ExternalConversion])
 _BRIDGE_TX = "bridge_tx"
+# the asset transfer of a half bridge's missing leg
+_PLACEHOLDERS = frozenset({PENDING, UNKNOWN})
 
 
 class RequestIdMiddleware:
@@ -1083,11 +1104,13 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         # any answer, a 503 of an overloaded backend too: it is up
         self._backend_answered(backend.url)
         headers = {SERVED_BY_HEADER: SERVED_BY_VALUE}
-        # a 429 that does not say when to come back is barely better than a
-        # 500; this is the only backend header the proxy carries through
-        retry_after = backend_response.headers.get(RETRY_AFTER_HEADER)
-        if retry_after:
-            headers[RETRY_AFTER_HEADER] = retry_after
+        # the backend headers the proxy carries through: a 429 that does not
+        # say when to come back is barely better than a 500, and an answer
+        # the backend forbids storing (a row of it is not final) stays so
+        for name in (RETRY_AFTER_HEADER, CACHE_CONTROL_HEADER):
+            value = backend_response.headers.get(name)
+            if value:
+                headers[name] = value
         return Response(
             content=backend_response.content,
             status_code=backend_response.status_code,
@@ -1121,12 +1144,15 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         it finds only half of; the answer passes through untouched, apart
         from naming the backend in the declined header when that failed."""
         declined: List[str] = []
+        partial: List[str] = []
         # read by the conversions route (routes/txs.py)
         request.state.pair_bridges = functools.partial(
-            self._paired_bridges, request, backend, declined
+            self._paired_bridges, request, backend, declined, partial
         )
         response = await call_next(request)
         response.headers.update(_declined_header(declined))
+        if partial and response.status_code < 400:
+            response.headers[CACHE_CONTROL_HEADER] = "no-store"
         return response
 
     async def _paired_bridges(
@@ -1134,15 +1160,25 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         request: Request,
         backend: ExternalBackendConfig,
         declined: List[str],
+        partial: List[str],
         *,
         tx_identifier: Optional[str] = None,
     ) -> List[ExternalConversion]:
         """Rule 6: the bridge rows the backend pairs for the requested tx, or
         for `tx_identifier` when the conversions route names one (the bare
         hash when the requested root trace is the whole tx). [] when the
-        backend cannot pair it (a 404 or 501) or fails (logged with why,
-        _fetch_json); a failure is named in `declined`, and does not start a
-        skip window: the pairing only enriches an answer.
+        backend cannot pair it (a 404 or 501). When it fails (logged with
+        why, _fetch_json) the failure is named in `declined` and raised as
+        PairingUnanswered: the route's halves are not final and say so
+        (partial_reason). So is a 501 whose reason is `budget_exhausted`
+        (the backend's own read ran out of time), without naming it declined.
+        A caller who lacks a gated currency one of the rows names, a half's
+        included, gets none of them; a reason among them is still raised. A failure does not start a skip window: the pairing
+        only enriches an answer. After the pairs
+        come the halves of the backend that say why they are not final
+        (partial_reason) or name a transfer id: the conversions route puts
+        both on its own half. Every reason a returned row states is appended to
+        `partial`.
 
         Every call logs one INFO ``event=bridge_pairing`` line (_log_pairing)
         saying what was asked, what came back, how long it took and why
@@ -1190,7 +1226,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 pairing=True,
             )
             log(rows=0, reason="timeout")
-            return []
+            raise _unanswered(partial, _LOOKUP_TIMEOUT) from None
         except (ValueError, httpx.DecodingError) as exc:
             # an answer whose body cannot be read is a failed one: the half
             # bridges are served, never a 500
@@ -1199,10 +1235,19 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 declined, backend.url, path, type(exc).__name__, pairing=True
             )
             log(rows=0, reason="invalid_json")
-            return []
+            raise _unanswered(partial, _LOOKUP_FAILED) from None
         if doc is None:
-            log(rows=0, reason=trace.get("reason", "no_answer"))
-            return []
+            reason = trace.get("reason", "no_answer")
+            log(rows=0, reason=reason)
+            if reason == _BUDGET_EXHAUSTED:
+                # it answered, but only that its own read ran out of time:
+                # not "nothing to pair". The backend is not named as declined
+                raise _unanswered(partial, _LOOKUP_TIMEOUT)
+            if backend.url not in declined:
+                return []  # it answered: nothing to pair (a 404 or 501)
+            raise _unanswered(
+                partial, _LOOKUP_TIMEOUT if "Timeout" in reason else _LOOKUP_FAILED
+            )
         try:
             rows = _CONVERSIONS.validate_python(doc)
         except ValidationError as exc:
@@ -1216,25 +1261,47 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 exc.error_count(),
             )
             log(rows=0, reason="invalid_rows")
-            return []
+            raise _unanswered(partial, _LOOKUP_FAILED) from None
         # the local lookup ignores whitespace in a hash (bytes.fromhex)
         tx = "".join(_tx_of(identifier).split())
-        bridges = [
+        named = [
             row
             for row in rows
             if row.conversion_type == _BRIDGE_TX
             and tx in {_tx_of(row.from_asset_transfer), _tx_of(row.to_asset_transfer)}
         ]
-        networks = {n for row in bridges for n in (row.from_network, row.to_network)}
+        # a half row (a leg the backend could not pair either) is no better
+        # than the local half: only a complete pair may replace one
+        bridges = [row for row in named if not _is_half(row)]
+        # a half can say what the local half cannot know: why it is not
+        # final, the transfer's id (a CCTP V2 burn's nonce is Circle's to
+        # tell), the name of a chain neither of us serves. The local half
+        # takes those (txs_service.py).
+        unpaired = [row for row in named if _is_half(row)]
+        reasons = sorted({r.partial_reason for r in named if r.partial_reason})
+        if reasons:
+            trace["partial"] = ",".join(reasons)
+        log = functools.partial(log, halves=len(named) - len(bridges) or None)
+        # the halves count as the pairs do: a half can be the answer's row
+        # itself (a fill no log tells, txs_service.py) and names its chain
+        networks = {n for row in named for n in (row.from_network, row.to_network)}
         if self._entitled(request, networks) != networks:
             # each row replaces only the half bridge whose leg it names
             # (txs_service.py), so the rows the caller may see could be kept;
             # a caller who may see only some of them keeps every half bridge
             # instead, the safe side (module docstring)
             log(rows=len(bridges), reason="entitlement")
+            if reasons:
+                # that a leg is not final is no row content: the route's
+                # halves still say so, and the answer is not stored
+                raise _unanswered(partial, reasons[0])
             return []
-        log(rows=len(bridges), reason="paired" if bridges else "empty")
-        return bridges
+        partial.extend(reasons)
+        if bridges:
+            log(rows=len(bridges), reason="paired")
+        else:
+            log(rows=0, reason="half" if named else "empty")
+        return bridges + unpaired
 
     def _log_pairing(
         self,
@@ -1248,13 +1315,16 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         *,
         rows: int,
         reason: str,
+        halves: Optional[int] = None,
     ) -> None:
         """The one INFO line of a pairing call, with a logfmt tail (LogQL
         ``| logfmt``): the backend (its origin, _safe_backend), the network
         and the identifier sent, the status (``-`` without an answer), the
-        time, the bridge rows that name the tx, and the reason: the 501
-        body's ``reason`` when the backend sent one, else a gs-rest-side
-        code (``paired``, ``empty``, ``not_found``, ``timeout``,
+        time, the complete bridge rows that name the tx, the half rows
+        among them that were dropped (``halves``, left out when none), and
+        the reason: the 501 body's ``reason`` when the backend sent one,
+        else a gs-rest-side code (``paired``, ``empty``, ``half`` when every
+        row naming the tx was a half, ``not_found``, ``timeout``,
         ``transport_<Type>``, ``rate_limited``, ``http_<status>``,
         ``invalid_json``, ``invalid_rows``, ``entitlement``, ``skipped``).
         Never the api key: the headers are not logged.
@@ -1274,7 +1344,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                     "status": trace.get("status", "-"),
                     "ms": ms,
                     "rows": rows,
+                    "halves": halves,
                     "reason": reason,
+                    "partial": trace.get("partial"),
                     "backend_request_id": trace.get("backend_request_id"),
                     "request_id": request_id_var.get(),
                     "consumer": self._consumer_of(request),
@@ -1411,6 +1483,32 @@ def _refusal_reason(response: httpx.Response) -> str:
     if isinstance(reason, str) and _REASON_CODE.fullmatch(reason):
         return reason
     return f"http_{response.status_code}"
+
+
+# what a local half says when the backend that pairs it did not answer: the
+# reasons the backend's own rows use for a lookup that failed or ran out of time
+_LOOKUP_FAILED = "counter_lookup_failed"
+_LOOKUP_TIMEOUT = "counter_lookup_timeout"
+# the reason of the backend's 501 when its bridge read ran out of its own time
+_BUDGET_EXHAUSTED = "budget_exhausted"
+
+
+def _unanswered(partial: List[str], reason: str) -> PairingUnanswered:
+    """The pairing gave no usable answer: `reason` goes to `partial` (the
+    answer must not be stored) and to the conversions route, which puts it on
+    its halves."""
+    partial.append(reason)
+    return PairingUnanswered(reason)
+
+
+def _is_half(row: ExternalConversion) -> bool:
+    """A half bridge: a side's asset transfer is a placeholder ("pending"
+    or "unknown", defi/bridging/delegated.py), the leg its sender could not
+    find."""
+    return any(
+        transfer.lower() in _PLACEHOLDERS
+        for transfer in (row.from_asset_transfer, row.to_asset_transfer)
+    )
 
 
 def _tx_of(transfer: str) -> str:

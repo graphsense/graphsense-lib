@@ -131,6 +131,7 @@ def make_client(
     with_role_gate=False,
     refuse_status=None,
     refuse_headers=None,
+    backend_headers=None,
     fail_with=None,
     fail_times=None,
     with_cors=False,
@@ -146,7 +147,8 @@ def make_client(
 
     ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
     adapter without /capabilities). ``local_related_addresses`` is the local
-    pubkey answer, or a function of (currency, address) returning it."""
+    pubkey answer, or a function of (currency, address) returning it.
+    ``backend_headers`` go on the backend's ordinary 200s."""
     app = FastAPI()
 
     @app.get("/stats")
@@ -224,7 +226,9 @@ def make_client(
             if backend_related_addresses == "declines":
                 return httpx.Response(501)
             return httpx.Response(200, json=backend_related_addresses)
-        return httpx.Response(200, json={"backend_path": request.url.path})
+        return httpx.Response(
+            200, json={"backend_path": request.url.path}, headers=backend_headers
+        )
 
     config = ExternalBackendsConfig(
         enabled=enabled,
@@ -1257,6 +1261,30 @@ def test_a_normal_proxy_response_is_unchanged():
     assert response.status_code == 200
     assert response.headers[SERVED_BY_HEADER] == SERVED_BY_VALUE
     assert "retry-after" not in {k.lower() for k in response.headers}
+
+
+def test_a_proxied_partial_answer_keeps_its_no_store():
+    """A lite network's answer whose counter-chain lookup failed: the row is
+    a half that says why in the body (partial_reason, passed on untouched
+    like every proxied body), and the backend's Cache-Control: no-store is
+    kept, so no cache holds it as final. An X-Ikn-Partial header is not
+    passed on: the reason is in the row."""
+    client, _ = make_client(
+        backend_headers={
+            "Cache-Control": "no-store",
+            "X-Ikn-Partial": "counter_lookup_failed",
+        }
+    )
+    response = client.get("/bnb/txs/0xab/conversions")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "x-ikn-partial" not in {k.lower() for k in response.headers}
+
+
+def test_a_complete_proxied_answer_says_nothing_about_caching():
+    client, _ = make_client()
+    response = client.get("/bnb/txs/0xab/conversions")
+    assert "cache-control" not in {k.lower() for k in response.headers}
 
 
 # --- partial entitlement: narrowed rows, NOT a narrowed request ----------
