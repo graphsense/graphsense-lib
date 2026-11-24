@@ -1,3 +1,5 @@
+import re
+
 KNOWN_CURRENCIES = {
     # Base currencies
     "ETH": "Ether",
@@ -102,6 +104,63 @@ NETWORK_SUGGESTIONS = {
     "WETH": ["ETH", "ARB", "OP", "BASE", "POL", "BSC", "AVAX"],
     "KCS": ["ETH", "KCC"],
 }
+
+
+# Full chain names -> network code. The tagstore upper-cases a tag's network
+# but resolves no synonyms, and cluster mapping only reads tags whose network
+# is a GraphSense keyspace code, so a tag with network "bitcoin" shows on its
+# address but never reaches its cluster. Keys are upper case, letters and
+# digits only (see network_alias_key). Only unambiguous chain names belong
+# here: no token standards (ERC20, TRC20, BEP20, which say nothing certain
+# about the chain of a given address) and no key that is itself a code in
+# KNOWN_NETWORKS (MATIC).
+NETWORK_ALIASES = {
+    # GraphSense keyspaces
+    "BITCOIN": "BTC",
+    "LITECOIN": "LTC",
+    "BITCOINCASH": "BCH",
+    "ZCASH": "ZEC",
+    "ETHEREUM": "ETH",
+    "TRON": "TRX",
+    # other chains in KNOWN_NETWORKS
+    "ARBITRUM": "ARB",
+    "ARBITRUMONE": "ARB",
+    "OPTIMISM": "OP",
+    "POLYGON": "POL",
+    "BNBSMARTCHAIN": "BSC",
+    "BINANCESMARTCHAIN": "BSC",
+    "BNBCHAIN": "BSC",
+    "AVALANCHE": "AVAX",
+    "AVALANCHECCHAIN": "AVAX",
+    "AVAXCCHAIN": "AVAX",
+    "SOLANA": "SOL",
+    "TONCOIN": "TON",
+    "ALGORAND": "ALGO",
+    "RIPPLE": "XRP",
+    "MONERO": "XMR",
+    "ETHEREUMCLASSIC": "ETC",
+    "BITCOINGOLD": "BTG",
+    "BITCOINSV": "BSV",
+    # chains without a KNOWN_NETWORKS entry yet
+    "DOGECOIN": "DOGE",
+    "CARDANO": "ADA",
+    "STELLAR": "XLM",
+    "POLKADOT": "DOT",
+    "COSMOS": "ATOM",
+    "TEZOS": "XTZ",
+}
+
+
+def network_alias_key(network) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(network).strip().upper())
+
+
+def suggest_network_code(network):
+    """The network code a full chain name stands for ("Bitcoin" -> "BTC"),
+    or None if the network is already a code or not a known chain name."""
+    if str(network).strip().upper() in KNOWN_NETWORKS:
+        return None
+    return NETWORK_ALIASES.get(network_alias_key(network))
 
 
 def suggest_networks_from_currency(currency, only_unknown=True):

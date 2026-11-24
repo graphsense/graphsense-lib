@@ -256,3 +256,38 @@ def test_address_validation_field_only_takes_skip(root, caplog):
     assert any(
         "address_validation must be 'skip'" in r.getMessage() for r in caplog.records
     )
+
+
+@pytest.mark.parametrize("jobs", ["1", "2"])
+@pytest.mark.parametrize(
+    "mode, exit_code, passed", [("warn", 0, "2/2"), ("error", 1, "1/2")]
+)
+def test_network_names_mode(root, caplog, jobs, mode, exit_code, passed):
+    (root / "good.yaml").write_text(
+        "header: !include header.yaml\n"
+        f"tags:\n- address: {BTC}\n  label: A\n  network: Bitcoin\n"
+    )
+    with caplog.at_level(logging.INFO):
+        result = _validate(
+            root, "-j", jobs, "--address-validation", "off", "--network-names", mode
+        )
+    assert result.exit_code == exit_code, result.output
+    messages = [r.getMessage() for r in caplog.records]
+    # a warning logged in a worker process may not reach caplog; an error
+    # comes back to the main process as the pack's failure message
+    if jobs == "1" or mode == "error":
+        assert any(
+            "network Bitcoin, a chain name" in m and "Use BTC" in m for m in messages
+        )
+    # a failed run logs the count, a passed one prints it
+    assert any(f"{passed} TagPacks passed" in m for m in [*messages, result.output])
+
+
+def test_network_names_off_is_silent(root, caplog):
+    (root / "good.yaml").write_text(
+        "header: !include header.yaml\n"
+        f"tags:\n- address: {BTC}\n  label: A\n  network: Bitcoin\n"
+    )
+    result = _validate(root, "--address-validation", "off", "--network-names", "off")
+    assert result.exit_code == 0, result.output
+    assert not any("a chain name" in r.getMessage() for r in caplog.records)
