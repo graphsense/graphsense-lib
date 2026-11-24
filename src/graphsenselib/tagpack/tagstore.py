@@ -42,8 +42,11 @@ def _acm_table(fresh: bool) -> str:
 _CLUSTER_MVS = (
     "tag_count_by_cluster",
     "best_cluster_tag",
+    # after best_cluster_tag, which it reads from
+    "best_cluster_tag_winner",
     "tag_count_by_cluster_v2",
     "best_cluster_tag_v2",
+    "best_cluster_tag_winner_v2",
 )
 
 

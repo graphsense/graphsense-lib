@@ -125,6 +125,36 @@ CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr ON best_cluster_tag (cluster_id
 CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_and_network ON best_cluster_tag (network, cluster_id);
 CREATE UNIQUE INDEX IF NOT EXISTS cluster_tag_unique ON best_cluster_tag (network, cluster_id, tag_id);
 
+/* The winner of best_cluster_tag per cluster and ACL group: the
+ * request-time pick (highest confidence, then the tagpack id that sorts first,
+ * then the lowest tag id; queries.py `_definer_tie_break`) done once per
+ * refresh. best_cluster_tag holds every candidate, so a cluster with
+ * millions of definer tags made every lookup join and sort all of them. A
+ * caller's winner is the best of the winners of its groups (the order is
+ * total), so the result does not change. Keep the ORDER BY in sync with
+ * `_get_best_cluster_tag_stmt`.
+ */
+CREATE MATERIALIZED VIEW IF NOT EXISTS best_cluster_tag_winner AS
+    SELECT DISTINCT ON (bct.network, bct.cluster_id, tp.acl_group)
+        bct.network as network,
+        bct.cluster_id as cluster_id,
+        tp.acl_group as acl_group,
+        bct.tag_id as tag_id
+    FROM
+        best_cluster_tag bct
+        JOIN tag t ON t.id = bct.tag_id
+        JOIN tagpack tp ON tp.id = t.tagpack
+        JOIN confidence c ON c.id = t.confidence
+    ORDER BY
+        bct.network,
+        bct.cluster_id,
+        tp.acl_group,
+        c.level DESC,
+        t.tagpack COLLATE "C",
+        t.id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS best_cluster_tag_winner_pk ON best_cluster_tag_winner (network, cluster_id, acl_group);
+
 -- Distinct (label, acl_group) pairs behind the /search label leg: trigram
 -- scoring the full tag table rechecks a lossy GIN bitmap over every matching
 -- row, so this view lets the query score the much smaller distinct set instead.
@@ -215,6 +245,36 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS best_cluster_tag_v2 AS
 CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_v2 ON best_cluster_tag_v2 (cluster_id);
 CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_and_network_v2 ON best_cluster_tag_v2 (network, cluster_id);
 CREATE UNIQUE INDEX IF NOT EXISTS cluster_tag_unique_v2 ON best_cluster_tag_v2 (network, cluster_id, tag_id);
+
+/* The winner of best_cluster_tag_v2 per cluster and ACL group: the
+ * request-time pick (highest confidence, then the tagpack id that sorts first,
+ * then the lowest tag id; queries.py `_definer_tie_break`) done once per
+ * refresh. best_cluster_tag_v2 holds every candidate, so a cluster with
+ * millions of definer tags made every lookup join and sort all of them. A
+ * caller's winner is the best of the winners of its groups (the order is
+ * total), so the result does not change. Keep the ORDER BY in sync with
+ * `_get_best_cluster_tag_stmt`.
+ */
+CREATE MATERIALIZED VIEW IF NOT EXISTS best_cluster_tag_winner_v2 AS
+    SELECT DISTINCT ON (bct.network, bct.cluster_id, tp.acl_group)
+        bct.network as network,
+        bct.cluster_id as cluster_id,
+        tp.acl_group as acl_group,
+        bct.tag_id as tag_id
+    FROM
+        best_cluster_tag_v2 bct
+        JOIN tag t ON t.id = bct.tag_id
+        JOIN tagpack tp ON tp.id = t.tagpack
+        JOIN confidence c ON c.id = t.confidence
+    ORDER BY
+        bct.network,
+        bct.cluster_id,
+        tp.acl_group,
+        c.level DESC,
+        t.tagpack COLLATE "C",
+        t.id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS best_cluster_tag_winner_v2_pk ON best_cluster_tag_winner_v2 (network, cluster_id, acl_group);
 
 -- Quality measures
 
