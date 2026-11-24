@@ -1036,7 +1036,8 @@ class TagstoreDbAsync:
             logger.warning(
                 f"Materialized view {name} does not exist: best cluster tags "
                 "are picked from all candidates, which is slow for clusters "
-                "with many definer tags (run `graphsense-cli tagstore init`)"
+                "with many definer tags (create it: see best_cluster_tag_winner "
+                "in tagstore/db/init.sql)"
             )
         self._winner_view_state[fresh] = (bool(exists), now)
         return bool(exists)

@@ -41,6 +41,7 @@ from tests.web.test_delegated_conversions import (
     local_swap,  # noqa: F401 -- the autouse fixture of that module
     make_client,
     records_of_the_middleware,
+    unanswered,
 )
 from tests.web.test_pairing_middleware_fixes import merging_client, pairing_client
 
@@ -165,7 +166,10 @@ def test_the_reason_of_an_answer_that_pairs_nothing(answer, status, reason, rows
     client, _, _ = make_client(backend_answer=answer)
     with records_of_the_middleware() as records:
         response = client.get(CONVERSIONS)
-    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    # a backend that failed leaves a half that is not final; one that answered
+    # "nothing to pair" leaves the plain half
+    failed = reason in ("rate_limited", "http_500", "invalid_json", "invalid_rows")
+    assert response.json() == [LOCAL_ROW, unanswered() if failed else HALF_ROW]
     _, fields = the_pairing_line(records)
     assert fields["status"] == status
     assert fields["reason"] == reason

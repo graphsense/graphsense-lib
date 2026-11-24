@@ -58,6 +58,13 @@ class BridgeReceiveReference(BaseModel):
 
 
 class Bridge(BridgeSendTransfer, BridgeReceiveTransfer):
-    # todo could add bridging service name
+    # The protocol whose contracts prove the bridge (lowercase, e.g. "across"),
+    # the app on top of it where one is named, and the protocol's own id of the
+    # transfer where the reader decodes one: they become the row's protocol,
+    # protocol_app and transfer_id (web/models/general.py ExternalConversion).
+    protocol: Optional[str] = None
+    protocolApp: Optional[str] = None
+    transferId: Optional[str] = None
+
     def to_dict(self) -> dict:
         return self.model_dump()

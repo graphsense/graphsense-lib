@@ -47,9 +47,11 @@ from tests.web.test_delegated_conversions import (
     CONVERSIONS,
     HALF_ROW,
     LOCAL_ROW,
-    local_swap,  # noqa: F401 -- the autouse fixture of that module
+    # noqa: F401 -- the autouse fixture of that module
     make_client,
+    local_swap,
     records_of_the_middleware,
+    unanswered,
 )
 
 BACKENDS_LOGGER = "graphsenselib.web.middleware.external_backends"
@@ -418,7 +420,7 @@ def test_no_pairing_record_carries_the_backends_credentials():
         for _ in range(5):
             answers.append(client.get(CONVERSIONS))
     assert [a.status_code for a in answers] == [200] * 5
-    assert [a.json() for a in answers[:3]] == [[LOCAL_ROW, HALF_ROW]] * 3
+    assert [a.json() for a in answers[:3]] == [[LOCAL_ROW, unanswered()]] * 3
     assert [a.json() for a in answers[3:]] == [[LOCAL_ROW, BRIDGE_ROW]] * 2
     levels = {r.levelno for r in records}
     assert logging.ERROR in levels and logging.WARNING in levels
@@ -532,7 +534,7 @@ def test_no_pairing_record_carries_a_query_only_credential_an_exception_quotes()
         # dropped connection whose retry answers (recovery)
         answers = [client.get(CONVERSIONS) for _ in range(3)]
     assert [a.status_code for a in answers] == [200] * 3
-    assert [a.json() for a in answers] == [[LOCAL_ROW, HALF_ROW]] * 2 + [
+    assert [a.json() for a in answers] == [[LOCAL_ROW, unanswered()]] * 2 + [
         [LOCAL_ROW, BRIDGE_ROW]
     ]
     (alert,) = [r for r in records if r.levelno == logging.ERROR]
@@ -614,7 +616,7 @@ def test_a_malformed_rows_warning_names_the_origin_only():
     )
     with every_record_of() as records:
         response = client.get(CONVERSIONS)
-    assert response.json() == [LOCAL_ROW, HALF_ROW]
+    assert response.json() == [LOCAL_ROW, unanswered()]
     (warning,) = [r for r in records if "malformed" in r.getMessage()]
     assert "https://backend.test" in warning.getMessage()
     assert SECRET not in everything_in(warning)
@@ -697,7 +699,7 @@ def test_no_record_quotes_an_unreadable_body(body):
     )
     with every_record_of() as records:
         answer = client.get(CONVERSIONS)
-    assert answer.json() == [LOCAL_ROW, HALF_ROW]
+    assert answer.json() == [LOCAL_ROW, unanswered()]
     assert records
     for record in records:
         assert QUERY_SECRET not in record.getMessage()

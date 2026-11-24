@@ -257,6 +257,12 @@ class RelatedAddresses(APIModel):
     next_page: Optional[str] = None
 
 
+# The protocols this version knows a bridge_tx row to go through: the values
+# the external backend sends (more with each delegated bridge). Internal only:
+# the API field is an open string, so a client of this version takes a newer one
+BridgeProtocol = Literal["across", "cctp", "debridge", "layerzero", "wormhole", "relay"]
+
+
 class ExternalConversion(APIModel):
     """External conversion (DEX swap or bridge) model."""
 
@@ -273,3 +279,45 @@ class ExternalConversion(APIModel):
     to_network: str
     from_is_supported_asset: bool
     to_is_supported_asset: bool
+    # bridge_tx rows only, half bridges included, the same from either end:
+    # the protocol whose contracts prove the bridge, the app on top of it
+    # where one is named (LayerZero: stargate, usdt0), and the protocol's own
+    # id of the transfer where it is known: Across depositId (decimal, unique
+    # per origin chain only), deBridge orderId (0x hex), LayerZero guid (0x hex),
+    # Wormhole VAA id (<emitterChain>/<emitterAddress, 64 hex>/<sequence>),
+    # CCTP nonce (V2: 0x hex; V1: decimal, unique per source domain only),
+    # Relay orderId (0x hex)
+    protocol: Optional[str] = Field(
+        default=None,
+        description=(
+            "Bridge rows: the protocol the bridge went through (across, cctp,"
+            " debridge, layerzero, wormhole, relay). New values may be added."
+        ),
+    )
+    protocol_app: Optional[str] = Field(
+        default=None,
+        description=(
+            "Bridge rows: the app on top of the protocol, where known"
+            " (LayerZero: stargate, usdt0). New values may be added."
+        ),
+    )
+    transfer_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Bridge rows: the protocol's own id of the transfer, where known"
+            " (Across: the deposit id; deBridge: the order id; LayerZero: the"
+            " message guid; Wormhole: the VAA id; CCTP: Circle's nonce; Relay: the"
+            " order id)."
+        ),
+    )
+    # set by an external backend when the row is not final: a lookup it needs
+    # failed or was cut off by a deadline (counter_lookup_failed,
+    # counter_lookup_timeout). A half row without it is the chain's answer.
+    partial_reason: Optional[str] = Field(
+        default=None,
+        description=(
+            "Bridge rows: set when the row is not final, because a lookup on"
+            " the other chain failed (counter_lookup_failed) or ran out of"
+            " time (counter_lookup_timeout). Ask again later."
+        ),
+    )

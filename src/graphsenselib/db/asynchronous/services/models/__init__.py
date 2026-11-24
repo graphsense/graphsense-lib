@@ -380,6 +380,15 @@ class ExternalConversion(BaseModel):
     to_network: str
     from_is_supported_asset: bool
     to_is_supported_asset: bool
+    # any string: the rows an external backend pairs are validated as this
+    # model, and a name newer than the API's list must not cost the pair
+    # (the API row drops it, web/translators.py bridge_names)
+    protocol: Optional[str] = None
+    protocol_app: Optional[str] = None
+    transfer_id: Optional[str] = None
+    # an external backend's row that is not final says why (a lookup failed
+    # or was cut off); None on every row of our own
+    partial_reason: Optional[str] = None
 
 
 class LinkUtxo(BaseModel):

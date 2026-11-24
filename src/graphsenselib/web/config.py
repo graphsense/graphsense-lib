@@ -219,8 +219,9 @@ class ExternalBackendsConfig(BaseSettings):
         description="Rule 6: locally served networks, keyed by the lowercase "
         "network code (e.g. eth), whose GET /{network}/txs/{tx}/conversions "
         "has this backend pair the bridges graphsense-lib finds only half of "
-        "(Circle CCTP, once 'cctp' is in included_bridges; "
-        "defi/bridging/delegated.py). Only a tx with such a half bridge asks "
+        "(each bridge of DELEGATED_BRIDGES in defi/bridging/delegated.py, "
+        "once its name is in included_bridges). Only a tx with such a half "
+        "bridge asks "
         "the backend, which must answer GET /{network}/txs/{tx}/conversions "
         "for that network within merge_timeout_s. Without its answer the half "
         "bridge is served. Empty: nothing is paired.",

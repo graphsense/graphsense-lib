@@ -4,10 +4,12 @@ import pytest
 
 import graphsenselib.defi.conversions as conversions_mod
 from graphsenselib.defi.models import Trace
+from graphsenselib.defi.swapping.models import ExternalSwap
 
 from .test_delegated_bridges import (
     FIXTURE,
     HALF_BRIDGES,
+    ODD_LOGS,
     db_rows,
     without_cctp_events,
 )
@@ -22,7 +24,7 @@ class TestGetConversionsFromDbGather:
     """
 
     async def test_logs_and_traces_are_fetched_and_routed_without_swapping(self):
-        tx = {"tx_hash": b"\x01\x02", "block_id": 5}
+        tx = {"tx_hash": b"\x01\x02", "block_id": 5, "from_address": bytes(20)}
         logs_sentinel = [{"marker": "logs"}]
         traces_raw_sentinel = [{"marker": "traces-raw"}]
         normalized_traces_sentinel = ["NORMALIZED_TRACES"]
@@ -92,7 +94,7 @@ class TestGetConversionsFromDbGather:
         assert result == conversions_mod.DetectedConversions()
 
     async def test_no_logs_short_circuits_without_decoding(self):
-        tx = {"tx_hash": b"\x01\x02", "block_id": 5}
+        tx = {"tx_hash": b"\x01\x02", "block_id": 5, "from_address": bytes(20)}
         db = MagicMock()
         db.fetch_transaction_logs = AsyncMock(return_value=[])
         db.fetch_transaction_traces = AsyncMock(return_value=[])
@@ -123,6 +125,7 @@ class TestHalfBridges:
         return {
             "tx_hash": bytes.fromhex(FIXTURE[part]["tx_hash"][2:]),
             "block_id": FIXTURE[part]["block_id"],
+            "from_address": bytes.fromhex("11" * 20),  # every tx row names its sender
             "input": None,
         }
 
@@ -163,6 +166,35 @@ class TestHalfBridges:
             "eth", self.fake_db(rows), self.tx_of("v2_burn"), included_bridges=("cctp",)
         )
         assert result.half_bridges == ()
+
+    async def test_a_log_a_reader_cannot_read_keeps_the_swaps(self):
+        """A stranger's OFTSent with one topic trips the LayerZero reader
+        (test_delegated_bridges.ODD_LOGS): the tx keeps its swap and its
+        CCTP half."""
+        swap = ExternalSwap(
+            fromAddress="0x" + "11" * 20,
+            toAddress="0x" + "11" * 20,
+            fromAsset="native",
+            toAsset="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            fromAmount=10**18,
+            toAmount=2_000_000_000,
+            fromPayment="0xab_I0",
+            toPayment="0xab_T690",
+        )
+        stranger = {**ODD_LOGS["lz_oft_sent_one_topic"][1][0], "log_index": 10_000}
+        db = self.fake_db(db_rows("v2_burn") + [stranger])
+        with patch(
+            "graphsenselib.defi.swaps.get_swap_from_decoded_logs", return_value=[swap]
+        ):
+            result = await conversions_mod.get_conversions_from_db(
+                "eth",
+                db,
+                self.tx_of("v2_burn"),
+                included_bridges=("cctp", "layerzero"),
+            )
+        assert result == conversions_mod.DetectedConversions(
+            conversions=(swap,), half_bridges=(HALF_BRIDGES["v2_burn"],)
+        )
 
     async def test_logs_that_decode_to_nothing_still_report_it(self):
         with patch.object(conversions_mod, "decode_logs_dict", return_value=[]):
