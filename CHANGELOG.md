@@ -32,6 +32,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **The currency-role check covers the backend's half rows.** A caller who lacks a gated currency that any row names, a half row included, gets none of the backend's rows. Before, only complete pairs were checked.
 
 #### Fixed
+- **Tag summaries list `creators` and `sources` sorted.** Both came from sets, so the same tags gave them in a different order per worker process and request (as `concepts`, `actors` and `tag_types` already are, they are now sorted). Responses are byte-identical across workers and deployments, which caches and response comparisons rely on.
 - **An oddly shaped log of a bridge event no longer fails the conversions of its transaction.** The protocol whose reader cannot read it gives no half row for that transaction, and the error is logged. The swap rows and the other protocols' rows stay.
 - **A backend's 501 with reason `budget_exhausted` counts as a timeout.** The eth half then carries `partial_reason: counter_lookup_timeout` and the answer is not cached. Before, it read as "nothing to pair" and the half could be cached as final.
 - **Several native legs in one tx keep their pairs.** Four Across fills in one eth tx share the bare tx hash as their leg; the merge matched every pair with every sibling half and dropped all of them as ambiguous. It now compares the transfer id when both rows carry one, and asset and amount for a bare leg.
