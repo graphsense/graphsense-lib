@@ -298,3 +298,47 @@ def test_refresh_db_refreshes_the_winner_views(refreshed_db):
             "WHERE network = 'BTC' AND cluster_id = 1 AND acl_group = 'public'"
         )
         assert cur.fetchone()[0] == new_id
+
+
+async def test_unreadable_view_falls_back(winner_db, db_setup, caplog):
+    # a read-only role without SELECT on the winner views (created by another
+    # role, no default privileges) must not turn lookups into errors
+    admin = psycopg2.connect(winner_db["url"])
+    admin.autocommit = True
+    with admin.cursor() as cur:
+        cur.execute("DROP ROLE IF EXISTS bct_reader")
+        cur.execute("CREATE ROLE bct_reader LOGIN PASSWORD 'r'")
+        cur.execute("GRANT USAGE ON SCHEMA public TO bct_reader")
+        cur.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO bct_reader")
+        cur.execute(
+            "REVOKE SELECT ON best_cluster_tag_winner, best_cluster_tag_winner_v2 "
+            "FROM bct_reader"
+        )
+    admin.close()
+    scheme, rest = winner_db["async_url"].split("://", 1)
+    reader_url = f"{scheme}://bct_reader:r@{rest.split('@', 1)[1]}"
+
+    reader = TagstoreDbAsync.from_url(reader_url)
+    reference = TagstoreDbAsync.from_url(winner_db["async_url"])
+    try:
+        with caplog.at_level(logging.WARNING):
+            for groups in GROUP_SETS:
+                got = await reader.get_best_cluster_tags_for_clusters(
+                    ALL_CLUSTERS, "BTC", groups
+                )
+                want = await reference.get_best_cluster_tags_for_clusters(
+                    ALL_CLUSTERS, "BTC", groups
+                )
+                assert {k: _key(v) for k, v in got.items()} == {
+                    k: _key(v) for k, v in want.items()
+                }
+                single = await reader.get_best_cluster_tag(
+                    LEGACY_CLUSTERS[0], "BTC", groups
+                )
+                assert _key(single) == _key(want.get(LEGACY_CLUSTERS[0]))
+        assert reader._winner_view_state[False][0] is False
+        assert reference._winner_view_state[False][0] is True
+        assert any("not readable" in r.getMessage() for r in caplog.records)
+    finally:
+        await reader.engine.dispose()
+        await reference.engine.dispose()
