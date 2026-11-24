@@ -709,6 +709,7 @@ def _sync_impl(
 
 
 ADDRESS_VALIDATION_MODES = ("off", "warn", "error")
+NETWORK_NAMES_MODES = ("off", "warn", "error")
 
 
 def _validate_tagpack_file(
@@ -719,6 +720,7 @@ def _validate_tagpack_file(
     address_validation,
     use_pyyaml,
     with_hints=False,
+    network_names="warn",
 ) -> tuple:
     """Load and validate one tagpack file; returns the actors it references
     and its invalid addresses (``AddressFinding``s, hinted if ``with_hints``).
@@ -728,7 +730,7 @@ def _validate_tagpack_file(
         tagpack_file, tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
     )
     logger.info(f"Validating {tagpack_file}")
-    tagpack.validate()
+    tagpack.validate(network_names=network_names)
     findings = []
     if address_validation != "off":
         findings = tagpack.verify_addresses(with_hints=with_hints)
@@ -775,10 +777,13 @@ def validate_tagpack(
     use_pyyaml=False,
     jobs=1,
     invalid_addresses_report=None,
+    network_names="warn",
 ):
     """``address_validation``: off, warn (log invalid addresses) or error
     (a pack with invalid addresses fails). ``invalid_addresses_report``: path
-    of a TSV file listing every invalid address with a hint."""
+    of a TSV file listing every invalid address with a hint. ``network_names``:
+    off, warn or error (the pack fails) for chain names used as network
+    ("Bitcoin" instead of "BTC")."""
     t0 = time.time()
     if jobs < 1:
         jobs = os.cpu_count() or 1
@@ -892,6 +897,7 @@ def validate_tagpack(
                     address_validation,
                     use_pyyaml,
                     with_hints,
+                    network_names,
                 )
                 addr_ok = addresses_ok(tagpack_file, findings)
                 if (not check or check_actors(tagpack_file, actors)) and addr_ok:
@@ -912,6 +918,7 @@ def validate_tagpack(
                 address_validation,
                 use_pyyaml,
                 with_hints,
+                network_names,
             ),
         ) as pool:
             results = pool.map(_validate_tagpack_file_in_worker, work, chunksize=1)
@@ -1268,6 +1275,15 @@ def tagpack():
     "fails). Unsupported networks are only counted.",
 )
 @click.option(
+    "--network-names",
+    type=click.Choice(NETWORK_NAMES_MODES),
+    default="warn",
+    show_default=True,
+    help="Tags whose network is a chain name ('Bitcoin', 'Ethereum') instead "
+    "of a network code ('BTC', 'ETH'); such tags never reach their cluster: "
+    "off, warn, or error (the pack fails).",
+)
+@click.option(
     "--no-address-validation",
     is_flag=True,
     help="Same as --address-validation off (deprecated).",
@@ -1323,6 +1339,7 @@ def validate_tagpack_cli(
     actorpack_path,
     use_pyyaml,
     jobs,
+    network_names,
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
@@ -1338,6 +1355,7 @@ def validate_tagpack_cli(
         use_pyyaml,
         jobs,
         invalid_addresses_report,
+        network_names,
     )
 
 

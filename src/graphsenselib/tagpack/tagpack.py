@@ -27,6 +27,7 @@ from graphsenselib.tagpack import (
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
 from graphsenselib.tagpack.constants import (
     is_known_network,
+    suggest_network_code,
     suggest_networks_from_currency,
 )
 from graphsenselib.tagpack.utils import (
@@ -984,8 +985,11 @@ class TagPack(object):
         self._duplicates = duplicates
         return self._unique_tags
 
-    def validate(self):
-        """Validates a TagPack against its schema and used taxonomies"""
+    def validate(self, network_names="warn"):
+        """Validates a TagPack against its schema and used taxonomies.
+
+        ``network_names``: off, warn or error (raise) for tags whose network
+        is a full chain name ("Bitcoin") instead of a network code ("BTC")."""
         text_warnings: list = []
         # check if mandatory header fields are used by a TagPack
         for schema_field in self.schema.mandatory_header_fields:
@@ -1109,6 +1113,26 @@ class TagPack(object):
                 "token, not a chain (network defaults to the currency when "
                 f"unset). Set network explicitly, e.g. one of: {chains}."
             )
+
+        # A full chain name ("bitcoin") is stored as written, upper-cased, and
+        # cluster mapping only reads tags with a network code ("BTC").
+        aliased_networks = defaultdict(int)
+        for tag in ut:
+            network = str(tag.all_fields.get("network", ""))
+            if suggest_network_code(network):
+                aliased_networks[network] += 1
+
+        if network_names != "off":
+            for network, count in aliased_networks.items():
+                message = (
+                    f"{self._source_prefix()}{count} tag(s) have network "
+                    f"{network}, a chain name, not a network code. Use "
+                    f"{suggest_network_code(network)}: tags with a chain name "
+                    "never reach their address's cluster."
+                )
+                if network_names == "error":
+                    raise ValidationError(message)
+                logger.warning(message)
 
         address_counts = defaultdict(int)
         for tag in ut:

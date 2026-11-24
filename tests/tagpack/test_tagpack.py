@@ -1472,3 +1472,44 @@ def test_add_actors_keeps_existing_tag_actor(tmp_path, taxonomies, monkeypatch):
         "binance",
         "beta-actor",
     ]
+
+
+def test_validate_warns_when_network_is_a_chain_name(schema, taxonomies, caplog):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+        network="Ethereum",
+    )
+
+    assert tagpack.validate()
+
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any(
+        "have network Ethereum, a chain name" in m and "Use ETH" in m for m in warnings
+    ), warnings
+
+
+def test_validate_no_chain_name_warning_with_network_code(schema, taxonomies, caplog):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+        network="eth",
+    )
+
+    assert tagpack.validate()
+
+    assert not any("a chain name" in r.message for r in caplog.records)
+
+
+def test_validate_network_names_error_raises(schema, taxonomies):
+    tagpack = _token_tagpack(
+        schema,
+        taxonomies,
+        [{"label": "tether", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}],
+        network="Ethereum",
+    )
+
+    with pytest.raises(ValidationError, match="a chain name.*Use ETH"):
+        tagpack.validate(network_names="error")
