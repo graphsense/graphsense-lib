@@ -266,3 +266,27 @@ def test_label_digest_obfuscated_tag_gives_no_actor():
     digest = compute_tag_digest([obfuscate_tag_if_not_public(tag)])
     for entry in digest.label_digest.values():
         assert entry.actors == []
+
+
+def test_label_summary_lists_are_sorted(tagsExchange):
+    # creators and sources come from sets; their order must not depend on the
+    # process (hash randomisation) or on the order of the tags
+    base = tagsExchange[0]
+    tags = [
+        base.model_copy(update={"creator": c, "source": src})
+        for c, src in (
+            ("zeta", "https://z.example"),
+            ("Alpha", "https://a.example"),
+            ("mid", "VASP API"),
+            ("alpha", "https://b.example"),
+        )
+    ]
+    for order in (tags, list(reversed(tags)), tags[1:] + tags[:1]):
+        (ld,) = compute_tag_digest(order).label_digest.values()
+        assert ld.creators == ["Alpha", "alpha", "mid", "zeta"]
+        assert ld.sources == [
+            "VASP API",
+            "https://a.example",
+            "https://b.example",
+            "https://z.example",
+        ]

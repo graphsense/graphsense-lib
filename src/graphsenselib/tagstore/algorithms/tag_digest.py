@@ -403,8 +403,11 @@ def compute_tag_digest(
             count=value["cnt"],
             confidence=value["sumConfidence"] / (value["cnt"] * 100),
             relevance=ltc[key].weighted,
-            creators=list(value["creators"]),
-            sources=list(value["src"]),
+            # sorted like concepts below: set order varies between
+            # processes (hash randomisation), so the same tags gave the
+            # lists in a different order per worker and request
+            creators=sorted(value["creators"]),
+            sources=sorted(value["src"]),
             concepts=sorted(value["concepts"]),
             lastmod=value["lastmod"],
             inherited_from="cluster" if value["inherited"] else None,
