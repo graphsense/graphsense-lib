@@ -32,9 +32,7 @@ def test_an_unknown_protocol_keeps_the_conversions():
     text = json.dumps(
         [bridge_row("layerzero", "stargate"), bridge_row("somethingnew", "someapp")]
     )
-    rows = ApiClient().deserialize(
-        text, "List[ExternalConversion]", "application/json"
-    )
+    rows = ApiClient().deserialize(text, "List[ExternalConversion]", "application/json")
     assert [(r.protocol, r.protocol_app) for r in rows] == [
         ("layerzero", "stargate"),
         ("somethingnew", "someapp"),
