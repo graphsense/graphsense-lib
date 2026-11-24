@@ -1016,12 +1016,14 @@ class TagstoreDbAsync:
         self._winner_view_state: Dict[bool, tuple] = {}
 
     async def _use_winner_view(self, session, fresh: bool) -> bool:
-        """Whether the best_cluster_tag_winner view of the regime exists.
+        """Whether the best_cluster_tag_winner view of the regime exists and
+        this connection may read it.
 
-        A tagstore that has not run `tagstore init` since the view was added
-        lacks it; lookups then fall back to the candidate view. A missing view
-        is checked again after WINNER_VIEW_RECHECK_S, so running the init
-        takes effect without a restart."""
+        A tagstore created before the view was added lacks it, and a view
+        created by another role is unreadable for a read-only account until
+        it is granted; lookups then fall back to the candidate view. Such a
+        view is checked again after WINNER_VIEW_RECHECK_S, so creating or
+        granting it takes effect without a restart."""
         state = self._winner_view_state.get(fresh)
         now = time.monotonic()
         if state is not None and (state[0] or now - state[1] < WINNER_VIEW_RECHECK_S):
@@ -1029,15 +1031,20 @@ class TagstoreDbAsync:
         name = _winner_model(fresh).__tablename__
         exists = (
             await session.exec(
-                text("SELECT to_regclass(:name) IS NOT NULL").bindparams(name=name)
+                # NULL (no such relation) counts as false
+                text(
+                    "SELECT coalesce(has_table_privilege("
+                    "to_regclass(:name)::oid, 'SELECT'), false)"
+                ).bindparams(name=name)
             )
         ).one()[0]
         if not exists and state is None:
             logger.warning(
-                f"Materialized view {name} does not exist: best cluster tags "
+                f"Materialized view {name} is missing or not readable for this "
+                "database user: best cluster tags "
                 "are picked from all candidates, which is slow for clusters "
-                "with many definer tags (create it: see best_cluster_tag_winner "
-                "in tagstore/db/init.sql)"
+                "with many definer tags (create it, see best_cluster_tag_winner "
+                "in tagstore/db/init.sql, and GRANT SELECT to the read role)"
             )
         self._winner_view_state[fresh] = (bool(exists), now)
         return bool(exists)
