@@ -30,6 +30,7 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Fixed
+- **`tagpack-tool sync`: a failing cluster-mapping batch no longer hides its cause behind `MaybeEncodingError`.** A worker's exception could hold Cassandra driver objects (locks) that do not pickle, so the pool could not send it back and the sync failed with `MaybeEncodingError: ... cannot pickle '_thread.RLock' object` after all other batches had run. Each batch is now retried once (the inserts are upserts); if it fails again the worker raises `ClusterMappingBatchError` with the network, batch size, original type, message and traceback as text. Workers also shut their Cassandra session and tagstore connection down after each batch, instead of exiting with requests in flight ("cannot schedule new futures after shutdown").
 - **CoinGecko exchange rates no longer drop days without a word.** A missing day used to pass the checks and be removed by `ingest()`; it is now logged, and `--abort-on-gaps` stops on it (see the upgrade note). The first day of each window is requested again (the window started at 23:59:59 of that day), dates are computed in UTC rather than the host time zone, each request asks for at most 180 days instead of 181, HTTP errors (bad key, rate limit) are raised with their status instead of an unpacking error, and the `Accept` header is `application/json`.
 
 ## [2.21.0] - 2026-11-19
