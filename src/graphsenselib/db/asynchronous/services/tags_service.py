@@ -115,6 +115,22 @@ class MockConceptProtocol:
         return concept_id
 
 
+# Tag listings by actor or by label: without a pagesize they returned every
+# matching tag in one response (millions for a big actor or a common label),
+# and each page costs a lookup per tag plus an OFFSET scan. Missing pagesize ->
+# the default, larger ones are capped; next_page keeps working as before, so a
+# client that pages on simply gets more, smaller pages.
+TAG_LIST_DEFAULT_PAGESIZE = 100
+TAG_LIST_MAX_PAGESIZE = 500
+
+
+def tag_list_pagesize(pagesize: Optional[int]) -> int:
+    """Effective page size of the tag listings by actor and by label."""
+    if pagesize is None:
+        return TAG_LIST_DEFAULT_PAGESIZE
+    return max(1, min(pagesize, TAG_LIST_MAX_PAGESIZE))
+
+
 class TagsService:
     def __init__(
         self,
@@ -676,20 +692,19 @@ class TagsService:
         pagesize: Optional[int] = None,
     ) -> AddressTagResult:
         page = page or 0
+        pagesize = tag_list_pagesize(pagesize)
 
         assert page is None or isinstance(page, int)
 
         tags = await self.tagstore.get_tags_by_actorid(
             actor_id,
-            offset=page * (pagesize or 0),
-            page_size=pagesize + 1 if pagesize is not None else None,
+            offset=page * pagesize,
+            page_size=pagesize + 1,
             groups=tagstore_groups,
         )
 
-        is_last_page = pagesize is None or len(tags) <= pagesize
-        tags = tags[
-            : pagesize or len(tags)
-        ]  # Throw away the extra tag if we fetched one for pagination
+        is_last_page = len(tags) <= pagesize
+        tags = tags[:pagesize]  # Throw away the extra tag fetched for pagination
 
         tag_entities = await self._get_entities_dict(self.db, tags)
 
@@ -713,20 +728,19 @@ class TagsService:
         pagesize: Optional[int] = None,
     ) -> AddressTagResult:
         page = page or 0
+        pagesize = tag_list_pagesize(pagesize)
 
         assert page is None or isinstance(page, int)
 
         tags = await self.tagstore.get_tags_by_label(
             label,
-            offset=page * (pagesize or 0),
-            page_size=pagesize + 1 if pagesize is not None else None,
+            offset=page * pagesize,
+            page_size=pagesize + 1,
             groups=tagstore_groups,
         )
 
-        is_last_page = pagesize is None or len(tags) <= pagesize
-        tags = tags[
-            : pagesize or len(tags)
-        ]  # Throw away the extra tag if we fetched one for pagination
+        is_last_page = len(tags) <= pagesize
+        tags = tags[:pagesize]  # Throw away the extra tag fetched for pagination
 
         tag_entities = await self._get_entities_dict(self.db, tags)
 
