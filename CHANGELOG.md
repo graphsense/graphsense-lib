@@ -29,6 +29,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **An eth half row takes what only the backend knows.** When the backend answers a half of its own for the same leg, the eth half takes its `partial_reason`, a `transfer_id` it lacks and the name of a chain neither side serves: a Wormhole send to Solana says `to_network: solana` where it said `unknown`.
 
 #### Changed
+- **`GET /search` ranks actors by how they match, not by trigram similarity alone.** An actor's id, label and context aliases are matched: exact match first, then prefix, then a label word starting with the query, then substring (queries of 4+ characters); fuzzy look-alikes are returned only when nothing matches directly. "binance" no longer lists BTFinance, BooFinance & co., and "Binance.US" or "tornado cash" find their actor through its alias. The query takes ~25 ms on ~4k actors (was ~3 ms), and needs PostgreSQL 16+ (`IS JSON`).
 - **The currency-role check covers the backend's half rows.** A caller who lacks a gated currency that any row names, a half row included, gets none of the backend's rows. Before, only complete pairs were checked.
 
 #### Fixed

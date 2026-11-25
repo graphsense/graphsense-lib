@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import timezone
@@ -20,6 +21,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from graphsenselib.config.tagstore_config import get_use_label_search_view
 from graphsenselib.tagpack.utils import normalize_tag_address
 from graphsenselib.utils.accountmodel import normalize_hex_identifier
+from graphsenselib.utils.rest_utils import (
+    alphanumeric_lower,
+    alphanumeric_lower_identifier,
+)
 from graphsenselib.utils.constants import (
     FRESH_CLUSTER_ID_OFFSET,
     is_fresh_cluster_id,
@@ -773,18 +778,96 @@ def _get_count_by_clusters_batch_stmt(
     )
 
 
+# Actor search ranks in tiers, not by trigram similarity alone. Whole-string
+# similarity rewards look-alikes ("BTFinance" for "binance") over real matches
+# with extra words ("Binance Multi Chain Capital"). Each actor is matched by its
+# id, its label and the aliases in its context, all normalized like the query
+# (lowercase, alphanumerics only). Lower tier wins:
+#   0  a term equals the query          "binance us" -> binance (alias binanceus)
+#   1  a term starts with the query     "binance" -> binancemultichaincapital
+#   2  a label word starts with the query  "group" -> "Lazarus Group"
+#   3  a term contains the query (queries of ACTOR_SEARCH_MIN_SUBSTRING+ chars)
+#   4  fuzzy: trigram similarity >= ACTOR_SEARCH_FUZZY_MIN, returned only when
+#      tiers 0-3 find nothing, as a typo fallback ("binnace" -> binance)
+# Within a tier: closest term first, then shorter label, then id.
+ACTOR_SEARCH_FUZZY_MIN = 0.3
+ACTOR_SEARCH_MIN_SUBSTRING = 4
+
+# Passed as a bind parameter: a literal "[:alnum:]" in text() is too close to
+# SQLAlchemy's ":name" bind syntax.
+_NON_ALNUM_RE = "[^[:alnum:]]+"
+_NON_ALNUM_PY = re.compile(r"[\W_]+", re.UNICODE)  # Python side, same set
+
+_ACTOR_SEARCH_SQL = """
+WITH terms AS (
+    SELECT a.id, a.label, t.term
+    FROM actor a
+    CROSS JOIN LATERAL (
+        SELECT regexp_replace(lower(a.id), :non_alnum, '', 'g') AS term
+        UNION ALL
+        SELECT regexp_replace(lower(a.label), :non_alnum, '', 'g')
+        UNION ALL
+        SELECT regexp_replace(lower(al.alias), :non_alnum, '', 'g')
+        FROM jsonb_array_elements_text(
+            CASE
+                WHEN a.context IS JSON OBJECT
+                     AND jsonb_typeof(a.context::jsonb -> 'aliases') = 'array'
+                THEN a.context::jsonb -> 'aliases'
+                ELSE '[]'::jsonb
+            END
+        ) AS al(alias)
+    ) t
+    WHERE t.term <> ''
+),
+scored AS (
+    SELECT
+        id,
+        label,
+        min(
+            CASE
+                WHEN term = :q THEN 0
+                WHEN starts_with(term, :q) THEN 1
+                WHEN ' ' || trim(regexp_replace(lower(label), :non_alnum, ' ', 'g'))
+                     LIKE '% ' || :q_words || '%' THEN 2
+                WHEN :allow_substring AND strpos(term, :q) > 0 THEN 3
+                ELSE 4
+            END
+        ) AS tier,
+        max(similarity(term, :q)) AS sim
+    FROM terms
+    GROUP BY id, label
+)
+SELECT id, label, tier, sim
+FROM scored
+WHERE tier < 4
+   OR (sim >= :fuzzy_min AND NOT EXISTS (SELECT 1 FROM scored WHERE tier < 4))
+ORDER BY tier, sim DESC, length(label), id
+LIMIT :limit
+"""
+
+
+def _actor_search_params(query: str) -> Optional[dict]:
+    """Bind parameters for _ACTOR_SEARCH_SQL; None when nothing is searchable."""
+    q = alphanumeric_lower(query)
+    if not q:
+        return None
+    # The query's words, joined by single spaces, as the label is for tier 2.
+    # Only alphanumerics and spaces, so no LIKE wildcard can slip through.
+    q_words = " ".join(_NON_ALNUM_PY.sub(" ", query.lower()).split())
+    return {
+        "q": q,
+        "q_words": q_words,
+        "allow_substring": len(q) >= ACTOR_SEARCH_MIN_SUBSTRING,
+        "fuzzy_min": ACTOR_SEARCH_FUZZY_MIN,
+        "non_alnum": _NON_ALNUM_RE,
+    }
+
+
 def _get_similar_actors_stmt(query: str, limit: int):
-    return (
-        select(
-            Actor.label,
-            Actor.id,
-            func.similarity(Actor.label, query).label("sim_score"),
-        )
-        .where(Actor.label.op("%")(query))
-        .order_by(desc("sim_score"))
-        .limit(limit)
-        .distinct()
-    )
+    params = _actor_search_params(query)
+    if params is None:
+        return None
+    return text(_ACTOR_SEARCH_SQL).bindparams(**params, limit=limit)
 
 
 def _get_similar_tag_labels_stmt(query: str, limit: int, groups: List[str]):
@@ -1661,8 +1744,11 @@ class TagstoreDbAsync:
     async def search_actor_labels(
         self, label: str, limit: int, session=None
     ) -> List[HumanReadableId]:
-        results = await session.exec(_get_similar_actors_stmt(label.strip(), limit))
-        return [HumanReadableId(id=itm, label=lbl) for lbl, itm, _ in results]
+        stmt = _get_similar_actors_stmt(label, limit)
+        if stmt is None:
+            return []
+        results = await session.exec(stmt)
+        return [HumanReadableId(id=itm, label=lbl) for itm, lbl, _, _ in results]
 
     @_inject_session
     async def search_labels(
@@ -1674,6 +1760,8 @@ class TagstoreDbAsync:
         query_labels: bool = True,
         session=None,
     ) -> LabelSearchResultPublic:
+        """`label` is the raw user query. Actor search needs its word
+        boundaries; tag labels are matched on the alphanumeric form."""
         return LabelSearchResultPublic(
             actor_labels=(
                 await self.search_actor_labels(label.strip(), limit, session=session)
@@ -1685,7 +1773,10 @@ class TagstoreDbAsync:
                     HumanReadableId(id=x, label=x)
                     for x in (
                         await self.search_tag_labels(
-                            label, limit, groups, session=session
+                            alphanumeric_lower_identifier(label.strip()),
+                            limit,
+                            groups,
+                            session=session,
                         )
                     )
                 ]

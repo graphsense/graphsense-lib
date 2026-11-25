@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 from typing import Any, List, Optional, Protocol
 
-from ....utils.rest_utils import alphanumeric_lower_identifier
 from .models import (
     Capabilities,
     GeneralStats,
@@ -144,10 +143,10 @@ class GeneralService:
             if currency is None or currency.lower() == curr.lower()
         ]
 
-        expression_norm = alphanumeric_lower_identifier(q)
-
+        # Raw query: the tagstore normalizes it per target (actor search
+        # needs the word boundaries).
         tagstore_search = self.tagstore.search_labels(
-            expression_norm,
+            q,
             limit,
             groups=tagstore_groups,
             query_actors=config.include_actors,
