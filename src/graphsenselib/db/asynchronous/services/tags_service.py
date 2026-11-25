@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import re
 import time
@@ -140,18 +141,26 @@ def tag_list_pagesize(pagesize: Optional[int]) -> int:
     return max(1, min(pagesize, TAG_LIST_MAX_PAGESIZE))
 
 
-_KEYSET_TOKEN = re.compile(r"^k(-?\d+)\.(\d+)$")
+# next_page tokens of the actor tag listing: opaque on purpose (base64url of a
+# versioned "v1:<confidence level>:<tag id>"), so clients pass them through
+# instead of building or parsing them, and the format can change behind "v1".
+_KEYSET_TOKEN = re.compile(r"^v1:(-?\d+):(\d+)$")
 
 
 def tag_keyset_token(position: Tuple[int, int]) -> str:
-    """next_page token of the actor tag listing: the last tag's (confidence
-    level, tag id), where the next page continues."""
+    """next_page token of the actor tag listing: where the next page
+    continues, after the last tag's (confidence level, tag id)."""
     level, tag_id = position
-    return f"k{level}.{tag_id}"
+    raw = f"v1:{level}:{tag_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
 def parse_tag_keyset_token(token: str) -> Tuple[int, int]:
-    m = _KEYSET_TOKEN.match(token)
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+    except (ValueError, UnicodeDecodeError):
+        raise BadUserInputException("Invalid page")
+    m = _KEYSET_TOKEN.match(raw)
     if not m:
         raise BadUserInputException("Invalid page")
     return int(m.group(1)), int(m.group(2))

@@ -17,8 +17,8 @@ async def get_actor(ctx, actor):
 
 
 async def get_actor_tags(ctx, actor, page=None, pagesize=None, max_items=None):
-    # a keyset token ("k...") goes through as is, a page number as int
-    if not (isinstance(page, str) and page.startswith("k")):
+    # a page number goes on as int, anything else is a keyset token
+    if not (isinstance(page, str) and not page.isdigit()):
         page = parse_page_int_optional(page)
 
     pydantic_result = await ctx.services.tags_service.get_actor_tags(

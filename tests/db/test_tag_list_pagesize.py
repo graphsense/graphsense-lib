@@ -11,7 +11,9 @@ real query (confidence level descending, then id) and records the calls.
 """
 
 import asyncio
+import base64
 import logging
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -127,9 +129,15 @@ def test_effective_pagesize(requested, effective):
 
 
 def test_keyset_token_roundtrip_and_garbage():
-    assert parse_tag_keyset_token(tag_keyset_token((60, 12345))) == (60, 12345)
-    assert parse_tag_keyset_token("k-1.7") == (-1, 7)
-    for bad in ["k", "k60", "k60.", "kx.1", "60.1", "k60.1.2", "k60.-1"]:
+    token = tag_keyset_token((60, 12345))
+    assert parse_tag_keyset_token(token) == (60, 12345)
+    # opaque: no visible structure, URL-safe, no padding
+    assert "60" not in token and "12345" not in token
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", token)
+    assert parse_tag_keyset_token(tag_keyset_token((-1, 7))) == (-1, 7)
+    unversioned = base64.urlsafe_b64encode(b"60:12345").decode().rstrip("=")
+    v2 = base64.urlsafe_b64encode(b"v2:60:12345").decode().rstrip("=")
+    for bad in ["", "k60.12345", "!!!", "djE6", unversioned, v2, "%%%%", "a"]:
         with pytest.raises(BadUserInputException):
             parse_tag_keyset_token(bad)
 
@@ -147,7 +155,7 @@ def test_actor_unlimited_pages_by_keyset_and_sees_every_tag_once():
     store = FakeTagstore(n)
     seen, tokens = page_all(make_service(store), "get_actor_tags", pagesize=5000)
     assert seen == expected(store)
-    assert tokens and all(t.startswith("k") for t in tokens)
+    assert tokens and not any(t.isdigit() for t in tokens)
     # every page after the first is read from a position, never by offset
     assert all(
         after is not None and not offset for _, offset, after, _ in store.calls[1:]
@@ -159,7 +167,7 @@ def test_actor_unlimited_old_page_number_continues_with_keyset():
     service = make_service(store)
     r = call(service, "get_actor_tags", page=1, pagesize=100)
     assert [t.address for t in r.address_tags] == expected(store)[100:200]
-    assert r.next_page.startswith("k")
+    assert not r.next_page.isdigit()
     rest = call(service, "get_actor_tags", page=r.next_page, pagesize=100)
     assert [t.address for t in rest.address_tags] == expected(store)[200:]
     assert rest.next_page is None
@@ -190,7 +198,13 @@ def test_limited_caller_refused_beyond_max_items(method):
 def test_limited_caller_refused_keyset_token():
     service = make_service(FakeTagstore(5000))
     with pytest.raises(BadUserInputException):
-        call(service, "get_actor_tags", page="k20.1", pagesize=100, max_items=1000)
+        call(
+            service,
+            "get_actor_tags",
+            page=tag_keyset_token((20, 1)),
+            pagesize=100,
+            max_items=1000,
+        )
 
 
 def request_with(config, headers):
@@ -222,3 +236,25 @@ def test_max_items_per_caller(max_items, unrestricted, headers, result):
         tag_list_max_items=max_items, tag_list_unrestricted=unrestricted
     )
     assert get_tag_list_max_items(request_with(config, headers)) == result
+
+
+@pytest.mark.parametrize(
+    "page, passed",
+    [(None, None), ("0", 0), ("12", 12), ("djE6NjA6MTIzNDU", "djE6NjA6MTIzNDU")],
+)
+def test_web_layer_passes_numbers_as_int_and_tokens_as_is(page, passed, monkeypatch):
+    from graphsenselib.web.service import tags_service as web
+
+    seen = {}
+
+    class Services:
+        class tags_service:
+            @staticmethod
+            async def get_actor_tags(actor, groups, page, pagesize, max_items=None):
+                seen["page"] = page
+                return SimpleNamespace(next_page=None, address_tags=[])
+
+    ctx = SimpleNamespace(services=Services, tagstore_groups=["public"])
+    monkeypatch.setattr(web, "to_api_address_tag_result", lambda r: r)
+    asyncio.run(web.get_actor_tags(ctx, "x", page=page))
+    assert seen["page"] == passed
