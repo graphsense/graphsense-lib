@@ -346,6 +346,23 @@ class GSRestConfig(BaseSettings):
     show_private_tags: Optional[Dict[str, Any]] = Field(
         default=None, description="Show private tags configuration"
     )
+    tag_list_max_items: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How far the tag listings by actor and by label page: the first N "
+            "tags, then next_page is empty and deeper pages are refused (400). "
+            "Unset: no limit. Callers matching tag_list_unrestricted page on."
+        ),
+    )
+    tag_list_unrestricted: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Callers not bound by tag_list_max_items, matched like "
+            "show_private_tags: {on_header: {<header>: <regex>}}, every header "
+            "must be present and match."
+        ),
+    )
     address_links_request_timeout: float = Field(
         default=30, description="Timeout for address links requests endpoint"
     )

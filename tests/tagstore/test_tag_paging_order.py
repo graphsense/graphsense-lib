@@ -169,3 +169,38 @@ async def test_actor_tags_without_paging(actor_with_tags, async_tagstore_db):
         "paging-actor", offset=None, page_size=None, groups=["public", "private"]
     )
     assert [t.label for t in tags] == _expected_labels(["public", "private"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("groups", [["public"], ["public", "private"]])
+@pytest.mark.parametrize("page_size", [1, 2, 3, 4, 100])
+async def test_actor_tags_keyset_pages_match_the_offset_order(
+    actor_with_tags, async_tagstore_db, groups, page_size
+):
+    """Paging from the last tag's (level, id) yields the same order as OFFSET,
+    also across confidences that share a level, and also when a page ends
+    inside such a tie."""
+    labels, after = [], None
+    while True:
+        page = await async_tagstore_db.get_actor_tag_page(
+            "paging-actor", page_size, groups, after=after
+        )
+        labels += [t.label for t, _ in page]
+        if len(page) < page_size:
+            break
+        after = page[-1][1]
+
+    assert labels == _expected_labels(groups)
+
+
+@pytest.mark.asyncio
+async def test_actor_tag_page_positions_are_level_and_id(
+    actor_with_tags, async_tagstore_db
+):
+    page = await async_tagstore_db.get_actor_tag_page(
+        "paging-actor", 100, ["public", "private"]
+    )
+    levels = [level for _, (level, _) in page]
+    assert levels == sorted(levels, reverse=True)
+    assert {t.confidence_level for t, _ in page} == set(levels)
+    assert all(t.confidence_level == level for t, (level, _) in page)
