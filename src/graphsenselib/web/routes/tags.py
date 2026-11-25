@@ -16,6 +16,7 @@ from graphsenselib.web.models import (
 from graphsenselib.web.routes.base import (
     PluginRoute,
     get_ctx,
+    get_tag_list_max_items,
     get_username,
     normalize_page,
 )
@@ -66,6 +67,7 @@ async def list_address_tags(
     page: PageQuery = None,
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
+    max_items: Optional[int] = Depends(get_tag_list_max_items),
 ):
     """Returns paginated address tags for a label."""
     result = await service.list_address_tags(
@@ -73,6 +75,7 @@ async def list_address_tags(
         label=label,
         page=normalize_page(page),
         pagesize=pagesize,
+        max_items=max_items,
     )
     return result
 
@@ -120,6 +123,7 @@ async def get_actor_tags(
     page: PageQuery = None,
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
+    max_items: Optional[int] = Depends(get_tag_list_max_items),
 ):
     """Returns paginated tags associated with an actor."""
     result = await service.get_actor_tags(
@@ -127,6 +131,7 @@ async def get_actor_tags(
         actor=actor,
         page=normalize_page(page),
         pagesize=pagesize,
+        max_items=max_items,
     )
     return result
 

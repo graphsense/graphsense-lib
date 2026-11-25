@@ -4,7 +4,7 @@ import functools
 import logging
 import re
 from datetime import datetime
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Dict, Optional
 
 from fastapi import Depends, Header, Request
 from fastapi.routing import APIRoute
@@ -88,30 +88,45 @@ def get_username(
     return x_consumer_username
 
 
+def _headers_match(request: Request, conf: Optional[Dict[str, Any]]) -> bool:
+    """True if every header in conf["on_header"] is present and matches its
+    regex (plugin-set header modifications first, then the request's)."""
+    if not conf:
+        return False
+    # Get header modifications from plugin middleware (if any)
+    header_mods = getattr(request.state, "plugin_state", {})
+    matched = True
+    for k, v in conf.get("on_header", {}).items():
+        hval = header_mods.get(k) or request.headers.get(k, None)
+        if not hval:
+            return False
+        matched = matched and bool(re.match(re.compile(v), hval))
+    return matched
+
+
 def get_show_private_tags(
     request: Request,
 ) -> bool:
     """Determine if private tags should be shown based on config and headers"""
     config = request.app.state.config
-    show_private_tags_conf = config.show_private_tags or False
-
-    if not show_private_tags_conf:
-        return False
-
-    # Get header modifications from plugin middleware (if any)
-    header_mods = getattr(request.state, "plugin_state", {})
-
-    show_private_tags = True
-    for k, v in show_private_tags_conf.get("on_header", {}).items():
-        # Check both actual headers and plugin-set header modifications
-        hval = header_mods.get(k) or request.headers.get(k, None)
-        if not hval:
-            return False
-        show_private_tags = show_private_tags and bool(re.match(re.compile(v), hval))
+    show_private_tags = _headers_match(request, config.show_private_tags or None)
 
     # Store in request state for other dependencies
     request.state.show_private_tags = show_private_tags
     return show_private_tags
+
+
+def get_tag_list_max_items(request: Request) -> Optional[int]:
+    """How many tags the listings by actor and by label page through for this
+    caller: tag_list_max_items, or None (no limit) for callers matching
+    tag_list_unrestricted or when no limit is configured."""
+    config = request.app.state.config
+    limit = getattr(config, "tag_list_max_items", None)
+    if limit is None:
+        return None
+    if _headers_match(request, getattr(config, "tag_list_unrestricted", None)):
+        return None
+    return limit
 
 
 def get_tagstore_access_groups(

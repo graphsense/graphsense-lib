@@ -7,10 +7,21 @@ from datetime import timezone
 from enum import IntEnum
 from functools import wraps
 from json import JSONDecodeError
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func, true
+from sqlalchemy import (
+    BigInteger,
+    String,
+    and_,
+    asc,
+    bindparam,
+    desc,
+    distinct,
+    func,
+    or_,
+    true,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -587,6 +598,7 @@ def _get_private_actor_tag_page_ids_stmt(
     page_size: Optional[int],
     groups: List[str],
     network: Optional[str],
+    after: Optional[Tuple[int, int]] = None,
 ):
     """Ids of a page of an actor's tags, for callers who see nearly all of them.
 
@@ -596,6 +608,10 @@ def _get_private_actor_tag_page_ids_stmt(
     tag_actor_confidence_id_idx and pick the page from those: the page can only
     hold tags from that head of each confidence's list. The cost then follows
     the page depth, not the actor's tag count.
+
+    With `after` (the (confidence level, tag id) of the previous page's last
+    tag) instead of an offset, each head starts behind that position, so every
+    page costs the same however deep (keyset paging).
     """
     # Aliased: the outer statement selects Tag and Confidence too, and would
     # otherwise correlate them out of this subquery.
@@ -615,11 +631,17 @@ def _get_private_actor_tag_page_ids_stmt(
     )
     if network is not None:
         head = head.where(page_tag.network == network)
+    if after is not None:
+        level, tag_id = after
+        # in the previous page's level only the tags behind it; lower levels
+        # from their start (higher ones are filtered out below)
+        head = head.where(or_(page_confidence.level < level, page_tag.id > tag_id))
+        offset = None
     if page_size is not None:
         head = head.limit((offset or 0) + page_size)
     head = head.correlate(page_confidence).lateral("confidence_head")
 
-    return (
+    stmt = (
         select(head.c.id)
         .select_from(page_confidence)
         .join(head, true())
@@ -627,6 +649,9 @@ def _get_private_actor_tag_page_ids_stmt(
         .offset(offset)
         .limit(page_size)
     )
+    if after is not None:
+        stmt = stmt.where(page_confidence.level <= after[0])
+    return stmt
 
 
 def _get_tags_by_actorid_stmt(
@@ -635,7 +660,12 @@ def _get_tags_by_actorid_stmt(
     page_size: Optional[int],
     groups: List[str],
     network: Optional[str],
+    after: Optional[Tuple[int, int]] = None,
 ):
+    """An actor's tags ordered by confidence level (highest first), then id.
+
+    A page either by `offset` or, cheaper for deep pages, `after`: the
+    (confidence level, tag id) of the previous page's last tag."""
     q = (
         select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
@@ -650,7 +680,7 @@ def _get_tags_by_actorid_stmt(
         return q.where(
             Tag.id.in_(
                 _get_private_actor_tag_page_ids_stmt(
-                    actor, offset, page_size, groups, network
+                    actor, offset, page_size, groups, network, after=after
                 )
             )
         )
@@ -658,12 +688,17 @@ def _get_tags_by_actorid_stmt(
     # Few tagpacks are visible without private access, so Postgres starts from
     # those. The ids statement above would read all of the actor's tags to find
     # the visible ones, seconds of work for a big actor with mostly private tags.
-    q = (
-        q.where(Tag.actor_id == actor)
-        .where(TagPack.acl_group.in_(groups))
-        .offset(offset)
-        .limit(page_size)
-    )
+    q = q.where(Tag.actor_id == actor).where(TagPack.acl_group.in_(groups))
+    if after is not None:
+        level, tag_id = after
+        q = q.where(
+            or_(
+                Confidence.level < level,
+                and_(Confidence.level == level, Tag.id > tag_id),
+            )
+        )
+        offset = None
+    q = q.offset(offset).limit(page_size)
     if network is not None:
         q = q.where(Tag.network == network)
     return q
@@ -1589,12 +1624,18 @@ class TagstoreDbAsync:
         page_size: Optional[int],
         groups: List[str],
         network: Optional[str] = None,
+        after: Optional[Tuple[int, int]] = None,
         session=None,
     ) -> List[Tag]:
         return (
             await session.exec(
                 _get_tags_by_actorid_stmt(
-                    actor.strip(), offset, page_size, groups, network=network
+                    actor.strip(),
+                    offset,
+                    page_size,
+                    groups,
+                    network=network,
+                    after=after,
                 )
             )
         ).unique()
@@ -1613,6 +1654,30 @@ class TagstoreDbAsync:
             actor.strip(), offset, page_size, groups, network=network, session=session
         )
         return [TagPublic.fromDB(t, tp) for t, tp, _ in results]
+
+    @_inject_session
+    async def get_actor_tag_page(
+        self,
+        actor: str,
+        page_size: int,
+        groups: List[str],
+        offset: Optional[int] = None,
+        after: Optional[Tuple[int, int]] = None,
+        network: Optional[str] = None,
+        session=None,
+    ) -> List[Tuple[TagPublic, Tuple[int, int]]]:
+        """A page of an actor's tags, each with its position (confidence
+        level, tag id) for keyset paging: pass the last one as `after`."""
+        results = await self._get_tags_by_actorid(
+            actor.strip(),
+            offset,
+            page_size,
+            groups,
+            network=network,
+            after=after,
+            session=session,
+        )
+        return [(TagPublic.fromDB(t, tp), (c.level, t.id)) for t, tp, c in results]
 
     # Other tag stuff
 

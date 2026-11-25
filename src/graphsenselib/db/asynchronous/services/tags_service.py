@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, Union, Callable
 
@@ -62,6 +63,14 @@ class TagstoreProtocol(Protocol):
     async def get_tags_by_label(
         self, label: str, offset: int, page_size: Optional[int], groups: List[str]
     ) -> List[Any]: ...
+    async def get_actor_tag_page(
+        self,
+        actor: str,
+        page_size: int,
+        groups: List[str],
+        offset: Optional[int] = None,
+        after: Optional[Tuple[int, int]] = None,
+    ) -> List[Tuple[Any, Tuple[int, int]]]: ...
     async def get_taxonomies(
         self, taxonomies: Optional[Any] = None
     ) -> List[Tuple[Any, Any]]: ...
@@ -129,6 +138,23 @@ def tag_list_pagesize(pagesize: Optional[int]) -> int:
     if pagesize is None:
         return TAG_LIST_DEFAULT_PAGESIZE
     return max(1, min(pagesize, TAG_LIST_MAX_PAGESIZE))
+
+
+_KEYSET_TOKEN = re.compile(r"^k(-?\d+)\.(\d+)$")
+
+
+def tag_keyset_token(position: Tuple[int, int]) -> str:
+    """next_page token of the actor tag listing: the last tag's (confidence
+    level, tag id), where the next page continues."""
+    level, tag_id = position
+    return f"k{level}.{tag_id}"
+
+
+def parse_tag_keyset_token(token: str) -> Tuple[int, int]:
+    m = _KEYSET_TOKEN.match(token)
+    if not m:
+        raise BadUserInputException("Invalid page")
+    return int(m.group(1)), int(m.group(2))
 
 
 class TagsService:
@@ -684,40 +710,72 @@ class TagsService:
         else:
             return self._actor_from_actor_public(a)
 
+    def _tag_list_window(
+        self, offset: int, pagesize: int, max_items: Optional[int]
+    ) -> int:
+        """How many tags this page may hold for a caller bound by max_items."""
+        if max_items is None:
+            return pagesize
+        if offset >= max_items:
+            raise BadUserInputException(
+                f"Invalid page: only the first {max_items} tags can be paged"
+            )
+        return min(pagesize, max_items - offset)
+
     async def get_actor_tags(
         self,
         actor_id: str,
         tagstore_groups: List[str],
-        page: Optional[int] = None,
+        page: Union[int, str, None] = None,
         pagesize: Optional[int] = None,
+        max_items: Optional[int] = None,
     ) -> AddressTagResult:
-        page = page or 0
+        """A page of an actor's tags.
+
+        Callers bound by max_items page by number (offset) within the first
+        max_items tags. Everyone else gets keyset tokens as next_page, so a
+        deep page costs the same as the first; a page number from an older
+        client still works for them and continues with a token.
+        """
         pagesize = tag_list_pagesize(pagesize)
+        after, offset = None, 0
+        if isinstance(page, str):
+            if max_items is not None:
+                raise BadUserInputException(
+                    f"Invalid page: only the first {max_items} tags can be paged"
+                )
+            after = parse_tag_keyset_token(page)
+        else:
+            offset = (page or 0) * pagesize
+        fetch = self._tag_list_window(offset, pagesize, max_items)
 
-        assert page is None or isinstance(page, int)
-
-        tags = await self.tagstore.get_tags_by_actorid(
+        rows = await self.tagstore.get_actor_tag_page(
             actor_id,
-            offset=page * pagesize,
-            page_size=pagesize + 1,
-            groups=tagstore_groups,
+            fetch + 1,  # one more, to know whether there is a next page
+            tagstore_groups,
+            offset=offset if after is None else None,
+            after=after,
         )
+        has_more = len(rows) > fetch
+        rows = rows[:fetch]
 
-        is_last_page = len(tags) <= pagesize
-        tags = tags[:pagesize]  # Throw away the extra tag fetched for pagination
+        if not has_more or not rows:
+            next_page = None
+        elif max_items is not None:
+            next_page = str((page or 0) + 1) if offset + pagesize < max_items else None
+        else:
+            next_page = tag_keyset_token(rows[-1][1])
 
+        tags = [t for t, _ in rows]
         tag_entities = await self._get_entities_dict(self.db, tags)
-
-        return self._get_address_tag_result(
-            page,
-            pagesize,
-            [
+        return AddressTagResult(
+            next_page=next_page,
+            address_tags=[
                 self._address_tag_from_public_tag(
                     t, tag_entities[(t.identifier, t.network)]
                 )
                 for t in tags
             ],
-            is_last_page,
         )
 
     async def list_address_tags_by_label(
@@ -726,34 +784,33 @@ class TagsService:
         tagstore_groups: List[str],
         page: Optional[int] = None,
         pagesize: Optional[int] = None,
+        max_items: Optional[int] = None,
     ) -> AddressTagResult:
-        page = page or 0
         pagesize = tag_list_pagesize(pagesize)
-
-        assert page is None or isinstance(page, int)
+        page = page or 0
+        offset = page * pagesize
+        fetch = self._tag_list_window(offset, pagesize, max_items)
 
         tags = await self.tagstore.get_tags_by_label(
             label,
-            offset=page * pagesize,
-            page_size=pagesize + 1,
+            offset=offset,
+            page_size=fetch + 1,  # one more, to know whether there is a next page
             groups=tagstore_groups,
         )
-
-        is_last_page = len(tags) <= pagesize
-        tags = tags[:pagesize]  # Throw away the extra tag fetched for pagination
+        has_more = len(tags) > fetch
+        tags = tags[:fetch]
+        within = max_items is None or offset + pagesize < max_items
+        next_page = str(page + 1) if has_more and within else None
 
         tag_entities = await self._get_entities_dict(self.db, tags)
-
-        return self._get_address_tag_result(
-            page,
-            pagesize,
-            [
+        return AddressTagResult(
+            next_page=next_page,
+            address_tags=[
                 self._address_tag_from_public_tag(
                     t, tag_entities[(t.identifier, t.network)]
                 )
                 for t in tags
             ],
-            is_last_page,
         )
 
     async def get_actors_by_subjectid(

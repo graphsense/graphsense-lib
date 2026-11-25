@@ -16,21 +16,23 @@ async def get_actor(ctx, actor):
     return to_api_actor(pydantic_result)
 
 
-async def get_actor_tags(ctx, actor, page=None, pagesize=None):
-    page = parse_page_int_optional(page)
+async def get_actor_tags(ctx, actor, page=None, pagesize=None, max_items=None):
+    # a keyset token ("k...") goes through as is, a page number as int
+    if not (isinstance(page, str) and page.startswith("k")):
+        page = parse_page_int_optional(page)
 
     pydantic_result = await ctx.services.tags_service.get_actor_tags(
-        actor, ctx.tagstore_groups, page, pagesize
+        actor, ctx.tagstore_groups, page, pagesize, max_items=max_items
     )
 
     return to_api_address_tag_result(pydantic_result)
 
 
-async def list_address_tags(ctx, label, page=None, pagesize=None):
+async def list_address_tags(ctx, label, page=None, pagesize=None, max_items=None):
     page = parse_page_int_optional(page)
 
     pydantic_result = await ctx.services.tags_service.list_address_tags_by_label(
-        label, ctx.tagstore_groups, page, pagesize
+        label, ctx.tagstore_groups, page, pagesize, max_items=max_items
     )
 
     return to_api_address_tag_result(pydantic_result)
