@@ -571,6 +571,19 @@ graphsense-cli delta-update patch-exchange-rates \
     --end-block 200000
 ```
 
+#### Rebuilding a raw keyspace (UTXO)
+
+A transformed keyspace refers to raw transactions by `tx_id`, which is not
+part of the chain: ingest assigns it in order (block, then position in the
+block), continuing from the last id in the raw keyspace
+(`get_latest_tx_id_before_block`). An ingest that saw a different set of
+transactions, e.g. one with a gap or a block written twice, assigns
+different ids from that point on. So a rebuilt raw keyspace must reproduce
+the `tx_id`s the transformed keyspace expects, or the transformed keyspace
+must be rebuilt on it too. Same height is not enough: compare `tx_id`s at a
+few blocks in both keyspaces before switching. A mismatch gives wrong or
+missing transactions, not errors.
+
 ### Continuous Sync
 
 `sync run` replaces the per-network cron jobs (`ingest from-node`, then
