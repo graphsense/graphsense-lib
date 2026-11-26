@@ -572,7 +572,7 @@ with graphsense.ApiClient(configuration) as api_client:
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     strip_zero_value_txs = None # bool | Strip zero value transactions (optional)
     only_token_txs = False # bool | Only return token transactions (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    token_currency = 'WETH' # str | Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive (optional)
     page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
@@ -596,7 +596,7 @@ Name | Type | Description  | Notes
  **tx_hash** | **str**| The transaction hash | 
  **strip_zero_value_txs** | **bool**| Strip zero value transactions | [optional] 
  **only_token_txs** | **bool**| Only return token transactions | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
+ **token_currency** | **str**| Return transactions of the given token or base currency, e.g. &#39;WETH&#39;. Several assets can be given comma-separated, e.g. &#39;ETH,USDT&#39;; matching is case-insensitive | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 

@@ -809,7 +809,8 @@ def register_list_txs_for(mcp, app, stack) -> None:
             min_height: Only include transactions at or above this block height.
             max_height: Only include transactions at or below this block height.
             order: "asc" or "desc" by block height.
-            token_currency: Filter to a specific token (e.g. "usdt").
+            token_currency: Filter to a token or base currency (e.g. "usdt"),
+                or several comma-separated (e.g. "eth,usdt").
 
         Returns:
             A dict with `address_txs` (or `links` when `neighbor` is set)

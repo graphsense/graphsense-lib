@@ -341,6 +341,57 @@ def test_list_address_txs(client):
     assert [x["currency"] for x in result["address_txs"]] == ["eth", "eth", "eth"]
     assert [x["timestamp"] for x in result["address_txs"]] == [17, 16, 15]
 
+    # several assets, comma-separated: two tokens
+    result = get_json(
+        client,
+        path_tc,
+        currency="eth",
+        address=eth_address2.address,
+        token_currency="weth,USDT",
+    )
+    assert [x["currency"] for x in result["address_txs"]] == ["weth", "usdt"]
+
+    # token plus native asset, with blanks and a duplicate
+    result = get_json(
+        client,
+        path_tc,
+        currency="eth",
+        address=eth_address2.address,
+        token_currency="eth, weth,ETH",
+    )
+    assert [x["currency"] for x in result["address_txs"]] == [
+        "eth",
+        "eth",
+        "weth",
+        "eth",
+    ]
+    assert [x["height"] for x in result["address_txs"]] == [3, 2, 2, 1]
+
+    # paging across a mixed list yields the same rows in the same order
+    path_tc_paged = path_tc + "&pagesize={pagesize}"
+    paged_rows = []
+    page_result = get_json(
+        client,
+        path_tc_paged,
+        currency="eth",
+        address=eth_address2.address,
+        token_currency="eth,weth",
+        pagesize=1,
+    )
+    paged_rows.extend(page_result["address_txs"])
+    while page_result.get("next_page"):
+        page_result = get_json(
+            client,
+            path_tc_paged + "&page={page}",
+            currency="eth",
+            address=eth_address2.address,
+            token_currency="eth,weth",
+            pagesize=1,
+            page=page_result["next_page"],
+        )
+        paged_rows.extend(page_result["address_txs"])
+    assert paged_rows == result["address_txs"]
+
 
 def test_list_address_txs_direction_validation(client):
     path = "/{currency}/addresses/{address}/txs"

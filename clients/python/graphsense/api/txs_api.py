@@ -2001,7 +2001,7 @@ class TxsApi:
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         strip_zero_value_txs: Annotated[Optional[StrictBool], Field(description="Strip zero value transactions")] = None,
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2029,7 +2029,7 @@ class TxsApi:
         :type strip_zero_value_txs: bool
         :param only_token_txs: Only return token transactions
         :type only_token_txs: bool
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -2094,7 +2094,7 @@ class TxsApi:
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         strip_zero_value_txs: Annotated[Optional[StrictBool], Field(description="Strip zero value transactions")] = None,
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2122,7 +2122,7 @@ class TxsApi:
         :type strip_zero_value_txs: bool
         :param only_token_txs: Only return token transactions
         :type only_token_txs: bool
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -2187,7 +2187,7 @@ class TxsApi:
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         strip_zero_value_txs: Annotated[Optional[StrictBool], Field(description="Strip zero value transactions")] = None,
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2215,7 +2215,7 @@ class TxsApi:
         :type strip_zero_value_txs: bool
         :param only_token_txs: Only return token transactions
         :type only_token_txs: bool
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str

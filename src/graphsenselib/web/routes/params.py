@@ -96,7 +96,11 @@ OrderQuery = Annotated[
 TokenCurrencyQuery = Annotated[
     Optional[str],
     Query(
-        description="Return transactions of given token or base currency e.g. 'WETH'",
+        description=(
+            "Return transactions of the given token or base currency, e.g. 'WETH'. "
+            "Several assets can be given comma-separated, e.g. 'ETH,USDT'; "
+            "matching is case-insensitive"
+        ),
         examples=["WETH"],
     ),
 ]

@@ -320,7 +320,7 @@ with graphsense.ApiClient(configuration) as api_client:
     min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    token_currency = 'WETH' # str | Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive (optional)
     page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
@@ -348,7 +348,7 @@ Name | Type | Description  | Notes
  **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
+ **token_currency** | **str**| Return transactions of the given token or base currency, e.g. &#39;WETH&#39;. Several assets can be given comma-separated, e.g. &#39;ETH,USDT&#39;; matching is case-insensitive | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -520,7 +520,7 @@ with graphsense.ApiClient(configuration) as api_client:
     min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    token_currency = 'WETH' # str | Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive (optional)
     page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
@@ -548,7 +548,7 @@ Name | Type | Description  | Notes
  **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
+ **token_currency** | **str**| Return transactions of the given token or base currency, e.g. &#39;WETH&#39;. Several assets can be given comma-separated, e.g. &#39;ETH,USDT&#39;; matching is case-insensitive | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 

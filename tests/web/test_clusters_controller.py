@@ -706,6 +706,20 @@ def test_list_cluster_txs(client):
     assert [x["currency"] for x in result["address_txs"]] == ["weth"]
     assert [x["height"] for x in result["address_txs"]] == [2]
 
+    result = get_json(
+        client,
+        path_with_range_and_tc,
+        currency="eth",
+        cluster=eth_entityWithTokens.entity,
+        direction="",
+        min_height=2,
+        max_height=2,
+        token_currency="weth,usdt",
+    )
+
+    assert [x["currency"] for x in result["address_txs"]] == ["weth", "usdt"]
+    assert [x["height"] for x in result["address_txs"]] == [2, 2]
+
 
 def test_list_cluster_txs_direction_validation(client):
     path = "/{currency}/clusters/{cluster}/txs"
