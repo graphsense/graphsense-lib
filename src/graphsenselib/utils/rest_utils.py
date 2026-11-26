@@ -1,4 +1,5 @@
 import re
+from typing import List, Optional
 
 
 def get_first_key_present(target_dict, keylist):
@@ -10,6 +11,20 @@ def get_first_key_present(target_dict, keylist):
 
 def is_eth_like(network: str) -> bool:
     return network.upper() == "ETH" or network.upper() == "TRX"
+
+
+def parse_asset_list(value: Optional[str]) -> Optional[List[str]]:
+    """Parse a comma-separated asset filter such as "eth,USDT" into upper-cased,
+    de-duplicated asset names in request order. None or an empty value means no
+    filter and returns None."""
+    if value is None:
+        return None
+    assets = []
+    for part in value.split(","):
+        asset = part.strip().upper()
+        if asset and asset not in assets:
+            assets.append(asset)
+    return assets or None
 
 
 def omit(d, keys):

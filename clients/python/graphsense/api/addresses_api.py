@@ -1042,7 +1042,7 @@ class AddressesApi:
         min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1078,7 +1078,7 @@ class AddressesApi:
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1151,7 +1151,7 @@ class AddressesApi:
         min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1187,7 +1187,7 @@ class AddressesApi:
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1260,7 +1260,7 @@ class AddressesApi:
         min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1296,7 +1296,7 @@ class AddressesApi:
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1861,7 +1861,7 @@ class AddressesApi:
         min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1897,7 +1897,7 @@ class AddressesApi:
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1971,7 +1971,7 @@ class AddressesApi:
         min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2007,7 +2007,7 @@ class AddressesApi:
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -2081,7 +2081,7 @@ class AddressesApi:
         min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2117,7 +2117,7 @@ class AddressesApi:
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
+        :param token_currency: Return transactions of the given token or base currency, e.g. 'WETH'. Several assets can be given comma-separated, e.g. 'ETH,USDT'; matching is case-insensitive
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str

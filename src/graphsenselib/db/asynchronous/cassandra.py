@@ -75,7 +75,7 @@ from graphsenselib.errors import (
     TransactionNotFoundException,
     nodeNotFoundException,
 )
-from graphsenselib.utils.rest_utils import is_eth_like
+from graphsenselib.utils.rest_utils import is_eth_like, parse_asset_list
 from graphsenselib.utils.account import get_block_from_tx_id
 
 
@@ -2315,8 +2315,9 @@ class Cassandra:
             first_value = "output_value"
             second_value = "input_value"
 
-        if token_currency is not None:
-            include_assets = [token_currency.upper()]
+        requested_assets = parse_asset_list(token_currency)
+        if requested_assets is not None:
+            include_assets = list(requested_assets)
         else:
             if is_eth_like(currency):
                 token_config = self.get_token_configuration(currency)
@@ -2606,17 +2607,18 @@ class Cassandra:
                 else:
                     first_tx_ids = [(row[tx_id], None) for row in results1_raw]
 
-                if token_currency is not None:
-                    # Token-filtered query: only the token's rows on the `second`
-                    # side are relevant. Fetching the native asset (or others) here
-                    # would (a) let non-token events leak into a token-filtered
+                if requested_assets is not None:
+                    # Asset-filtered query: only the requested assets' rows on the
+                    # `second` side are relevant (the native asset only if it was
+                    # requested). Fetching unrequested assets here would
+                    # (a) let non-token events leak into a token-filtered
                     # result — e.g. the native contract-call trace when `neighbor`
                     # is the token contract, which passes the address-only filter
                     # below but is not a token transfer — and (b) multiply the
                     # per-page fan-out against a possibly huge `second` partition.
                     # It never drops a genuine token link: a real token transfer
                     # id -> neighbor still produces a token row on the second side.
-                    assets = [token_currency.upper()]
+                    assets = list(requested_assets)
                 else:
                     assets = set([currency.upper()])
                     if is_eth_like(currency):
@@ -4964,7 +4966,8 @@ class Cassandra:
 
         is_outgoing = direction == "out" if direction is not None else None
 
-        if not token_currency:
+        requested_assets = parse_asset_list(token_currency)
+        if requested_assets is None:
             # Bound the per-token query fan-out to the tokens this address
             # actually used (direction-aware), instead of every supported token.
             token_config = self.get_token_configuration(currency)
@@ -4980,7 +4983,7 @@ class Cassandra:
                 include_assets = list(token_config.keys())
             include_assets.append(currency.upper())
         else:
-            include_assets = [token_currency.upper()]
+            include_assets = list(requested_assets)
 
         first_tx_id, upper_bound = await self.resolve_tx_id_range_by_block(
             currency, min_height, max_height

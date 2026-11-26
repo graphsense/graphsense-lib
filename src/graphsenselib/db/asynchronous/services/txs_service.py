@@ -20,7 +20,7 @@ from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
 )
-from graphsenselib.utils.rest_utils import is_eth_like
+from graphsenselib.utils.rest_utils import is_eth_like, parse_asset_list
 from graphsenselib.config import currency_to_schema_type
 
 from .common import std_tx_from_row
@@ -374,11 +374,12 @@ class TxsService:
                 )
             )
 
-        if asset is not None:
+        requested_assets = parse_asset_list(asset)
+        if requested_assets is not None:
             results_list = [
                 x
                 for x in results_list
-                if x.currency.strip().upper() == asset.strip().upper()
+                if x.currency.strip().upper() in requested_assets
             ]
 
         next_page = None
