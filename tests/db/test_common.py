@@ -359,3 +359,105 @@ def test_possible_service_account_tolerates_missing_values():
     no_timestamps["last_tx"] = None
     # rate over at least one day: 500 txs in "one day" counts
     assert is_possible_service_account(no_timestamps)
+
+
+def _cluster_row(**fields):
+    from collections import namedtuple
+
+    from graphsenselib.db.asynchronous.cassandra import TxSummary
+
+    Val = namedtuple("Val", ["value", "fiat_values"])
+    zero = Val(value=0, fiat_values=[])
+    row = {
+        "cluster_id": 264711,
+        "root_address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+        "first_tx": TxSummary(height=1, timestamp=0, tx_hash=b"\x01"),
+        "last_tx": TxSummary(height=2, timestamp=400 * 86400, tx_hash=b"\x02"),
+        "no_addresses": 25,
+        "no_incoming_txs": 10,
+        "no_outgoing_txs": 10,
+        "in_degree": 10,
+        "out_degree": 10,
+        "total_received": zero,
+        "total_spent": zero,
+        "balance": 0,
+    }
+    row.update(fields)
+    return row
+
+
+def _cluster(currency, row):
+    from graphsenselib.db.asynchronous.services.entities_service import (
+        EntitiesService,
+    )
+
+    service = EntitiesService(
+        db=None,
+        tags_service=None,
+        blocks_service=None,
+        rates_service=None,
+        logger=None,
+    )
+    return service._from_row(currency, row, {}, {})
+
+
+@pytest.mark.parametrize(
+    "fields, expected",
+    [
+        ({}, False),
+        ({"no_addresses": 100}, False),
+        ({"no_addresses": 101}, True),
+        ({"in_degree": 7501}, True),
+        ({"out_degree": 7501}, True),
+    ],
+)
+def test_cluster_possible_service_matches_its_addresses_on_utxo(fields, expected):
+    """A UTXO cluster response carries the judgment its addresses get."""
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_utxo,
+    )
+
+    row = _cluster_row(**fields)
+    assert _cluster("btc", row).is_possible_service is expected
+    assert is_possible_service_utxo(row) is expected
+
+
+def test_cluster_possible_service_has_no_rate_rule_on_utxo():
+    """The tx-rate rule is for account networks only: a small UTXO cluster
+    with many txs in one day is not flagged."""
+    from graphsenselib.db.asynchronous.cassandra import TxSummary
+
+    busy_day = _cluster_row(
+        no_incoming_txs=300,
+        no_outgoing_txs=300,
+        last_tx=TxSummary(height=2, timestamp=3600, tx_hash=b"\x02"),
+    )
+    assert _cluster("btc", busy_day).is_possible_service is False
+
+
+@pytest.mark.parametrize(
+    "fields, expected",
+    [
+        ({}, False),
+        ({"no_incoming_txs": 501}, True),
+        ({"out_degree": 7501}, True),
+        # sustained rate: 600 txs within 6 days
+        ({"no_outgoing_txs": 590, "last_tx_days": 6}, True),
+    ],
+)
+def test_cluster_possible_service_matches_the_address_on_account(fields, expected):
+    """On account networks the cluster is the address: the account rule."""
+    from graphsenselib.db.asynchronous.cassandra import TxSummary
+    from graphsenselib.db.asynchronous.services.common import (
+        is_possible_service_account,
+    )
+
+    days = fields.pop("last_tx_days", 400)
+    row = _cluster_row(
+        root_address=bytes.fromhex("9a5c6328d0adfe511ba981957cbe8ff29faf60e1"),
+        no_addresses=1,
+        last_tx=TxSummary(height=2, timestamp=days * 86400, tx_hash=b"\x02"),
+        **fields,
+    )
+    assert _cluster("eth", row).is_possible_service is expected
+    assert is_possible_service_account(row) is expected
