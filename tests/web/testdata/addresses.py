@@ -270,6 +270,8 @@ entityWithTags = Entity(
     first_tx=TxSummary(timestamp=1434554207, height=1, tx_hash="4567"),
     balance=make_values(value=115422577, usd=2.31, eur=1.15),
     best_address_tag=ts.tag1,
+    # utxo cluster heuristic: no_addresses 110 > 100
+    is_possible_service=True,
 )
 
 
@@ -289,6 +291,8 @@ entity2 = Entity(
     first_tx=TxSummary(timestamp=1434554207, height=1, tx_hash="4567"),
     balance=make_values(value=115422577, usd=2.31, eur=1.15),
     best_address_tag=AddressTag(**ts.tag8.to_dict(), inherited_from="cluster"),
+    # utxo cluster heuristic: no_addresses 110 > 100
+    is_possible_service=True,
 )
 
 entity3 = Entity(**entity2.to_dict())
@@ -313,6 +317,8 @@ entity4 = Entity(
     first_tx=TxSummary(timestamp=1434554207, height=1, tx_hash="4567"),
     balance=make_values(eur=0.0, usd=0.0, value=5),
     best_address_tag=None,
+    # utxo cluster heuristic: no_addresses 110 > 100
+    is_possible_service=True,
 )
 
 entity5 = Entity(
@@ -331,6 +337,8 @@ entity5 = Entity(
     first_tx=TxSummary(timestamp=1434554207, height=1, tx_hash="4567"),
     balance=make_values(eur=0.0, usd=0.0, value=0),
     best_address_tag=None,
+    # utxo cluster heuristic: 1 address, degrees <= 7500
+    is_possible_service=False,
 )
 
 eth_address = Address(
@@ -455,6 +463,8 @@ eth_entityWithTags = Entity(
     first_tx=eth_address.first_tx,
     balance=eth_address.balance,
     best_address_tag=ts.eth_tag1,
+    # account heuristic, as on the address: low degrees and tx counts
+    is_possible_service=False,
 )
 
 eth_entityWithTokens = Entity(
@@ -473,4 +483,6 @@ eth_entityWithTokens = Entity(
     first_tx=eth_address2.first_tx,
     balance=eth_address2.balance,
     best_address_tag=ts.eth_tag1,
+    # account heuristic, as on the address: low degrees and tx counts
+    is_possible_service=False,
 )

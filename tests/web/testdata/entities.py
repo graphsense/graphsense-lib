@@ -42,6 +42,8 @@ eth_entity = Entity(
     first_tx=eth_address.first_tx,
     balance=eth_address.balance,
     best_address_tag=ts.eth_tag1,
+    # account heuristic, as on the address: low degrees and tx counts
+    is_possible_service=False,
 )
 
 eth_entity2 = Entity(
@@ -64,6 +66,8 @@ eth_entity2 = Entity(
     first_tx=eth_address2.first_tx,
     balance=eth_address2.balance,
     total_tokens_received=eth_address2.total_tokens_received,
+    # account heuristic, as on the address: low degrees and tx counts
+    is_possible_service=False,
 )
 
 eth_neighbors = []
@@ -137,6 +141,8 @@ tag_entityA = Entity(
     first_tx=TxSummary(timestamp=1434554207, height=1, tx_hash="4567"),
     balance=make_values(eur=0.0, usd=0.0, value=0),
     best_address_tag=None,
+    # utxo cluster heuristic: <= 3 addresses, no degrees
+    is_possible_service=False,
 )
 
 tag_entityB = Entity(
@@ -174,6 +180,8 @@ tag_entityB = Entity(
         entity=14,
         tag_type="actor",
     ),
+    # utxo cluster heuristic: <= 3 addresses, no degrees
+    is_possible_service=False,
 )
 
 tag_entityC = Entity(
@@ -211,6 +219,8 @@ tag_entityC = Entity(
         entity=16,
         tag_type="actor",
     ),
+    # utxo cluster heuristic: <= 3 addresses, no degrees
+    is_possible_service=False,
 )
 
 tag_entityD = Entity(
@@ -248,6 +258,8 @@ tag_entityD = Entity(
         entity=19,
         tag_type="actor",
     ),
+    # utxo cluster heuristic: <= 3 addresses, no degrees
+    is_possible_service=False,
 )
 
 tag_entityE = Entity(
@@ -285,4 +297,6 @@ tag_entityE = Entity(
         entity=20,
         tag_type="actor",
     ),
+    # utxo cluster heuristic: <= 3 addresses, no degrees
+    is_possible_service=False,
 )

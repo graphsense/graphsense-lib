@@ -7,10 +7,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import ClusterNotFoundException, GsTimeoutException
 from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.rest_utils import is_eth_like
 
 from .blocks_service import BlocksService
 from .common import (
     address_from_row,
+    is_possible_service_account,
+    is_possible_service_utxo,
     convert_token_values_map,
     convert_value,
     links_response,
@@ -154,6 +157,13 @@ class EntitiesService:
             best_address_tag=best_tag,
             no_address_tags=count,
             actors=actors,
+            # the same judgment as on address responses: on account networks
+            # the cluster is the address, on UTXO networks its own row
+            is_possible_service=(
+                is_possible_service_account(row)
+                if is_eth_like(currency)
+                else is_possible_service_utxo(row)
+            ),
         )
 
     async def get_entity(

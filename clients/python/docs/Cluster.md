@@ -25,6 +25,7 @@ Name | Type | Description | Notes
 **total_tokens_spent** | [**Dict[str, Values]**](Values.md) |  | [optional] 
 **actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional] 
 **best_address_tag** | [**AddressTag**](AddressTag.md) |  | [optional] 
+**is_possible_service** | **bool** | Structural heuristic: True when the cluster is likely a service (exchange, payment processor, ...), judged from its size and degrees (UTXO networks) or degree/tx counts (account networks, where the cluster is the address). The same judgment as &#x60;is_possible_service&#x60; on the addresses of the cluster. Tag data is deliberately not consulted. Absent means the serving backend did not compute it (older server) — consumers fall back to their own judgment. | [optional] 
 **cluster** | **int** | Cluster ID (preferred alias for the deprecated &#x60;entity&#x60; field). | [readonly] 
 
 ## Example

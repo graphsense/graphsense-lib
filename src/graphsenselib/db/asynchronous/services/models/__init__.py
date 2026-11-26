@@ -105,6 +105,7 @@ class Entity(BaseModel):
     best_address_tag: Optional[AddressTag] = None
     no_address_tags: int
     actors: Optional[List[LabeledItemRef]] = None
+    is_possible_service: Optional[bool] = None
 
 
 class Address(BaseModel):

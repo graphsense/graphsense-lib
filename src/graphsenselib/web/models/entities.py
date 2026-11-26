@@ -33,6 +33,7 @@ ENTITY_EXAMPLE = {
     "no_incoming_txs": 200,
     "no_outgoing_txs": 100,
     "no_address_tags": 3,
+    "is_possible_service": False,
 }
 
 
@@ -78,6 +79,17 @@ class Entity(APIModel):
     total_tokens_spent: Optional[dict[str, Values]] = None
     actors: Optional[list[LabeledItemRef]] = None
     best_address_tag: Optional[AddressTag] = None
+    is_possible_service: Optional[bool] = Field(
+        default=None,
+        description="Structural heuristic: True when the cluster is likely a "
+        "service (exchange, payment processor, ...), judged from its size and "
+        "degrees (UTXO networks) or degree/tx counts (account networks, where "
+        "the cluster is the address). The same judgment as "
+        "`is_possible_service` on the addresses of the cluster. Tag data is "
+        "deliberately not consulted. Absent means the serving backend did not "
+        "compute it (older server) — consumers fall back to their own "
+        "judgment.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
