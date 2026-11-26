@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Web API + Python client
+
+#### Added
+- **`is_possible_service` on cluster responses** (`GET /{currency}/clusters/{cluster}`, `GET /{currency}/addresses/{address}/cluster`, embedded neighbor clusters, bulk). The same structural judgment as on address responses, from the same functions: on UTXO networks more than 100 addresses or an in/out degree above 7500, on account networks (where the cluster is the address) the address rules including the tx rate. An address and its cluster now always agree, so a client that loads only clusters no longer needs its own copy of the thresholds. Computed from the cluster row the response is built from: no extra database reads. Absent from older servers and from external backends.
+
 ## [2.22.0] - 2026-11-25
 
 ### Upgrade notes
