@@ -22,15 +22,15 @@
 # Not a shared `AS python-base` stage, because Dependabot would then try to
 # resolve `FROM python-base` as an image. It bumps both lines in one PR.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
-FROM eclipse-temurin:11-jre-jammy@sha256:0c567a8bd671331808b89a96976fabb305d57b123dec4fa62a20bfb89f2b32b9 AS java11
+FROM ghcr.io/astral-sh/uv:0.13.10 AS uv
+FROM eclipse-temurin:11-jre-jammy@sha256:22a7a164657075683c69d83e55183586b1f0e72106cb11bbb96c77e32d4c92f4 AS java11
 
 # =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
 # Carries gcc/g++/make/cmake/curl/binutils/rust/libpq-dev; none of it leaks
 # into the runtime image.
 # =============================================================================
-FROM python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72 AS builder
+FROM python:3.13-slim-bookworm@sha256:f0fa218d5b06f9b9235024fa061cde2cb141f726de52134471053d2d9b5324a3 AS builder
 COPY --from=uv /uv /uvx /bin/
 
 ENV UV_ONLY_BINARY=1
@@ -109,7 +109,7 @@ RUN make build
 # Stage 2: runtime — fresh slim base, only the wheels and runtime OS deps.
 # This is the image that ships.
 # =============================================================================
-FROM python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72
+FROM python:3.13-slim-bookworm@sha256:f0fa218d5b06f9b9235024fa061cde2cb141f726de52134471053d2d9b5324a3
 COPY --from=uv /uv /uvx /bin/
 
 LABEL org.opencontainers.image.title="graphsense-lib"
