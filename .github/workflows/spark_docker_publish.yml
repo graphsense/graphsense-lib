@@ -54,7 +54,7 @@ jobs:
           echo "Publishing ${IMAGE_NAME}:${version}"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.3
+        uses: sigstore/cosign-installer@v4.1.4
         with:
           cosign-release: 'v2.2.2'
 
